@@ -1,0 +1,213 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "korshmer"
+version = "1.0.0"
+description = "Redefining the DAW"
+requires-python = ">=3.10"
+authors = [
+	{name = "Yaron Koresh"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+readme = "README.md"
+license = {text = "MIT"}
+dependencies = [
+    "pyside6>=6.0.0",
+    "librosa>=0.9.0",
+    "pretty_midi>=0.2.9",
+    "basic-pitch @ git+https://github.com/YaronKoresh/basic-pitch.git ; python_version < '3.12'",
+    "demucs>=4.0.0",
+    "soundfile>=0.12.0",
+    "sounddevice",
+    "numpy>=1.24.0",
+    "scikit-learn>=1.0.0",
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "lameenc<=1.9.0",
+    "onnxruntime>=1.15.0",
+    "Pillow>=10.0.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0",
+    "psutil>=5.9.0",
+    "PyWavelets>=1.4.0",
+    "mutagen>=1.45.0",
+    "pyloudnorm>=0.1.0",
+    "websockets>=12.0",
+    "keyring>=24.0.0"
+]
+
+[project.optional-dependencies]
+link = [
+    "aalink>=0.2.3"
+]
+ndi = [
+    "cyndilib>=0.1.3"
+]
+cuda = [
+    "cupy-cuda12x>=13.0.0"
+]
+opencl = [
+    "pyopencl>=2024.1"
+]
+dev = [
+    "nuitka<=4.3.1",
+    "pytest>=7.4.0",
+    "pytest-asyncio",
+    "pytest-cov>=4.1.0",
+    "pytest-memray>=1.5.0; sys_platform != 'win32'",
+    "pytest-mock>=3.12.0",
+    "pytest-qt>=4.2.0",
+    "hypothesis>=6.90.0",
+    "ruff",
+    "poethepoet",
+    "pre-commit",
+    "build",
+    "pydantic>=2.0.0",
+    "mypy>=1.0",
+    "vulture>=2.10",
+    "pyinstaller>=6.0",
+    "briefcase>=0.3.0"
+]
+
+[project.scripts]
+korshmer = "korshmer.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/YaronKoresh/korshmer"
+Repository = "https://github.com/YaronKoresh/korshmer"
+Issues = "https://github.com/YaronKoresh/korshmer/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/korshmer"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: end-to-end tests across modules",
+    "slow: long running tests",
+    "performance: benchmark style tests",
+    "limit_memory(size): fail when allocations exceed size (pytest-memray)",
+]
+
+# --- RUFF CONFIGURATION ---
+[tool.ruff]
+target-version = "py310"
+line-length = 80
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "C4"]
+ignore = [
+    "E501",
+    "E741"
+]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"tests/**/*" = ["E731"]
+
+[tool.ruff.lint.isort]
+force-single-line = false
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# --- POE TASKS ---
+[tool.poe.tasks]
+memray = { cmd = "python scripts/run_memray.py" }
+
+build-exe = { cmd = "python scripts/build_all.py --pyinstaller" }
+build-exe-signed = { cmd = "python scripts/build_all.py --pyinstaller --sign" }
+
+check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "test", "clean"]
+coverage = ["_coverage-clean", "_coverage-run", "_coverage-clean"]
+test = ["test-py"]
+
+[tool.poe.tasks.test-py]
+cmd = "python -m pytest tests/"
+
+[tool.poe.tasks._coverage-run]
+cmd = "python -m pytest -q --cov=src --cov-branch --cov-report=term-missing:skip-covered tests/"
+
+[tool.poe.tasks._coverage-run.env]
+COVERAGE_FILE = ".coverage.poe"
+
+[tool.poe.tasks._coverage-clean]
+cmd = "python -c \"from pathlib import Path; Path('.coverage.poe').unlink(missing_ok=True); Path('.coverage').unlink(missing_ok=True)\""
+
+[tool.poe.tasks.compile]
+cmd = "python -m compileall -q ."
+
+[tool.poe.tasks.lint]
+cmd = "python -m ruff check ."
+
+[tool.poe.tasks.check-format]
+cmd = "python -m ruff format --check ."
+
+[tool.poe.tasks.pre-commit]
+cmd = "python -m pre_commit run --all-files"
+
+[tool.poe.tasks.pre-commit.env]
+SKIP = "no-commit-to-branch"
+
+[tool.poe.tasks.clean]
+cmd = "python scripts/clean_workspace.py"
+
+[tool.poe.tasks.strip-comments]
+cmd = "python scripts/strip_comments.py"
+
+[tool.poe.tasks.build]
+cmd = "python -m build"
+
+[tool.poe.tasks.build-wheel]
+cmd = "python -m build --wheel"
+
+[tool.poe.tasks.hook]
+cmd = "python -m pre_commit install"
+
+[tool.poe.tasks.format]
+cmd = "python -m ruff format ."
+
+[tool.poe.tasks.dead-code]
+cmd = "python -m vulture src/ --min-confidence 80 --sort-by-size"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+no_implicit_optional = true
+strict_optional = true
+
+[tool.briefcase]
+project_name = "KORSHMER"
+bundle = "io.github.yaronkoresh.korshmer"
+version = "1.0.0"
+url = "https://github.com/YaronKoresh/korshmer"
+license = "MIT"
+
+[tool.briefcase.app.korshmer]
+formal_name = "KORSHMER"
+description = "Redefining the DAW"
+long_description = "A powerful AI-enhanced Digital Audio Workstation"
+icon = "assets/icon"
+sources = ["src/korshmer"]
+requires = []
+
+[tool.briefcase.app.korshmer.macOS]
+requires = []
+
+[tool.briefcase.app.korshmer.linux]
+requires = []
+
+[tool.briefcase.app.korshmer.windows]
+requires = []
