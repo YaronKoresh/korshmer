@@ -2,7 +2,9 @@
 cd /d %~dp0
 
 set "PYTHON_DIR=%LOCALAPPDATA%\Programs\Python\Python311"
-set "PYTHON_EXE=%PYTHON_DIR%\python.exe"
+set "PYTHON_EXE="
+set "MIN_MAJOR=3"
+set "MIN_MINOR=11"
 
 for /f "tokens=*" %%i in ('dir /b /s "C:\Program Files (x86)\Windows Kits\10\bin\*signtool.exe" 2^>nul') do (
     set "SIGNTOOL_PATH=%%i"
@@ -14,13 +16,9 @@ if "%1"=="install_clang" goto install_clang_prompt
 
 echo Checking for prerequisites...
 
-if exist "%ProgramFiles%\Python311\python.exe" (
-    echo [WARN] An all-users Python 3.11 exists in Program Files.
-    echo [WARN] Uninstall it from Settings - Apps, otherwise "python" on PATH may point to it.
-)
-
-if not exist "%PYTHON_EXE%" (
-    echo [INFO] Python not found at "%PYTHON_EXE%".
+call :find_python
+if not defined PYTHON_EXE (
+    echo [INFO] No suitable Python ^(%MIN_MAJOR%.%MIN_MINOR% or newer^) found on this machine.
     goto install_python_prompt
 )
 :after_python
@@ -59,6 +57,7 @@ start /wait "" "%INSTALLER_PATH%" /quiet InstallAllUsers=0 PrependPath=1 Include
 del "%INSTALLER_PATH%"
 powershell -NoProfile -Command "$d='%PYTHON_DIR%'; $s=$d+'\Scripts'; $p=[Environment]::GetEnvironmentVariable('Path','User'); $parts=@($p -split ';' | Where-Object { $_ -and $_ -ne $d -and $_ -ne $s }); [Environment]::SetEnvironmentVariable('Path',((@($d,$s)+$parts) -join ';'),'User')"
 set "PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%PATH%"
+set "PYTHON_EXE=%PYTHON_DIR%\python.exe"
 if not exist "%PYTHON_EXE%" (
     echo [ERROR] Python installation did not create "%PYTHON_EXE%".
     echo [ERROR] If an all-users Python 3.11.5 is installed, uninstall it first and re-run.
@@ -166,6 +165,29 @@ echo.
 echo [SUCCESS] Korshmer has been installed successfully.
 echo Python used: %PYTHON_EXE%
 goto end_success
+
+:find_python
+call :try_python "%PYTHON_DIR%\python.exe"
+if defined PYTHON_EXE exit /b 0
+for %%V in (3.11 3) do (
+    if not defined PYTHON_EXE (
+        for /f "delims=" %%i in ('py -%%V -c "import sys;print(sys.executable)" 2^>nul') do (
+            if not defined PYTHON_EXE call :try_python "%%i"
+        )
+    )
+)
+if defined PYTHON_EXE exit /b 0
+for /f "delims=" %%i in ('where python 2^>nul') do (
+    if not defined PYTHON_EXE call :try_python "%%i"
+)
+exit /b 0
+
+:try_python
+if not exist "%~1" exit /b 1
+"%~1" -c "import sys; sys.exit(0 if sys.version_info[:2] >= (%MIN_MAJOR%,%MIN_MINOR%) else 1)" >nul 2>nul
+if errorlevel 1 exit /b 1
+set "PYTHON_EXE=%~1"
+exit /b 0
 
 :end_error
 echo.
