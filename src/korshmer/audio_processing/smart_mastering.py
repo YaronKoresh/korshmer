@@ -35,7 +35,7 @@ from .validation import (
 
 logger = logging.getLogger(__name__)
 
-EXCITER_LOW_HZ = 5.0
+EXCITER_LOW_HZ = 20.0
 EXCITER_HIGH_HZ = 22000.0
 EXCITER_BAND_COUNT = 8
 EXCITER_FILTER_ORDER = 4
@@ -224,11 +224,11 @@ class SmartMasteringConfig:
 
     bass_enhance_mix: float = 0.3
     bass_mono_hz: float | None = 90.0
-    exciter_mix: float = 0.5
+    exciter_mix: float = 2.0
     stereo_width: float = 1.2
 
-    low_cut: int | None = 30
-    high_cut: int | None = 18000
+    low_cut: int | None = 20
+    high_cut: int | None = 20000
     phase_type: str = "minimal"
 
 
