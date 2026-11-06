@@ -35,22 +35,22 @@ from .validation import (
 
 logger = logging.getLogger(__name__)
 
-EXCITER_LOW_HZ = 20.0
-EXCITER_HIGH_HZ = 20000.0
+EXCITER_LOW_HZ = 5.0
+EXCITER_HIGH_HZ = 22000.0
 EXCITER_BAND_COUNT = 8
 EXCITER_FILTER_ORDER = 4
 EXCITER_MAX_HARMONIC_ORDER = 5
 EXCITER_PEAK_DRIVE = 1.5
 EXCITER_NYQUIST_FRACTION = 0.99
 EXCITER_SILENCE_LEVEL = 1e-9
-EXCITER_KAISER_BETA = 6.0
+EXCITER_KAISER_BETA = 12.0
 EXCITER_GUARD_RATIO = 2.0 ** (1.0 / 3.0)
 EXCITER_NPERSEG = 16384
 EXCITER_FIR_TAPS = 8193
 EXCITER_MIN_SAMPLES = 1024
 EXCITER_BANDS_PER_OCTAVE = 6
-EXCITER_FILL_SLOPE_DB_PER_OCTAVE = 0.0
-EXCITER_MAX_FILL_GAIN_DB = 120.0
+EXCITER_FILL_SLOPE_DB_PER_OCTAVE = -6.0
+EXCITER_MAX_FILL_GAIN_DB = 20.0
 EXCITER_POWER_FLOOR = 1e-24
 OVERSAMPLING_TAPS_PER_FACTOR = 40
 TRUE_PEAK_GUARD_DB = 0.1
@@ -87,18 +87,18 @@ class MultibandParams:
     Set `relative_threshold=False` to use absolute dBFS thresholds.
     """
 
-    num_bands: int = 8
+    num_bands: int = 16
     intensity: float = 1.0
 
     bass_ratio: float = 2.2
     bass_attack_ms: float = 30.0
     bass_release_ms: float = 180.0
-    bass_threshold_db: float = 0.0
+    bass_threshold_db: float = 26.0
 
     treb_ratio: float = 2.5
     treb_attack_ms: float = 8.0
     treb_release_ms: float = 80.0
-    treb_threshold_db: float = -2.0
+    treb_threshold_db: float = -20.0
 
     knee_db: float = 8.0
     relative_threshold: bool = True
@@ -169,16 +169,16 @@ class LimiterParams:
     ceil_db: float = -0.3
     max_drive_db: float = 0.0
 
-    lookahead_ms: float = 1.0
-    release_fast_ms: float = 20.0
-    release_slow_ms: float = 120.0
+    lookahead_ms: float = 3.0
+    release_fast_ms: float = 10.0
+    release_slow_ms: float = 200.0
     slow_weight: float = 0.25
 
-    clip_ceiling_db: float = 1.0
-    clip_knee: float = 0.7
+    clip_ceiling_db: float = 0.3
+    clip_knee: float = 12.0
 
     os_factor: int = 4
-    kaiser_beta: float = 6.0
+    kaiser_beta: float = 12.0
     margin_db: float = 0.5
 
     split_hz: float | None = 400.0
@@ -198,13 +198,13 @@ class LimiterParams:
 @dataclass
 class SmartMasteringConfig:
     sample_rate: int | None = None
-    slope_db: float = 3.0
+    slope_db: float = 6.0
     slope_hz: float = 1000.0
     smoothing_fraction: float = 1.0 / 3.0
     mix: MixParams = field(default_factory=MixParams)
     multiband: MultibandParams = field(default_factory=MultibandParams)
     limiter: LimiterParams = field(default_factory=LimiterParams)
-    target_lufs: float = -9.0
+    target_lufs: float = -13.0
     work_lufs: float = -18.0
     correction_strength: float = 1.0
     max_correction_db: float = 40.0
@@ -224,11 +224,11 @@ class SmartMasteringConfig:
 
     bass_enhance_mix: float = 0.3
     bass_mono_hz: float | None = 90.0
-    exciter_mix: float = 5.0
-    stereo_width: float = 1.4
+    exciter_mix: float = 1.0
+    stereo_width: float = 1.2
 
-    low_cut: int | None = 20
-    high_cut: int | None = 20000
+    low_cut: int | None = 5
+    high_cut: int | None = 22000
     phase_type: str = "minimal"
 
 
