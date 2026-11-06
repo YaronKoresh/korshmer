@@ -40,7 +40,7 @@ EXCITER_HIGH_HZ = 22000.0
 EXCITER_BAND_COUNT = 8
 EXCITER_FILTER_ORDER = 4
 EXCITER_MAX_HARMONIC_ORDER = 5
-EXCITER_PEAK_DRIVE = 1.5
+EXCITER_PEAK_DRIVE = 6.0
 EXCITER_NYQUIST_FRACTION = 0.99
 EXCITER_SILENCE_LEVEL = 1e-9
 EXCITER_KAISER_BETA = 12.0
@@ -49,8 +49,8 @@ EXCITER_NPERSEG = 16384
 EXCITER_FIR_TAPS = 8193
 EXCITER_MIN_SAMPLES = 1024
 EXCITER_BANDS_PER_OCTAVE = 6
-EXCITER_FILL_SLOPE_DB_PER_OCTAVE = -6.0
-EXCITER_MAX_FILL_GAIN_DB = 20.0
+EXCITER_FILL_SLOPE_DB_PER_OCTAVE = 2.0
+EXCITER_MAX_FILL_GAIN_DB = 60.0
 EXCITER_POWER_FLOOR = 1e-24
 OVERSAMPLING_TAPS_PER_FACTOR = 40
 TRUE_PEAK_GUARD_DB = 0.1
@@ -87,18 +87,18 @@ class MultibandParams:
     Set `relative_threshold=False` to use absolute dBFS thresholds.
     """
 
-    num_bands: int = 16
+    num_bands: int = 32
     intensity: float = 1.0
 
-    bass_ratio: float = 2.2
+    bass_ratio: float = 3.5
     bass_attack_ms: float = 30.0
     bass_release_ms: float = 180.0
-    bass_threshold_db: float = 26.0
+    bass_threshold_db: float = 32.0
 
     treb_ratio: float = 2.5
     treb_attack_ms: float = 8.0
     treb_release_ms: float = 80.0
-    treb_threshold_db: float = -20.0
+    treb_threshold_db: float = -18.0
 
     knee_db: float = 8.0
     relative_threshold: bool = True
@@ -170,8 +170,8 @@ class LimiterParams:
     max_drive_db: float = 0.0
 
     lookahead_ms: float = 3.0
-    release_fast_ms: float = 10.0
-    release_slow_ms: float = 200.0
+    release_fast_ms: float = 20.0
+    release_slow_ms: float = 280.0
     slow_weight: float = 0.25
 
     clip_ceiling_db: float = 0.3
@@ -198,16 +198,16 @@ class LimiterParams:
 @dataclass
 class SmartMasteringConfig:
     sample_rate: int | None = None
-    slope_db: float = 6.0
+    slope_db: float = 3.0
     slope_hz: float = 1000.0
-    smoothing_fraction: float = 1.0 / 3.0
+    smoothing_fraction: float = 0.5
     mix: MixParams = field(default_factory=MixParams)
     multiband: MultibandParams = field(default_factory=MultibandParams)
     limiter: LimiterParams = field(default_factory=LimiterParams)
-    target_lufs: float = -13.0
+    target_lufs: float = -10.0
     work_lufs: float = -18.0
     correction_strength: float = 1.0
-    max_correction_db: float = 40.0
+    max_correction_db: float = 60.0
 
     bass_db: float = 4.0
     bass_hz: float = 65.0
@@ -215,7 +215,7 @@ class SmartMasteringConfig:
     warmth_db: float = 1.8
     warmth_hz: float = 190.0
     warmth_octaves: float = 1.4
-    presence_db: float = 5.0
+    presence_db: float = 3.0
     presence_hz: float = 3200.0
     presence_octaves: float = 1.6
     air_db: float = 2.5
@@ -224,11 +224,11 @@ class SmartMasteringConfig:
 
     bass_enhance_mix: float = 0.3
     bass_mono_hz: float | None = 90.0
-    exciter_mix: float = 1.0
+    exciter_mix: float = 0.5
     stereo_width: float = 1.2
 
-    low_cut: int | None = 5
-    high_cut: int | None = 22000
+    low_cut: int | None = 20
+    high_cut: int | None = 20000
     phase_type: str = "minimal"
 
 
