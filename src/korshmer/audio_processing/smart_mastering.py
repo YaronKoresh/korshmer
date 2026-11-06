@@ -40,7 +40,7 @@ EXCITER_HIGH_HZ = 22000.0
 EXCITER_BAND_COUNT = 8
 EXCITER_FILTER_ORDER = 4
 EXCITER_MAX_HARMONIC_ORDER = 5
-EXCITER_PEAK_DRIVE = 6.0
+EXCITER_PEAK_DRIVE = 1.0
 EXCITER_NYQUIST_FRACTION = 0.99
 EXCITER_SILENCE_LEVEL = 1e-9
 EXCITER_KAISER_BETA = 12.0
@@ -49,7 +49,7 @@ EXCITER_NPERSEG = 16384
 EXCITER_FIR_TAPS = 8193
 EXCITER_MIN_SAMPLES = 1024
 EXCITER_BANDS_PER_OCTAVE = 6
-EXCITER_FILL_SLOPE_DB_PER_OCTAVE = 2.0
+EXCITER_FILL_SLOPE_DB_PER_OCTAVE = 3.0
 EXCITER_MAX_FILL_GAIN_DB = 60.0
 EXCITER_POWER_FLOOR = 1e-24
 OVERSAMPLING_TAPS_PER_FACTOR = 40
@@ -200,11 +200,11 @@ class SmartMasteringConfig:
     sample_rate: int | None = None
     slope_db: float = 3.0
     slope_hz: float = 1000.0
-    smoothing_fraction: float = 0.5
+    smoothing_fraction: float = 0.0
     mix: MixParams = field(default_factory=MixParams)
     multiband: MultibandParams = field(default_factory=MultibandParams)
     limiter: LimiterParams = field(default_factory=LimiterParams)
-    target_lufs: float = -10.0
+    target_lufs: float = -9.0
     work_lufs: float = -18.0
     correction_strength: float = 1.0
     max_correction_db: float = 60.0
@@ -215,7 +215,7 @@ class SmartMasteringConfig:
     warmth_db: float = 1.8
     warmth_hz: float = 190.0
     warmth_octaves: float = 1.4
-    presence_db: float = 3.0
+    presence_db: float = 5.0
     presence_hz: float = 3200.0
     presence_octaves: float = 1.6
     air_db: float = 2.5
@@ -227,8 +227,8 @@ class SmartMasteringConfig:
     exciter_mix: float = 0.5
     stereo_width: float = 1.2
 
-    low_cut: int | None = 20
-    high_cut: int | None = 20000
+    low_cut: int | None = 30
+    high_cut: int | None = 18000
     phase_type: str = "minimal"
 
 
