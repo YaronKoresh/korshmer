@@ -37,21 +37,21 @@ logger = logging.getLogger(__name__)
 
 
 EXCITER_LOW_HZ = 1400.0
-EXCITER_HIGH_HZ = 21500.0
+EXCITER_HIGH_HZ = 22000.0
 EXCITER_BAND_COUNT = 16
 EXCITER_FILTER_ORDER = 4
 EXCITER_MAX_HARMONIC_ORDER = 5
 EXCITER_PEAK_DRIVE = 1.2
-EXCITER_NYQUIST_FRACTION = 0.985
+EXCITER_NYQUIST_FRACTION = 0.95
 EXCITER_SILENCE_LEVEL = 1e-9
 EXCITER_KAISER_BETA = 12.0
-EXCITER_GUARD_RATIO = 1.15
+EXCITER_GUARD_RATIO = 10.0
 EXCITER_NPERSEG = 8192
 EXCITER_FIR_TAPS = 4097
 EXCITER_MIN_SAMPLES = 1024
 EXCITER_BANDS_PER_OCTAVE = 6
-EXCITER_FILL_SLOPE_DB_PER_OCTAVE = 0.6
-EXCITER_MAX_FILL_GAIN_DB = 18.0
+EXCITER_FILL_SLOPE_DB_PER_OCTAVE = -0.5
+EXCITER_MAX_FILL_GAIN_DB = 60.0
 EXCITER_POWER_FLOOR = 1e-24
 OVERSAMPLING_TAPS_PER_FACTOR = 40
 EXCITER_HARMONIC_CAP_DB_LOW = -12.0
@@ -129,7 +129,9 @@ class MultibandParams:
             self.bass_threshold_db
             + (self.treb_threshold_db - self.bass_threshold_db) * positions
         )
-        ratios = self.bass_ratio + (self.treb_ratio - self.bass_ratio) * positions
+        ratios = (
+            self.bass_ratio + (self.treb_ratio - self.bass_ratio) * positions
+        )
         attacks = (
             self.bass_attack_ms
             + (self.treb_attack_ms - self.bass_attack_ms) * positions
@@ -139,7 +141,9 @@ class MultibandParams:
             + (self.treb_release_ms - self.bass_release_ms) * positions
         )
 
-        thr = np.mean(base_thr) + (base_thr - np.mean(base_thr)) * self.intensity
+        thr = (
+            np.mean(base_thr) + (base_thr - np.mean(base_thr)) * self.intensity
+        )
         ratios = 1.0 + (ratios - 1.0) * self.intensity
         attacks = np.maximum(attacks, 15.0)
         releases = np.maximum(releases, 40.0)
@@ -149,7 +153,6 @@ class MultibandParams:
 
         bands = []
         for i in range(len(fcs_arr)):
-
             fc = float(fcs_arr[i])
             if 300.0 <= fc <= 6000.0:
                 up_boost = 2.0 * self.intensity
@@ -185,7 +188,7 @@ class ExciterSettings:
 @dataclass
 class LimiterParams:
     drive_db: float | None = None
-    ceil_db: float = -1.0
+    ceil_db: float = -0.3
     max_drive_db: float = 10.0
 
     lookahead_ms: float = 5.0
@@ -219,14 +222,14 @@ class SmartMasteringConfig:
     sample_rate: int | None = None
     slope_db: float = 3.3
     slope_hz: float = 1000.0
-    smoothing_fraction: float = 0.25
+    smoothing_fraction: float = 0.0
     mix: MixParams = field(default_factory=MixParams)
     multiband: MultibandParams = field(default_factory=MultibandParams)
     limiter: LimiterParams = field(default_factory=LimiterParams)
-    target_lufs: float = -10.0
+    target_lufs: float = -8.5
     work_lufs: float = -18.0
     correction_strength: float = 1.0
-    max_correction_db: float = 9.0
+    max_correction_db: float = 60.0
 
     bass_db: float = 2.0
     bass_hz: float = 60.0
@@ -234,7 +237,7 @@ class SmartMasteringConfig:
     warmth_db: float = 0.8
     warmth_hz: float = 180.0
     warmth_octaves: float = 1.3
-    presence_db: float = 3.5
+    presence_db: float = 6.0
     presence_hz: float = 3800.0
     presence_octaves: float = 1.5
     air_db: float = 2.0
@@ -243,11 +246,11 @@ class SmartMasteringConfig:
 
     bass_enhance_mix: float = 0.2
     bass_mono_hz: float | None = 160.0
-    exciter_mix: float = 0.25
+    exciter_mix: float = 8.0
     stereo_width: float = 1.15
 
-    low_cut: int | None = 28
-    high_cut: int | None = 21000
+    low_cut: int | None = 30
+    high_cut: int | None = 20000
     phase_type: str = "minimal"
 
     expansion_db: float = 6.0
@@ -437,7 +440,9 @@ def _generate_harmonics(
 
 
 def _compute_band_centers_hz(low_hz: float, ceiling_hz: float) -> np.ndarray:
-    count = int(np.ceil(np.log2(ceiling_hz / low_hz) * EXCITER_BANDS_PER_OCTAVE))
+    count = int(
+        np.ceil(np.log2(ceiling_hz / low_hz) * EXCITER_BANDS_PER_OCTAVE)
+    )
     return low_hz * 2.0 ** (np.arange(count + 1) / EXCITER_BANDS_PER_OCTAVE)
 
 
@@ -445,31 +450,46 @@ def _measure_band_powers_db(
     y: np.ndarray, sr: int, centers_hz: np.ndarray
 ) -> np.ndarray:
     mono = np.mean(y, axis=0)
-    freqs, psd = welch(mono, fs=sr, nperseg=min(EXCITER_NPERSEG, mono.shape[-1]))
+    freqs, psd = welch(
+        mono, fs=sr, nperseg=min(EXCITER_NPERSEG, mono.shape[-1])
+    )
     half_band = 2.0 ** (0.5 / EXCITER_BANDS_PER_OCTAVE)
     powers = np.array(
         [
-            np.sum(psd[(freqs >= center / half_band) & (freqs < center * half_band)])
+            np.sum(
+                psd[
+                    (freqs >= center / half_band) & (freqs < center * half_band)
+                ]
+            )
             for center in centers_hz
         ]
     )
     return 10.0 * np.log10(np.maximum(powers, EXCITER_POWER_FLOOR))
 
 
-def _project_levels_db(dry_db: np.ndarray, centers_hz: np.ndarray) -> np.ndarray:
+def _project_levels_db(
+    dry_db: np.ndarray, centers_hz: np.ndarray
+) -> np.ndarray:
     octaves_between = np.log2(centers_hz[None, :] / centers_hz[:, None])
-    projections = dry_db[:, None] - EXCITER_FILL_SLOPE_DB_PER_OCTAVE * octaves_between
+    projections = (
+        dry_db[:, None] - EXCITER_FILL_SLOPE_DB_PER_OCTAVE * octaves_between
+    )
     is_lower_band = octaves_between > 0.0
     return np.max(np.where(is_lower_band, projections, -np.inf), axis=0)
 
 
 def _compute_fill_gains(
-    dry_db: np.ndarray, harmonics_db: np.ndarray, centers_hz: np.ndarray, mix: float
+    dry_db: np.ndarray,
+    harmonics_db: np.ndarray,
+    centers_hz: np.ndarray,
+    mix: float,
 ) -> np.ndarray:
     target_db = np.maximum(_project_levels_db(dry_db, centers_hz), dry_db)
     deficit_power = 10.0 ** (target_db / 10.0) - 10.0 ** (dry_db / 10.0)
     gains = np.sqrt(
-        mix * np.maximum(deficit_power, 0.0) / (10.0 ** (harmonics_db / 10.0) + 1e-12)
+        mix
+        * np.maximum(deficit_power, 0.0)
+        / (10.0 ** (harmonics_db / 10.0) + 1e-12)
     )
     cap_db = np.array([_harmonic_cap_db(c) for c in centers_hz])
     budget = 10.0 ** ((dry_db + cap_db - harmonics_db) / 20.0)
@@ -488,7 +508,9 @@ def _build_fill_filter(
         left=0.0,
         right=0.0,
     )
-    return firwin2(EXCITER_FIR_TAPS, np.clip(grid_hz / (sr / 2.0), 0.0, 1.0), curve)
+    return firwin2(
+        EXCITER_FIR_TAPS, np.clip(grid_hz / (sr / 2.0), 0.0, 1.0), curve
+    )
 
 
 @passthrough_empty_audio
@@ -563,10 +585,12 @@ def apply_bass_enhancer(
 
     harm = np.tanh(drive * u) + 0.25 * (u * np.abs(u))
     harm = sosfiltfilt(
-        butter(2, np.clip(f_hp / ny, 0.001, 0.45), btype="high", output="sos"), harm
+        butter(2, np.clip(f_hp / ny, 0.001, 0.45), btype="high", output="sos"),
+        harm,
     )
     harm = sosfiltfilt(
-        butter(2, np.clip(f_lp / ny, 0.01, 0.85), btype="low", output="sos"), harm
+        butter(2, np.clip(f_lp / ny, 0.01, 0.85), btype="low", output="sos"),
+        harm,
     )
 
     rms_h = float(np.sqrt(np.mean(harm**2)))
@@ -656,7 +680,9 @@ def mix_audio(
 
     window_size = int(sr * 0.1)
     envelope = np.abs(y2_padded.mean(axis=1))
-    envelope = np.convolve(envelope, np.ones(window_size) / window_size, mode="same")
+    envelope = np.convolve(
+        envelope, np.ones(window_size) / window_size, mode="same"
+    )
 
     if np.max(envelope) > 0:
         envelope = envelope / np.max(envelope)
@@ -721,7 +747,9 @@ class SmartMastering:
     def update_bands(self) -> None:
         count = self.multiband_params.num_bands
         freq_min = self.low_cut or 30.0
-        freq_max = self.high_cut or min(self.resampling_target / 2 - 100.0, 18000.0)
+        freq_max = self.high_cut or min(
+            self.resampling_target / 2 - 100.0, 18000.0
+        )
         fcs = generate_bands(freq_min, freq_max, count)
         self.bands = self.multiband_params.make_bands(fcs, freq_min, freq_max)
 
@@ -747,7 +775,9 @@ class SmartMastering:
     def _profile(cls, name: str, duration: float) -> None:
         if not getattr(cls, "_profiling", False):
             return
-        cls._profiling_data[name] = cls._profiling_data.get(name, 0.0) + duration
+        cls._profiling_data[name] = (
+            cls._profiling_data.get(name, 0.0) + duration
+        )
 
     def __init__(
         self,
@@ -772,7 +802,9 @@ class SmartMastering:
         self.config = cfg
 
         self.mix_params = cfg.mix or SmartMasteringConfig().mix
-        self.multiband_params = cfg.multiband or SmartMasteringConfig().multiband
+        self.multiband_params = (
+            cfg.multiband or SmartMasteringConfig().multiband
+        )
         self.limiter_defaults = cfg.limiter or SmartMasteringConfig().limiter
         self.target_lufs = cfg.target_lufs or SmartMasteringConfig().target_lufs
         self.low_cut = cfg.low_cut or SmartMasteringConfig().low_cut
@@ -820,7 +852,9 @@ class SmartMastering:
         self.update_bands()
         self.nperseg = int(2 ** np.ceil(np.log2(self.sr / 5)))
 
-    def _measure_spectrum(self, y_mono: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _measure_spectrum(
+        self, y_mono: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
         NPERSEG = self.nperseg
         FLOOR_DB = -120.0
         CEILING_DB = 20.0
@@ -891,7 +925,9 @@ class SmartMastering:
                 total += db * np.exp(-0.5 * (np.log2(f / hz) / sigma) ** 2)
         if self.air_db:
             width = max(self.air_octaves, 0.2) / 4.0
-            total += self.air_db / (1.0 + np.exp(-np.log2(f / self.air_hz) / width))
+            total += self.air_db / (
+                1.0 + np.exp(-np.log2(f / self.air_hz) / width)
+            )
         return total
 
     def _phase(self, y: np.ndarray, tp: str) -> np.ndarray:
@@ -905,9 +941,13 @@ class SmartMastering:
         target_db = self._build_target_spectrum(f_axis)
 
         if not np.all(np.isfinite(target_db)):
-            target_db = np.nan_to_num(target_db, nan=0.0, posinf=0.0, neginf=0.0)
+            target_db = np.nan_to_num(
+                target_db, nan=0.0, posinf=0.0, neginf=0.0
+            )
 
-        input_db = self._smooth_target_curve(input_db, f_axis, self.smoothing_fraction)
+        input_db = self._smooth_target_curve(
+            input_db, f_axis, self.smoothing_fraction
+        )
 
         min_len = min(len(target_db), len(input_db))
         f_axis = f_axis[:min_len]
@@ -932,11 +972,15 @@ class SmartMastering:
         lim = max(float(self.max_correction_db), 1e-3)
         correction_db = lim * np.tanh(correction_db / lim)
         correction_db = correction_db + self._tone_curve(f_axis)
-        correction_db = self._smooth_target_curve(correction_db, f_axis, 1.0 / 6.0)
+        correction_db = self._smooth_target_curve(
+            correction_db, f_axis, 1.0 / 6.0
+        )
 
         audible_band = (f_axis >= 80.0) & (f_axis <= 8000.0)
         center_gain = (
-            np.median(correction_db[audible_band]) if np.any(audible_band) else 0.0
+            np.median(correction_db[audible_band])
+            if np.any(audible_band)
+            else 0.0
         )
         correction_db_norm = correction_db - center_gain
         H_lin = 10.0 ** (correction_db_norm / 20.0)
@@ -962,7 +1006,9 @@ class SmartMastering:
             if fade_size > 0:
                 window[-fade_size:] = np.hamming(fade_size * 2)[fade_size:]
 
-            h_ir_final = (h_ir_cut * window).reshape((1,) * (y.ndim - 1) + (-1,))
+            h_ir_final = (h_ir_cut * window).reshape(
+                (1,) * (y.ndim - 1) + (-1,)
+            )
             out = signal.oaconvolve(y, h_ir_final, mode="full")
 
         elif tp == "linear":
@@ -1039,16 +1085,22 @@ class SmartMastering:
             in_zone = (det_db >= l_thr) & (det_db < h_thr)
             if np.any(in_zone):
                 x = (det_db[in_zone] - l_thr) / max(h_thr - l_thr, 1e-3)
-                up_boost_db[in_zone] = max_boost * 0.5 * (1.0 + np.cos(np.pi * x))
+                up_boost_db[in_zone] = (
+                    max_boost * 0.5 * (1.0 + np.cos(np.pi * x))
+                )
 
             ramp_zone = (det_db > noise_floor_db) & (det_db < l_thr)
             if np.any(ramp_zone):
                 x_r = (det_db[ramp_zone] - noise_floor_db) / max(
                     l_thr - noise_floor_db, 1e-3
                 )
-                up_boost_db[ramp_zone] = max_boost * 0.5 * (1.0 - np.cos(np.pi * x_r))
+                up_boost_db[ramp_zone] = (
+                    max_boost * 0.5 * (1.0 - np.cos(np.pi * x_r))
+                )
 
-            up_env_db = _decoupled_envelope(np.ascontiguousarray(up_boost_db), ac, rc)
+            up_env_db = _decoupled_envelope(
+                np.ascontiguousarray(up_boost_db), ac, rc
+            )
             upward_gain = 10.0 ** (up_env_db / 20.0)
 
         total_gain = downward_gain * upward_gain
@@ -1115,10 +1167,14 @@ class SmartMastering:
 
         out = np.array(y2, copy=True)
         for f_lo, f_hi in pairwise(edges):
-            sos = signal.butter(2, [f_lo / nyq, f_hi / nyq], btype="band", output="sos")
+            sos = signal.butter(
+                2, [f_lo / nyq, f_hi / nyq], btype="band", output="sos"
+            )
             band = signal.sosfiltfilt(sos, y2, axis=-1)
             power = np.max(
-                uniform_filter1d(band**2, size=det_win, axis=-1, mode="nearest"),
+                uniform_filter1d(
+                    band**2, size=det_win, axis=-1, mode="nearest"
+                ),
                 axis=0,
             )
             det_db = 10.0 * np.log10(power + 1e-14)
@@ -1130,12 +1186,16 @@ class SmartMastering:
             below_db = ref_db - det_db
             boost_db = np.clip(below_db * ratio, 0.0, max_boost)
             boost_db[det_db < -60.0] = 0.0
-            boost_db = _decoupled_envelope(np.ascontiguousarray(boost_db), ac, rc)
+            boost_db = _decoupled_envelope(
+                np.ascontiguousarray(boost_db), ac, rc
+            )
             gain = 10.0 ** (boost_db / 20.0) - 1.0
             out += band * gain[None, :]
         return out[0] if np.ndim(y) == 1 else out
 
-    def _stereo_widen(self, y: np.ndarray, width: float | None = None) -> np.ndarray:
+    def _stereo_widen(
+        self, y: np.ndarray, width: float | None = None
+    ) -> np.ndarray:
         """3D soundstage with mono bass anchor + side-channel low-level lift."""
         width = self.stereo_width if width is None else width
         mono_hz = self.bass_mono_hz
@@ -1170,7 +1230,9 @@ class SmartMastering:
         release_slow_ms: float,
         slow_weight: float,
     ) -> np.ndarray:
-        req_db = 20.0 * np.log10(np.minimum(1.0, limit_lin / np.maximum(peak, 1e-12)))
+        req_db = 20.0 * np.log10(
+            np.minimum(1.0, limit_lin / np.maximum(peak, 1e-12))
+        )
         L = max(1, int(lookahead_samp))
         gmin = minimum_filter1d(
             req_db, size=L, origin=-(L // 2), mode="constant", cval=0.0
@@ -1186,7 +1248,9 @@ class SmartMastering:
             np.ascontiguousarray(gs), rc_fast, rc_slow, float(slow_weight)
         )
 
-    def _limiter_prepare(self, y: np.ndarray, p: LimiterParams) -> list[np.ndarray]:
+    def _limiter_prepare(
+        self, y: np.ndarray, p: LimiterParams
+    ) -> list[np.ndarray]:
         y2 = np.atleast_2d(np.asarray(y, dtype=np.float64))
         kernel = _build_oversampling_kernel(self.sr, p.os_factor, p.kaiser_beta)
 
@@ -1307,7 +1371,9 @@ class SmartMastering:
             1,
             os_factor,
             axis=-1,
-            window=_build_oversampling_kernel(self.sr, os_factor, p.kaiser_beta),
+            window=_build_oversampling_kernel(
+                self.sr, os_factor, p.kaiser_beta
+            ),
         )
         lim_full = 10.0 ** (ceil_db / 20.0)
         return np.clip(out.astype(np.float64), -lim_full, lim_full)
@@ -1332,7 +1398,10 @@ class SmartMastering:
         return out[0] if was_1d else out
 
     def _limit_to_target(
-        self, y: np.ndarray, target_lufs: float | None, p: LimiterParams | None = None
+        self,
+        y: np.ndarray,
+        target_lufs: float | None,
+        p: LimiterParams | None = None,
     ) -> np.ndarray:
         p = p or self.limiter_defaults
         y2 = np.atleast_2d(np.asarray(y, dtype=np.float64))
@@ -1341,7 +1410,9 @@ class SmartMastering:
 
         current = self._measure_lufs(y2)
         if target_lufs is None or current is None:
-            return self._limit_oversampled(x_os, 0.0, p.ceil_db, p)[..., :orig_len]
+            return self._limit_oversampled(x_os, 0.0, p.ceil_db, p)[
+                ..., :orig_len
+            ]
 
         norm = 10.0 ** ((target_lufs - current) / 20.0)
         for band_os in x_os:
@@ -1351,8 +1422,10 @@ class SmartMastering:
         best = None
         best_err = np.inf
 
-        for it in range(max(1, p.max_iterations)):
-            out = self._limit_oversampled(x_os, drive, p.ceil_db, p)[..., :orig_len]
+        for _it in range(max(1, p.max_iterations)):
+            out = self._limit_oversampled(x_os, drive, p.ceil_db, p)[
+                ..., :orig_len
+            ]
             measured = self._measure_lufs(out)
             if measured is None:
                 best = out
@@ -1366,7 +1439,10 @@ class SmartMastering:
                 break
 
             history.append((drive, measured))
-            if len(history) >= 2 and abs(history[-1][0] - history[-2][0]) > 1e-3:
+            if (
+                len(history) >= 2
+                and abs(history[-1][0] - history[-2][0]) > 1e-3
+            ):
                 s = (history[-1][1] - history[-2][1]) / (
                     history[-1][0] - history[-2][0]
                 )
@@ -1397,13 +1473,17 @@ class SmartMastering:
                 (vh - vb * k / q + k * k) / a0,
             ]
         )
-        a1 = np.array([1.0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0])
+        a1 = np.array(
+            [1.0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0]
+        )
 
         f0, q = 38.13547087602444, 0.5003270373238773
         k = np.tan(np.pi * f0 / sr)
         a0 = 1.0 + k / q + k * k
         b2 = np.array([1.0, -2.0, 1.0])
-        a2 = np.array([1.0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0])
+        a2 = np.array(
+            [1.0, 2.0 * (k * k - 1.0) / a0, (1.0 - k / q + k * k) / a0]
+        )
         return b1, a1, b2, a2
 
     def _measure_lufs(self, y: np.ndarray) -> float | None:
@@ -1450,7 +1530,9 @@ class SmartMastering:
         if sr is not None:
             validate_sample_rate(sr)
         if not isinstance(y, np.ndarray) or y.ndim == 0:
-            raise InvalidAudioInputError("Audio must be a 1D or 2D numpy array.")
+            raise InvalidAudioInputError(
+                "Audio must be a 1D or 2D numpy array."
+            )
         if y.size == 0:
             return
         if y.ndim > 2:
@@ -1458,11 +1540,16 @@ class SmartMastering:
                 f"Audio must be 1D or 2D, got {y.ndim} dimensions."
             )
         if not (
-            np.issubdtype(y.dtype, np.floating) or np.issubdtype(y.dtype, np.integer)
+            np.issubdtype(y.dtype, np.floating)
+            or np.issubdtype(y.dtype, np.integer)
         ):
-            raise InvalidAudioInputError(f"Audio must be numeric, got dtype {y.dtype}.")
+            raise InvalidAudioInputError(
+                f"Audio must be numeric, got dtype {y.dtype}."
+            )
         if np.issubdtype(y.dtype, np.floating) and not np.all(np.isfinite(y)):
-            raise InvalidAudioInputError("Audio contains NaN or infinite values.")
+            raise InvalidAudioInputError(
+                "Audio contains NaN or infinite values."
+            )
 
     def process(self, y: np.ndarray, sr: int = None) -> tuple[np.ndarray, int]:
         self._validate_input(y, sr)
@@ -1488,7 +1575,9 @@ class SmartMastering:
         expected_len = int(round(orig_len * self.sr / orig_sr))
         y_stereo = stereo(y_resamp)
 
-        y_clean = freq_cut(y_stereo, self.sr, low_cut=self.low_cut, high_cut=None)
+        y_clean = freq_cut(
+            y_stereo, self.sr, low_cut=self.low_cut, high_cut=None
+        )
 
         y_work = self._apply_lufs(y_clean, self.work_lufs)
 
@@ -1497,7 +1586,9 @@ class SmartMastering:
         y_mbc = self._multiband_compress(y_eq)
 
         if self.bass_enhance_mix > 0.0:
-            y_mbc = apply_bass_enhancer(y_mbc, self.sr, mix=self.bass_enhance_mix)
+            y_mbc = apply_bass_enhancer(
+                y_mbc, self.sr, mix=self.bass_enhance_mix
+            )
 
         if self.exciter_mix > 0.0:
             y_air = apply_exciter(
@@ -1514,7 +1605,9 @@ class SmartMastering:
 
         y_wide = self._stereo_widen(stereo(y_exp))
 
-        y_band = freq_cut(y_wide, self.sr, low_cut=self.low_cut, high_cut=self.high_cut)
+        y_band = freq_cut(
+            y_wide, self.sr, low_cut=self.low_cut, high_cut=self.high_cut
+        )
 
         pre_lufs = self._measure_lufs(y_band)
         rise_cap = self.work_lufs + self.pre_limiter_rise_lu
