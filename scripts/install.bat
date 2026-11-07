@@ -4,7 +4,7 @@ cd /d %~dp0
 set "PYTHON_DIR=%LOCALAPPDATA%\Programs\Python\Python311"
 set "PYTHON_EXE="
 set "MIN_MAJOR=3"
-set "MIN_MINOR=11"
+set "MIN_MINOR=10"
 
 for /f "tokens=*" %%i in ('dir /b /s "C:\Program Files (x86)\Windows Kits\10\bin\*signtool.exe" 2^>nul') do (
     set "SIGNTOOL_PATH=%%i"
