@@ -18,6 +18,9 @@ def test_same_prefix_different_content_produces_different_keys():
         with open(f2, "wb") as f:
             f.write(prefix + b"TAIL_TWO")
 
+        os.utime(f1, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(f2, ns=(1_000_000_000, 1_000_000_000))
+
         k1 = cache.make_file_key(f1, "v1", {})
         k2 = cache.make_file_key(f2, "v1", {})
 

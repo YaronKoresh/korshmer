@@ -11,9 +11,7 @@ BASE_DIR = BASE_DIR.resolve()
 
 FLUID_DIR = BASE_DIR / "fluidsynth"
 
-# The bundled SoundFont lives in fluidsynth/soundfont.sf3. To try a different
-# (e.g. higher quality) GM/GS bank without overwriting the bundled file, point
-# the KORSHMER_SOUNDFONT environment variable at any .sf3/.sf3 file.
+
 _SF3_OVERRIDE = os.environ.get("KORSHMER_SOUNDFONT")
 if _SF3_OVERRIDE:
     SF3_PATH = Path(_SF3_OVERRIDE).expanduser()

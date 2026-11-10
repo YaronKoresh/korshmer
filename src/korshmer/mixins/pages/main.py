@@ -279,7 +279,7 @@ class MainPagesMixin:
         self.chk_gm = QCheckBox("GM Mapping")
         self.chk_wav32 = QCheckBox("32-bit WAV")
         self.chk_music_only = QCheckBox("Skip non-music parts")
-        self.chk_music_only.setChecked(False)
+        self.chk_music_only.setChecked(True)
         self.combo_separation = QComboBox()
         self.combo_separation.addItems(["Fast", "Balanced", "Best"])
         self.combo_separation.setCurrentText("Best")

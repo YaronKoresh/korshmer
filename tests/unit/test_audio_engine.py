@@ -259,6 +259,7 @@ def test_seek_during_prefetched_playback_plays_from_new_position(monkeypatch):
 def _retry_engine(monkeypatch, fail_times):
     import sounddevice as sd
 
+    monkeypatch.setattr(sd, "query_devices", lambda *a, **k: [])
     calls = []
 
     class FlakyStream:

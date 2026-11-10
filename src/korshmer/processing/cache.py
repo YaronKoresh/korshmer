@@ -78,7 +78,8 @@ class ProcessingCache:
             hasher = hashlib.sha256()
             hasher.update(f"{stat.st_size}:{stat.st_mtime_ns}:".encode())
             with open(file_path, "rb") as f:
-                hasher.update(f.read(65536))
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    hasher.update(chunk)
             file_hash = hasher.hexdigest()
         except OSError:
             file_hash = hashlib.sha256(file_path.encode()).hexdigest()

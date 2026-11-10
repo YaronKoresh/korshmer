@@ -7,7 +7,7 @@ import pytest
 
 class TestFilePathValidation:
     def test_absolute_path_validation(self):
-        path = "/home/user/test.txt"
+        path = os.path.abspath("test.txt")
         assert os.path.isabs(path)
 
     def test_relative_path_detection(self):

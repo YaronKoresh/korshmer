@@ -1,4 +1,5 @@
 import logging
+import os
 from dataclasses import dataclass
 
 import librosa
@@ -325,6 +326,8 @@ def transcribe_vocal_melody(
     audio_path, options=None, progress=None, *, should_stop=None
 ):
     options = options or VocalMelodyOptions()
+    if not os.path.isfile(audio_path):
+        raise FileNotFoundError(audio_path)
     _report(progress, 0.0, "Loading vocals...")
     y, _ = librosa.load(audio_path, sr=options.sample_rate, mono=True)
     if len(y) < options.frame_length:

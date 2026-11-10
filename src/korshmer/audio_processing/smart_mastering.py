@@ -1,5 +1,6 @@
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from itertools import pairwise
 
@@ -23,6 +24,7 @@ from scipy.signal import (
 )
 
 from ..exceptions import InvalidAudioInputError
+from ..utils.worker_count import KIND_COMPUTE, compute_worker_count
 from .generate_bands import generate_bands
 from .validation import (
     EMPTY_AUDIO_MESSAGE,
@@ -75,6 +77,14 @@ EXCITER_MIN_SAMPLES = 1024
 OVERSAMPLING_TAPS_PER_FACTOR = 48
 TRUE_PEAK_GUARD_DB = 0.3
 EXPANSION_MIN_SAMPLES = 2048
+SIDE_FILTER_MIN_SAMPLES = 10
+DEFAULT_SMOOTHING_OCTAVES = 1.0 / 3.0
+SAMPLE_RATE_HINT = "Pass a positive whole-number sample rate in Hz."
+AUDIO_SHAPE_HINT = (
+    "Pass a numpy array shaped (samples,) or (channels, samples)."
+)
+AUDIO_DTYPE_HINT = "Convert the audio to a float or integer dtype."
+AUDIO_FINITE_HINT = "Replace NaN and infinite samples before mastering."
 
 
 @dataclass
@@ -94,7 +104,6 @@ class MultibandBand:
 
 @dataclass
 class MultibandParams:
-
     num_bands: int = 5
     intensity: float = 1.0
 
@@ -222,7 +231,7 @@ class SmartMasteringConfig:
     sample_rate: int | None = None
     slope_db: float = 3.3
     slope_hz: float = 1000.0
-    smoothing_fraction: float = 0.0
+    smoothing_fraction: float = DEFAULT_SMOOTHING_OCTAVES
     multiband: MultibandParams = field(default_factory=MultibandParams)
     limiter: LimiterParams = field(default_factory=LimiterParams)
     target_lufs: float = -8.5
@@ -397,7 +406,10 @@ def _excite_band(
     )
     is_oversampling_needed = f_high * order > nyquist
     saturated = _saturate_analog_warmth(
-        normalized, sr, drive, settings.oversample if is_oversampling_needed else 2
+        normalized,
+        sr,
+        drive,
+        settings.oversample if is_oversampling_needed else 2,
     )
 
     wn0 = np.clip(guard_low / nyquist, 0.01, 0.98)
@@ -437,8 +449,13 @@ def _generate_harmonics(
     pre = min(n - 1, int(sr * EXCITER_EDGE_PAD_MS / 1000.0))
     padded = np.pad(y, ((0, 0), (pre, pre)), mode="reflect")
     harmonics = np.zeros_like(padded)
-    for band_hz in pairwise(edges_hz):
-        harmonics += _excite_band(padded, sr, band_hz, settings)
+    bands = list(pairwise(edges_hz))
+    workers = min(len(bands), compute_worker_count(KIND_COMPUTE))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for excited in pool.map(
+            lambda band_hz: _excite_band(padded, sr, band_hz, settings), bands
+        ):
+            harmonics += excited
     return harmonics[:, pre : pre + n]
 
 
@@ -869,7 +886,9 @@ class SmartMastering:
         )
         self.slope_hz = cfg.slope_hz or SmartMasteringConfig().slope_hz
         self.smoothing_fraction = (
-            cfg.smoothing_fraction or SmartMasteringConfig().smoothing_fraction
+            cfg.smoothing_fraction
+            if cfg.smoothing_fraction is not None
+            else DEFAULT_SMOOTHING_OCTAVES
         )
 
         self.multiband_params = (
@@ -1268,6 +1287,8 @@ class SmartMastering:
         mono_hz = self.bass_mono_hz
         if y.ndim < 2 or y.shape[0] != 2:
             return y
+        if y.shape[-1] < SIDE_FILTER_MIN_SAMPLES:
+            return y
 
         mid = (y[0] + y[1]) * 0.5
         side = (y[0] - y[1]) * 0.5
@@ -1608,27 +1629,36 @@ class SmartMastering:
         if y is None:
             raise InvalidAudioInputError(EMPTY_AUDIO_MESSAGE)
         if sr is not None:
-            validate_sample_rate(sr)
+            try:
+                validate_sample_rate(sr)
+            except ValueError as exc:
+                raise InvalidAudioInputError(
+                    str(exc), recovery_hint=SAMPLE_RATE_HINT
+                ) from exc
         if not isinstance(y, np.ndarray) or y.ndim == 0:
             raise InvalidAudioInputError(
-                "Audio must be a 1D or 2D numpy array."
+                "Audio must be a 1D or 2D numpy array.",
+                recovery_hint=AUDIO_SHAPE_HINT,
             )
         if y.size == 0:
             return
         if y.ndim > 2:
             raise InvalidAudioInputError(
-                f"Audio must be 1D or 2D, got {y.ndim} dimensions."
+                f"Audio must be 1D or 2D, got {y.ndim} dimensions.",
+                recovery_hint=AUDIO_SHAPE_HINT,
             )
         if not (
             np.issubdtype(y.dtype, np.floating)
             or np.issubdtype(y.dtype, np.integer)
         ):
             raise InvalidAudioInputError(
-                f"Audio must be numeric, got dtype {y.dtype}."
+                f"Audio must be numeric, got dtype {y.dtype}.",
+                recovery_hint=AUDIO_DTYPE_HINT,
             )
         if np.issubdtype(y.dtype, np.floating) and not np.all(np.isfinite(y)):
             raise InvalidAudioInputError(
-                "Audio contains NaN or infinite values."
+                "Audio contains NaN or infinite values.",
+                recovery_hint=AUDIO_FINITE_HINT,
             )
 
     def process(self, y: np.ndarray, sr: int = None) -> tuple[np.ndarray, int]:
@@ -1668,7 +1698,11 @@ class SmartMastering:
 
         if self.bass_enhance_mix > 0.0:
             y_mbc = self._timed(
-                "bass_enhancer", apply_bass_enhancer, y_mbc, self.sr, mix=self.bass_enhance_mix
+                "bass_enhancer",
+                apply_bass_enhancer,
+                y_mbc,
+                self.sr,
+                mix=self.bass_enhance_mix,
             )
 
         if self.exciter_mix > 0.0:

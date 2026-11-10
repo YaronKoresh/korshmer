@@ -75,6 +75,7 @@ from korshmer.utils.worker_count import compute_worker_count
 
 BASS_SPLIT_MIN_PART = 0.12
 BASS_SPLIT_GAP = 0.04
+POLISH_MIN_NOTE = 0.06
 MIDI_STEM_TYPES = ("drums", "bass", "other", "vocals", "guitar", "piano")
 VOCAL_PROGRAM = 52
 VOCAL_TRACK_NAME = "Vocals"
@@ -593,7 +594,9 @@ def process_track(
                 progress(0.99, desc=f"Snapped notes to the grid ({summary})")
 
         def polish_midi(midi_obj):
-            midi_obj = fix_legato_and_flutter(midi_obj, min_duration=0.25)
+            midi_obj = fix_legato_and_flutter(
+                midi_obj, min_duration=POLISH_MIN_NOTE
+            )
             midi_obj = simplify_chord_density(midi_obj, max_voices=4)
             if beat_grid is not None and supports(grid_div):
                 counts = snap_adaptive(

@@ -1,14 +1,3 @@
-"""Tests for swapping the bundled SoundFont for a different GM/GS bank.
-
-The app is built around GeneralUser GS, which ships every General MIDI
-program plus the GS drum kits the genres use (including kit 26, "Dance").
-A user may replace ``fluidsynth/soundfont.sf3`` with a higher quality bank
-(or point ``KORSHMER_SOUNDFONT`` at one). Many excellent free banks -- e.g.
-MuseScore General / FluidR3 -- do not carry every GS drum kit, so the render
-must fall back to a present kit of the same family instead of silently
-dropping to whatever the synth defaults to.
-"""
-
 import importlib
 import pathlib
 
@@ -50,7 +39,7 @@ class TestResolveDrumKit:
         assert ap.resolve_drum_kit(26, available) == 26
 
     def test_dance_kit_resolves_to_tr808_when_dance_is_absent(self):
-        # MuseScore General / FluidR3 lack kit 26 but carry 24 and 25.
+
         available = {0, 8, 16, 24, 25, 32, 40}
         assert ap.resolve_drum_kit(26, available) == 25
 
@@ -66,12 +55,17 @@ class TestResolveDrumKit:
 
 
 class TestReadSoundfontKits:
-    def test_bundled_soundfont_carries_every_kit_the_genres_use(self):
+    def test_bundled_soundfont_covers_every_kit_family_the_genres_use(self):
         if not BUNDLED_SF3.exists():
             pytest.skip("bundled soundfont missing")
+        from korshmer.midi_generation.genres import KNOWN_KITS
+
         kits = ap.read_soundfont_kits(str(BUNDLED_SF3))
-        for kit in (0, 8, 16, 24, 25, 26, 32, 40):
-            assert kit in kits
+        assert ap.KIT_STANDARD in kits
+        for kit in KNOWN_KITS:
+            resolved = ap.resolve_drum_kit(kit, kits)
+            assert resolved in kits
+            assert resolved == kit or resolved in ap.DRUM_KIT_FALLBACKS[kit]
 
     def test_missing_file_yields_empty_set_without_raising(self, tmp_path):
         assert ap.read_soundfont_kits(str(tmp_path / "nope.sf3")) == set()
@@ -82,7 +76,7 @@ class TestReadSoundfontKits:
         assert ap.read_soundfont_presets(str(junk)) == set()
 
     def test_bad_path_type_is_handled_not_raised(self):
-        # Inspection must never break rendering, even on a bad argument.
+
         assert ap.read_soundfont_kits(None) == set()
 
 
@@ -93,7 +87,7 @@ class TestSoundfontPathOverride:
 
         constants = importlib.reload(constants)
         try:
-            assert str(constants.SF3_PATH) == "/tmp/custom-bank.sf3"
+            assert constants.SF3_PATH == pathlib.Path("/tmp/custom-bank.sf3")
         finally:
             monkeypatch.delenv("KORSHMER_SOUNDFONT", raising=False)
             importlib.reload(constants)

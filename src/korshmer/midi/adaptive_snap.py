@@ -2,7 +2,7 @@ import pretty_midi
 
 from korshmer.midi_algorithms import validate_beat_grid_args
 
-DIVISIONS = (1, 2, 4)
+DIVISIONS = (1, 2, 4, 8)
 SHORT_BEATS = 0.4
 LONG_BEATS = 1.0
 TOLERANCE_BEATS = 0.08
@@ -12,13 +12,14 @@ MIN_NOTE = 0.01
 OVERLAP_GAP = 0.005
 BEAT_EVIDENCE = 4.0
 BEAT_MARGIN = 1.5
+LENGTH_DECIMALS = 6
 
 KICK_AND_SNARE = frozenset({35, 36, 37, 38, 39, 40})
-LABELS = {1: "1/4", 2: "1/8", 4: "1/16"}
+LABELS = {1: "1/4", 2: "1/8", 4: "1/16", 8: "1/32"}
 
 
 def supports(grid_div):
-    return grid_div in (1, 2, 4)
+    return grid_div in (1, 2, 4, 8, 16)
 
 
 def finest_for(grid_div):
@@ -31,6 +32,7 @@ def allowed_divisions(finest):
 
 
 def _candidates(note, is_drum, beats, allowed):
+    beats = round(beats, LENGTH_DECIMALS)
     if is_drum:
         wanted = (
             DIVISIONS[1:] if note.pitch in KICK_AND_SNARE else DIVISIONS[:-1]
@@ -40,7 +42,7 @@ def _candidates(note, is_drum, beats, allowed):
     elif beats >= SHORT_BEATS:
         wanted = DIVISIONS[1:]
     else:
-        wanted = DIVISIONS[:-1]
+        wanted = DIVISIONS[-1:]
     chosen = [d for d in wanted if d in allowed]
     return chosen or [allowed[-1]]
 
@@ -131,10 +133,6 @@ def snap_adaptive(
     validate_beat_grid_args(tempo, offset, finest, strength, swing)
     offset = find_beat_offset(midi_obj, tempo, offset, phase_div or finest)
     for inst in midi_obj.instruments:
-        # Drums are transcribed at the onsets actually heard in the source.
-        # When snap_drums is False keep those onsets instead of moving them onto
-        # the grid, so a converted drum part matches the original timing. Their
-        # overlapping same-pitch notes are still trimmed, as when snapping.
         if inst.is_drum and not snap_drums:
             _trim_overlaps(inst)
             continue

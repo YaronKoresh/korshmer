@@ -227,32 +227,25 @@ def process_stereo_widen(path, width=1.5):
 
 MAX_SIMULTANEOUS_NOTES = 128
 REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.25)
-CHORUS_SETTINGS = (3, 2.0, 0.3, 8.0, 0)
+CHORUS_SETTINGS = (3, 0.3, 0.3, 8.0, 0)
 RENDER_TARGET_RMS_DB = -12.0
 RENDER_LIMIT_KNEE = 0.5
 
 
-# The genres use General MIDI / GS drum kits. A replacement SoundFont may not
-# carry every GS kit -- e.g. MuseScore General and FluidR3 lack kit 26
-# ("Dance"), which EDM uses. When a kit is missing, fall back through sonically
-# related kits of the same family and finally to the Standard kit (0), which
-# every GM SoundFont provides, so drums stay audible and in character instead
-# of dropping to whatever the synth happens to default to.
 KIT_STANDARD = 0
 DRUM_KIT_FALLBACKS = {
     0: (),
-    8: (16,),  # Room -> Power
-    16: (8,),  # Power -> Room
-    24: (25, 26),  # Electronic -> TR-808 -> Dance
-    25: (24, 26),  # TR-808 -> Electronic -> Dance
-    26: (25, 24),  # Dance -> TR-808 -> Electronic
-    32: (40,),  # Jazz -> Brush
-    40: (32,),  # Brush -> Jazz
+    8: (16,),
+    16: (8,),
+    24: (25, 26),
+    25: (24, 26),
+    26: (25, 24),
+    32: (40,),
+    40: (32,),
 }
 
 
 def drum_kit_fallback_order(requested):
-    """Return the kits to try for ``requested``, best first, ending at 0."""
     order = [requested]
     for kit in DRUM_KIT_FALLBACKS.get(requested, ()):
         if kit not in order:
@@ -263,7 +256,6 @@ def drum_kit_fallback_order(requested):
 
 
 def resolve_drum_kit(requested, available):
-    """Pick the best drum kit present in ``available`` for ``requested``."""
     for kit in drum_kit_fallback_order(requested):
         if kit in available:
             return kit
@@ -271,12 +263,6 @@ def resolve_drum_kit(requested, available):
 
 
 def read_soundfont_presets(sf3_path):
-    """Return the set of (bank, preset) pairs a SoundFont declares.
-
-    Reads only the preset headers (the uncompressed ``phdr`` chunk), so it
-    works for both .sf3 and Ogg-compressed .sf3 banks without the FluidSynth
-    library. Returns an empty set if the file cannot be parsed.
-    """
     presets = set()
     try:
         with open(sf3_path, "rb") as fh:
@@ -307,15 +293,11 @@ def read_soundfont_presets(sf3_path):
                 else:
                     fh.seek(size + (size & 1), 1)
     except Exception:
-        # Best effort: a missing, unreadable or malformed file yields an empty
-        # set, and the renderer then leaves drum programs untouched rather than
-        # failing. Never let SoundFont inspection break rendering.
         return presets
     return presets
 
 
 def read_soundfont_kits(sf3_path):
-    """Return the drum-kit presets (bank 128) a SoundFont declares."""
     return {
         prog for bank, prog in read_soundfont_presets(sf3_path) if bank == 128
     }
@@ -357,9 +339,7 @@ def render_midi_to_wav(
         return None
 
     sr = 44100
-    # Drum kits the replacement SoundFont actually carries, so a missing GS
-    # kit (e.g. "Dance"/26 in MuseScore General) falls back instead of
-    # silently playing the synth's default kit.
+
     available_kits = read_soundfont_kits(sf3_path)
 
     def render_batch(instruments_batch):

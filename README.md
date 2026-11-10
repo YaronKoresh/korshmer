@@ -61,7 +61,7 @@ Or run directly via Python:
 python -m korshmer
 ```
 
-# Test
+# Testing
 
 Install test dependencies:
 ```bash

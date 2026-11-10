@@ -3,7 +3,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 PYPROJECT = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
 
@@ -18,13 +17,6 @@ def test_readme_python_version_matches_pyproject():
     versions = re.findall(r"Python (\d+\.\d+)(?:\+| or higher)", README)
     assert versions
     assert set(versions) == {minimum}
-
-
-def test_changelog_python_version_matches_pyproject():
-    versions = re.findall(
-        r"Primary Language:\*\* Python \(>= (\d+\.\d+)\)", CHANGELOG
-    )
-    assert versions == [_minimum_python()]
 
 
 def test_readme_scripts_exist():

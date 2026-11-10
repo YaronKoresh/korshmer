@@ -5,6 +5,14 @@ import io
 import pathlib
 import tokenize
 
+PROTECTED_DIRECTORY_NAMES = (
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    ".env",
+)
+
 
 def _is_string_docstring_value(node: ast.AST) -> bool:
     if isinstance(node, ast.Constant):
@@ -109,8 +117,16 @@ def strip_comments_and_format(file_path: pathlib.Path) -> None:
         print(f"Failed {file_path}: {error}")
 
 
+def is_protected_path(path: pathlib.Path, workspace_root: pathlib.Path) -> bool:
+    relative_parts = path.relative_to(workspace_root).parts
+    return any(part in PROTECTED_DIRECTORY_NAMES for part in relative_parts)
+
+
 def main() -> None:
-    for path in pathlib.Path(".").rglob("*.py"):
+    workspace_root = pathlib.Path(".").resolve()
+    for path in workspace_root.rglob("*.py"):
+        if is_protected_path(path, workspace_root):
+            continue
         strip_comments_and_format(path)
 
 

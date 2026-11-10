@@ -50,7 +50,7 @@ def test_slope_db_changes_spectrum():
 def test_initialization_default():
     m = SmartMastering()
     assert m.sr == 44100
-    assert isinstance(m.mix_params, object)
+    assert isinstance(m.multiband_params, MultibandParams)
 
 
 def test_mono_input_produces_stereo():
@@ -74,8 +74,8 @@ def test_limiter_never_exceeds_ceiling():
 def test_profile_records_sections():
     m = SmartMastering()
     stats = benchmark(m, duration_sec=0.01)
-    assert "multiband_compress" in stats
-    assert stats["multiband_compress"] > 0
+    assert "multiband" in stats
+    assert stats["multiband"] > 0
 
 
 def test_spectral_slope_negative():
@@ -95,13 +95,19 @@ def test_validation_report_shape():
 
 def test_stereo_widen_effect():
     m = SmartMastering()
-    left = np.ones(100)
-    right = np.zeros(100)
+    t = np.arange(m.sr) / m.sr
+    left = np.sin(2 * np.pi * 1000.0 * t)
+    right = np.zeros_like(left)
     stereo = np.stack([left, right])
     widened = m._stereo_widen(stereo, width=2.0)
 
-    assert np.isclose(np.sum(stereo**2), np.sum(widened**2), rtol=1e-3)
+    mid_in = stereo[0] + stereo[1]
+    mid_out = widened[0] + widened[1]
+    side_in = stereo[0] - stereo[1]
+    side_out = widened[0] - widened[1]
 
+    assert np.allclose(mid_in, mid_out, atol=1e-9)
+    assert np.sum(side_out**2) > 1.5 * np.sum(side_in**2)
     assert not np.allclose(widened[0], widened[1])
 
 
@@ -241,8 +247,8 @@ def test_process_zero_signal():
 def test_generate_bands_via_config():
     cfg = SmartMasteringConfig(multiband=MultibandParams(num_bands=3))
     m = SmartMastering(cfg)
-    assert len(m.multiband_params.bands) == 3
-    fcs = [b.fc for b in m.multiband_params.bands]
+    assert len(m.bands) == 3
+    fcs = [b.fc for b in m.bands]
     expected = generate_bands(cfg.low_cut, cfg.high_cut, 3)
 
     assert np.allclose(fcs, expected)

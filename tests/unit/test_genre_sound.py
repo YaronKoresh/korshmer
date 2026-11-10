@@ -183,9 +183,7 @@ def test_the_bundled_soundfont_has_every_program_and_kit_used():
             used |= set(options)
         for program in used:
             assert (0, program) in presets, (profile.name, program)
-        # Every kit the genre uses must play: either the bundled SoundFont
-        # carries it (true for the shipped GeneralUser GS, where this is an
-        # identity) or it resolves to a related kit the bank does carry.
+
         for kit in (profile.kit, *profile.kits):
             resolved = resolve_drum_kit(kit, available_kits)
             assert (128, resolved) in presets, (profile.name, kit, resolved)
