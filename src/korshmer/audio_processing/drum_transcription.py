@@ -35,8 +35,23 @@ OPEN_DECAY_SECONDS = 0.14
 CRASH_DECAY_SECONDS = 0.6
 DECAY_FRACTION = 0.25
 MAX_DECAY_SECONDS = 1.2
-MIN_VELOCITY = 85
+
+
+MIN_VELOCITY = 40
 MAX_VELOCITY = 127
+
+
+CRASH_BAND = (4000.0, 16000.0)
+CRASH_SMOOTH_SECONDS = 0.25
+CRASH_SWELL = 2.0
+CRASH_LOOKAHEAD_SECONDS = 0.3
+CRASH_MIN_GAP_SECONDS = 1.5
+CRASH_RING_SECONDS = (0.2, 0.6)
+CRASH_RING = 1.5
+
+
+TOM_MAJORITY = 0.5
+MAX_TOM_SHARE = 0.25
 HIT_LENGTH = {"low": 0.12, "mid": 0.1, "high": 0.06}
 EPSILON = 1e-9
 
@@ -109,6 +124,40 @@ def _tom_pitch(magnitude, freqs, frame):
     if centroid < 230.0:
         return TOM_MID
     return TOM_HIGH
+
+
+def _crash_frames(raw, freqs, frame_rate):
+    band = raw[_band_slice(freqs, CRASH_BAND)].mean(axis=0)
+    size = max(1, int(round(CRASH_SMOOTH_SECONDS * frame_rate)))
+    smooth = np.convolve(band, np.ones(size) / size, mode="same")
+    usual = float(np.median(smooth))
+    if usual <= 0:
+        return np.zeros(0, dtype=int)
+    wait = max(1, int(round(CRASH_MIN_GAP_SECONDS * frame_rate)))
+    peaks = librosa.util.peak_pick(
+        smooth,
+        pre_max=size,
+        post_max=size,
+        pre_avg=2 * size,
+        post_avg=2 * size,
+        delta=0.5 * usual,
+        wait=wait,
+    )
+    look = max(1, int(round(CRASH_LOOKAHEAD_SECONDS * frame_rate)))
+    starts = []
+    for peak in peaks:
+        if smooth[peak] < CRASH_SWELL * usual:
+            continue
+        first = max(0, peak - look)
+        rise = np.diff(band[first : peak + 1], prepend=band[first])
+        start = first + int(np.argmax(rise))
+        ring_a = start + int(CRASH_RING_SECONDS[0] * frame_rate)
+        ring_b = start + int(CRASH_RING_SECONDS[1] * frame_rate)
+        ring = band[ring_a:ring_b]
+
+        if ring.size and float(ring.mean()) >= CRASH_RING * usual:
+            starts.append(start)
+    return np.array(starts, dtype=int)
 
 
 def _velocity(strength, reference):
@@ -190,6 +239,7 @@ def find_hits(audio, sample_rate=SAMPLE_RATE):
             np.percentile(np.array(bodies) / lows, BLEED_QUANTILE)
         )
 
+    mid_candidates = []
     for frame in mid_frames:
         body_energy = _window_energy(magnitude, body, frame)
         noise_energy = _window_energy(magnitude, noise, frame)
@@ -203,7 +253,14 @@ def find_hits(audio, sample_rate=SAMPLE_RATE):
         ratio = noise_energy / max(body_energy, EPSILON)
         if ratio > SNARE_MAX_NOISE_RATIO:
             continue
-        if ratio >= SNARE_NOISE_RATIO:
+        mid_candidates.append((frame, ratio))
+    snare_ratio = SNARE_NOISE_RATIO
+    if mid_candidates:
+        ratios = np.array([ratio for _, ratio in mid_candidates])
+        if float(np.mean(ratios < SNARE_NOISE_RATIO)) > TOM_MAJORITY:
+            snare_ratio = float(np.percentile(ratios, 100 * MAX_TOM_SHARE))
+    for frame, ratio in mid_candidates:
+        if ratio >= snare_ratio:
             hits.append((frame, SNARE, float(mid_flux[frame]), "mid"))
         else:
             hits.append(
@@ -215,9 +272,12 @@ def find_hits(audio, sample_rate=SAMPLE_RATE):
                 )
             )
 
+    crash_frames = _crash_frames(raw, freqs, frame_rate)
     for frame in high_frames:
         decay = _decay_seconds(magnitude, high, frame, frame_rate)
-        if decay >= CRASH_DECAY_SECONDS:
+        if _near(crash_frames, frame, tolerance) or (
+            decay >= CRASH_DECAY_SECONDS
+        ):
             pitch = CRASH
         elif decay >= OPEN_DECAY_SECONDS:
             pitch = HAT_OPEN

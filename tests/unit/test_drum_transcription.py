@@ -273,3 +273,45 @@ def test_midi_tempo_that_cannot_be_stored_falls_back_to_a_valid_one(
     again = pretty_midi.PrettyMIDI(path)
     assert np.isfinite(again.get_tempo_changes()[1][0])
     assert again.get_tempo_changes()[1][0] > 0
+
+
+def test_snares_without_their_rattle_are_not_turned_into_toms():
+
+    from scipy.signal import butter, sosfilt
+
+    audio, truth = make_drum_loop(120.0, bars=8)
+    sos = butter(4, 1800 / (SAMPLE_RATE / 2), "lowpass", output="sos")
+    dull = sosfilt(sos, audio).astype(np.float32)
+    pitches = [p for _, p, _, _ in dt.find_hits(dull, SAMPLE_RATE)]
+    toms = sum(p in (41, 45, 47, 50) for p in pitches)
+    snares = pitches.count(38)
+    assert snares > toms
+
+
+def test_hits_span_a_wide_velocity_range():
+    audio, _ = make_drum_loop(120.0, bars=4)
+    quiet = audio.copy()
+    half = len(quiet) // 2
+    quiet[:half] *= 0.2
+    velocities = [v for _, _, v, _ in dt.find_hits(quiet, SAMPLE_RATE)]
+    assert min(velocities) < 85
+    assert max(velocities) >= 120
+    assert dt.MIN_VELOCITY <= min(velocities)
+
+
+def test_a_ringing_cymbal_swell_is_a_crash():
+    sr = SAMPLE_RATE
+    audio, _ = make_drum_loop(120.0, bars=4)
+    rng = np.random.default_rng(3)
+    t = np.arange(int(1.5 * sr)) / sr
+    crash = rng.standard_normal(t.size) * np.exp(-t * 1.5)
+    sos = __import__("scipy.signal", fromlist=["butter"]).butter(
+        4, 5000 / (sr / 2), "highpass", output="sos"
+    )
+    crash = __import__("scipy.signal", fromlist=["sosfilt"]).sosfilt(sos, crash)
+    start = int(4.0 * sr)
+    audio[start : start + t.size] += 0.6 * crash.astype(np.float32)
+    crashes = [
+        when for when, p, _, _ in dt.find_hits(audio, sr) if p == dt.CRASH
+    ]
+    assert any(abs(when - 4.0) < 0.05 for when in crashes)

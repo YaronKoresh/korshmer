@@ -47,3 +47,25 @@ def test_snap_drums_false_still_trims_overlapping_same_pitch_drums():
     notes = sorted(pm.instruments[0].notes, key=lambda n: n.start)
     assert [round(n.start, 3) for n in notes] == [0.190, 0.225]
     assert notes[0].end <= notes[1].start
+
+
+def test_drums_keep_sixteenths_on_an_eighth_note_grid():
+    import pretty_midi as _pm
+
+    from korshmer.midi.adaptive_snap import snap_adaptive as _snap
+
+    tempo = 120.0
+    sixteenth = 60.0 / tempo / 4
+    midi = _pm.PrettyMIDI(initial_tempo=tempo)
+    drums = _pm.Instrument(0, is_drum=True)
+    keys = _pm.Instrument(0)
+    for step in range(32):
+        when = step * sixteenth + 0.004
+        drums.notes.append(_pm.Note(90, 42, when, when + 0.05))
+    for step in range(0, 32, 2):
+        when = step * sixteenth + 0.004
+        keys.notes.append(_pm.Note(90, 60, when, when + 0.2))
+    midi.instruments += [drums, keys]
+    _snap(midi, tempo, 0.0, finest=2)
+    starts = sorted(round(n.start / sixteenth) for n in drums.notes)
+    assert len(set(starts)) == 32

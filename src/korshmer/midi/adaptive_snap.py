@@ -125,8 +125,11 @@ def snap_adaptive(
     swing=0.0,
     phase_div=None,
     snap_drums=True,
+    drum_finest=4,
 ):
     allowed = allowed_divisions(finest)
+
+    drum_allowed = allowed_divisions(max(finest, drum_finest)) or allowed
     counts = {LABELS[d]: 0 for d in (allowed or ())}
     if not allowed or not tempo or tempo <= 0:
         return counts
@@ -139,7 +142,12 @@ def snap_adaptive(
         for note in inst.notes:
             duration = note.end - note.start
             division, target = choose_division(
-                note, inst.is_drum, tempo, offset, allowed, swing
+                note,
+                inst.is_drum,
+                tempo,
+                offset,
+                drum_allowed if inst.is_drum else allowed,
+                swing,
             )
             start = note.start * (1 - strength) + target * strength
             note.start = max(0.0, start)
@@ -148,7 +156,8 @@ def snap_adaptive(
                 end = choose_end(note, note.start, tempo, offset, allowed)
                 note.end = note.end * (1 - strength) + end * strength
                 note.end = max(note.end, note.start + MIN_NOTE)
-            counts[LABELS[division]] += 1
+            label = LABELS[division]
+            counts[label] = counts.get(label, 0) + 1
         _trim_overlaps(inst)
     return counts
 
