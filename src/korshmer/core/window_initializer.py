@@ -1,5 +1,5 @@
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QPoint, QRectF, Qt
+from PySide6.QtGui import QGuiApplication, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication
 
 from korshmer.ui.layout_config import (
@@ -14,12 +14,27 @@ from korshmer.ui.styling import (
     MAT_HOVER,
     MAT_PRIMARY,
     MAT_TEXT,
+    WINDOW_EDGE,
+    WINDOW_EDGE_WIDTH,
+    WINDOW_FILL,
+    WINDOW_RADIUS,
+)
+
+OPAQUE_WIDGETS = (
+    "QMenu, QMenuBar::item:selected, QComboBox QAbstractItemView, "
+    "QDialog, QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, "
+    "QDoubleSpinBox, QTableView, QTreeView, QHeaderView::section"
 )
 
 
 def build_main_stylesheet():
     return f"""
             * {{
+                background: transparent;
+                background-color: transparent;
+            }}
+
+            {OPAQUE_WIDGETS} {{
                 background: {MAT_BG};
                 background-color: {MAT_BG};
             }}
@@ -229,6 +244,61 @@ def initial_window_size():
             MAIN_WINDOW_MIN_HEIGHT, min(MAIN_WINDOW_HEIGHT, area.height() - 40)
         ),
     )
+
+
+def _framed(window):
+    return not (window.isMaximized() or window.isFullScreen())
+
+
+def frame_margin(window):
+    return WINDOW_EDGE_WIDTH if _framed(window) else 0
+
+
+def paint_window_frame(window, painter):
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setCompositionMode(QPainter.CompositionMode_Source)
+    rect = QRectF(window.rect())
+    if not _framed(window):
+        painter.fillRect(rect, WINDOW_FILL)
+        return
+    half = WINDOW_EDGE_WIDTH / 2
+    path = QPainterPath()
+    path.addRoundedRect(
+        rect.adjusted(half, half, -half, -half), WINDOW_RADIUS, WINDOW_RADIUS
+    )
+    painter.fillRect(rect, Qt.transparent)
+    painter.fillPath(path, WINDOW_FILL)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+    painter.setPen(QPen(WINDOW_EDGE, WINDOW_EDGE_WIDTH))
+    painter.drawPath(path)
+
+
+def update_frame_margin(window):
+    central = window.centralWidget()
+    layout = central.layout() if central is not None else None
+    if layout is not None:
+        m = frame_margin(window)
+        layout.setContentsMargins(m, m, m, m)
+
+
+def drag_window_to(window, global_pos):
+    grab = window.drag_pos
+    if grab is None:
+        return
+    if not _framed(window):
+        press = grab + window.frameGeometry().topLeft()
+        if (global_pos - press).manhattanLength() < (
+            QApplication.startDragDistance()
+        ):
+            return
+        share = grab.x() / max(1, window.width())
+
+        normal = window.normalGeometry()
+        width = normal.width() if normal.width() > 0 else window.width()
+        window.showNormal()
+        grab = QPoint(int(round(share * width)), grab.y())
+        window.drag_pos = grab
+    window.move(global_pos - grab)
 
 
 def init_window_chrome(window):

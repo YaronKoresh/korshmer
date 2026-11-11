@@ -313,10 +313,12 @@ class KorshmerTitleBar(QFrame):
     def toggle_max(self):
         if self.parent_window.isMaximized():
             self.parent_window.showNormal()
-            self.btn_max.setText("▢")
         else:
             self.parent_window.showMaximized()
-            self.btn_max.setText("❐")
+        self.sync_max_button()
+
+    def sync_max_button(self):
+        self.btn_max.setText("❐" if self.parent_window.isMaximized() else "▢")
 
     def eventFilter(self, obj, event):
         if obj == self.menu_bar:
@@ -335,9 +337,12 @@ class KorshmerTitleBar(QFrame):
                     and self.parent_window.moving_window
                     and self.parent_window.drag_pos is not None
                 ):
-                    self.parent_window.move(
-                        event.globalPosition().toPoint()
-                        - self.parent_window.drag_pos
+                    from korshmer.core.window_initializer import (
+                        drag_window_to,
+                    )
+
+                    drag_window_to(
+                        self.parent_window, event.globalPosition().toPoint()
                     )
                     return True
             elif event.type() == QEvent.MouseButtonRelease:

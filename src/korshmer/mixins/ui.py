@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from korshmer.core.control_bar import ControlBar
+from korshmer.core.window_initializer import frame_margin
 from korshmer.event_bus import Event, publish
 from korshmer.ui.layout_config import (
     LEFT_PANEL_HEADER_HEIGHT,
@@ -61,7 +62,8 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
         self.setMinimumSize(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT)
         self.main_layout = QVBoxLayout(central)
         self.main_layout.setSpacing(0)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        margin = frame_margin(self)
+        self.main_layout.setContentsMargins(margin, margin, margin, margin)
         self.title_bar = KorshmerTitleBar(self)
         self.main_layout.addWidget(self.title_bar)
         self.splitter = QSplitter(Qt.Horizontal)

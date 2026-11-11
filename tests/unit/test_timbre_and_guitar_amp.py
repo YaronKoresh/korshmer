@@ -94,7 +94,7 @@ def test_amp_distorts_keeps_level_and_makes_stereo():
     out = guitar_amp.amp(clean, SR, guitar_amp.HIGH_GAIN)
     assert out.shape == (SR, 2)
     assert out.dtype == np.float32
-    rms = lambda x: float(np.sqrt(np.mean(x**2)))              
+    rms = lambda x: float(np.sqrt(np.mean(x**2)))
     assert rms(out[:, 0]) == pytest.approx(rms(clean), rel=0.05)
     spectrum = np.abs(np.fft.rfft(out[:, 0]))
     freqs = np.fft.rfftfreq(SR, 1 / SR)

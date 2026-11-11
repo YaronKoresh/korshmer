@@ -25,6 +25,12 @@ MAT_WARNING = "#FBBC04"
 MAT_ERROR = "#EA4335"
 MAT_BORDER = "#222"
 
+
+WINDOW_FILL = QColor(250, 251, 253, 215)
+WINDOW_EDGE = QColor("#3C4A5E")
+WINDOW_EDGE_WIDTH = 2
+WINDOW_RADIUS = 10
+
 BPM_SPINBOX_NORMAL = """
     QSpinBox {
         background-color: #1a1a1a;

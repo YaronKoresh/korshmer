@@ -1,4 +1,3 @@
-
 import numpy as np
 from scipy.signal import butter, sosfilt
 
@@ -30,7 +29,7 @@ def plucked(seconds=12.0, step=0.25, seed=0, pitches=RIFF):
 
 def distorted(seconds=12.0):
     clean = plucked(seconds, step=0.5)
-                                                        
+
     hot = np.tanh(30 * clean / np.abs(clean).max())
     nyq = SR / 2
     hot = sosfilt(butter(4, 5000 / nyq, "lowpass", output="sos"), hot)

@@ -474,9 +474,23 @@ class InteractivePianoRoll(QGraphicsView):
         scale_y = transform.m22() if transform.m22() else 1.0
         return scale_x, scale_y
 
+    def _lane_reserve(self):
+        if not self._clip_items:
+            return 0.0
+        _, scale_y = self._view_scales()
+        return CLIP_LANE_HEIGHT / scale_y
+
+    def _apply_scene_rect(self, width=None):
+        rect = self.scene.sceneRect()
+        width = rect.width() if width is None else width
+        top = -self._lane_reserve()
+        height = self._rows_height() - top
+        if (rect.top(), rect.width(), rect.height()) != (top, width, height):
+            self.scene.setSceneRect(0, top, width, height)
+
     def _lane_geometry(self):
         scale_x, scale_y = self._view_scales()
-        top = max(0.0, self.mapToScene(0, 0).y())
+        top = max(-self._lane_reserve(), self.mapToScene(0, 0).y())
         height = CLIP_LANE_HEIGHT / scale_y
         padding = CLIP_LANE_PADDING / scale_y
         return top, height, padding
@@ -490,6 +504,7 @@ class InteractivePianoRoll(QGraphicsView):
         ]
 
     def _sync_clip_lane(self):
+        self._apply_scene_rect()
         if not self._clip_items:
             if self._lane_item is not None:
                 self._lane_item.setVisible(False)
@@ -561,7 +576,7 @@ class InteractivePianoRoll(QGraphicsView):
         bounds = self.scene.itemsBoundingRect()
         width = max(DEFAULT_SCENE_WIDTH, bounds.right() + SCENE_RIGHT_MARGIN)
         height = self._rows_height()
-        self.scene.setSceneRect(0, 0, width, height)
+        self._apply_scene_rect(width)
         line = self.playhead.line()
         self.playhead.setLine(line.x1(), 0, line.x1(), height)
         self._sync_clip_lane()

@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass
 
 import numpy as np
@@ -22,7 +21,7 @@ CLEAN = AmpSettings(drive=1.5, mid_boost_db=2.0, cab_high_hz=6500.0, mix=0.6)
 CRUNCH = AmpSettings(drive=8.0)
 HIGH_GAIN = AmpSettings(drive=25.0, mid_boost_db=4.0, cab_high_hz=4500.0)
 
-                                                                      
+
 AMP_FOR_PROGRAM = {27: CLEAN, 28: CLEAN, 29: CRUNCH, 30: HIGH_GAIN}
 
 
@@ -68,8 +67,7 @@ def amp(audio, sample_rate, settings=CRUNCH):
     y = settings.mix * y + (1 - settings.mix) * x
     delay = int(settings.double_ms / 1000 * sample_rate)
     right = np.concatenate([np.zeros(delay), y[: len(y) - delay]])
-                                                                     
-                                  
+
     right = sosfilt(butter(1, 3500 / nyq, "lowpass", output="sos"), right)
     right = right * (_rms(y) / (_rms(right) + 1e-12))
     return np.stack([y, right], axis=1).astype(np.float32)

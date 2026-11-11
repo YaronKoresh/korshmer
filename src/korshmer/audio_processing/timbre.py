@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass
 
 import numpy as np
@@ -13,7 +12,7 @@ DISTORTED = 0.55
 PLUCKED = 0.35
 BRIGHT = 0.5
 
-                          
+
 DISTORTED_GUITAR = (29, 30)
 CLEAN_ELECTRIC_GUITAR = (27, 28, 26)
 ACOUSTIC_GUITAR = (25, 24)
@@ -45,7 +44,7 @@ def _excerpt(y):
     size = int(EXCERPT_S * SAMPLE_RATE)
     if len(y) <= size:
         return y
-                                                                      
+
     step = size // 4
     starts = range(0, len(y) - size + 1, step)
     best = max(starts, key=lambda s: float(np.mean(y[s : s + size] ** 2)))
@@ -78,8 +77,7 @@ def analyze_timbre(audio, sample_rate):
         (percussive[:, active] ** 2).sum() / ((power[:, active]).sum() + 1e-12)
     )
     freqs = librosa.fft_frequencies(sr=SAMPLE_RATE, n_fft=N_FFT)
-                                                                          
-                                                                     
+
     band = harmonic[(freqs >= 200) & (freqs < 5000)][:, active] + 1e-9
     flatness = float(
         np.median(np.exp(np.mean(np.log(band), 0)) / np.mean(band, 0))
@@ -141,7 +139,7 @@ def preferred_programs(stem_name, profile):
     if "guitar" in stem:
         if profile.distorted:
             return DISTORTED_GUITAR
-                                                                 
+
         if profile.plucked and profile.bright:
             return ACOUSTIC_GUITAR
         return CLEAN_ELECTRIC_GUITAR

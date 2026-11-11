@@ -128,7 +128,7 @@ class TestLanes:
 
 
 class TestClipLane:
-    def test_scene_rect_extends_only_with_clips(self):
+    def test_lane_reserves_room_above_the_top_row(self):
         roll = InteractivePianoRoll()
         assert roll.scene.sceneRect().top() == 0
         assert roll.scene.sceneRect().height() == 128 * 20
@@ -137,8 +137,8 @@ class TestClipLane:
         )
         roll.add_clip(clip)
         rect = roll.scene.sceneRect()
-        assert rect.top() == 0
-        assert rect.height() == 128 * 20
+        assert rect.top() == pytest.approx(-CLIP_LANE_HEIGHT)
+        assert rect.bottom() == pytest.approx(128 * 20)
         assert roll.has_clip_lane()
         assert roll.lane_visible()
         lane_top, lane_height, padding = roll._lane_geometry()
@@ -151,6 +151,31 @@ class TestClipLane:
         assert roll.model.clips == []
         assert not roll.lane_visible()
         assert not roll.has_clip_lane()
+        assert roll.scene.sceneRect().top() == 0
+        assert roll.scene.sceneRect().height() == 128 * 20
+
+    def test_top_note_rows_are_not_hidden_by_the_lane(self):
+        roll = InteractivePianoRoll()
+        roll.resize(800, 400)
+        roll.show()
+        clip = roll.model.add_clip(
+            "/tmp/vocals.wav", kind="vocals", duration=2.0
+        )
+        roll.add_clip(clip)
+        roll.verticalScrollBar().setValue(roll.verticalScrollBar().minimum())
+        QApplication.processEvents()
+        lane_top, lane_height, _ = roll._lane_geometry()
+        top_row = roll.mapFromScene(QPointF(0, 0)).y()
+        lane_bottom = roll.mapFromScene(QPointF(0, lane_top + lane_height)).y()
+        assert top_row >= lane_bottom - 1
+        roll.scale(1.0, 2.0)
+        roll.verticalScrollBar().setValue(roll.verticalScrollBar().minimum())
+        QApplication.processEvents()
+        lane_top, lane_height, _ = roll._lane_geometry()
+        top_row = roll.mapFromScene(QPointF(0, 0)).y()
+        lane_bottom = roll.mapFromScene(QPointF(0, lane_top + lane_height)).y()
+        assert top_row >= lane_bottom - 1
+        roll.close()
 
     def test_clip_moves_horizontally_and_syncs(self):
         roll = InteractivePianoRoll()

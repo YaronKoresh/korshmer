@@ -10,14 +10,19 @@ from pathlib import Path
 
 import pretty_midi
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QFont, QImage, QPainter
+from PySide6.QtGui import QCursor, QFont, QPainter
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 from korshmer import __version__
 from korshmer.audio_processors import render_editor_mix
 from korshmer.constants import BASE_DIR, DATA_DIR, FLUID_DIR, SF3_PATH
 from korshmer.core.audio_setup import init_audio_and_midi_processors
-from korshmer.core.window_initializer import init_window_chrome
+from korshmer.core.window_initializer import (
+    drag_window_to,
+    init_window_chrome,
+    paint_window_frame,
+    update_frame_margin,
+)
 from korshmer.event_bus import Event, publish, subscribe
 from korshmer.mixins.actions import ActionsMixin
 from korshmer.mixins.files import FilesMixin
@@ -56,10 +61,6 @@ from korshmer.ui.managers import (
 )
 from korshmer.ui.managers.accessibility import apply_accessible_names
 from korshmer.ui.managers.theme_initializer import init_theme_manager
-from korshmer.ui.styling import (
-    MAT_BG,
-    gradient,
-)
 from korshmer.ui.theming.color_utils import (
     BEAT_INDICATOR_OFF,
     BEAT_INDICATOR_ON,
@@ -543,29 +544,22 @@ Help:
 
     def paintEvent(self, event):
         with QPainter(self) as painter:
-            painter.setRenderHint(QPainter.Antialiasing)
+            paint_window_frame(self, painter)
 
-            if (
-                not self.metal_texture
-                or self.metal_texture.size() != self.size()
-            ):
-                self.metal_texture = QImage(self.size(), QImage.Format_ARGB32)
-                with QPainter(self.metal_texture) as tex_painter:
-                    vertical_grad = gradient(
-                        MAT_BG, MAT_BG, MAT_BG, MAT_BG, deg=0
-                    )
-                    radial_grad = gradient(MAT_BG, MAT_BG)
-
-                    tex_painter.fillRect(self.rect(), vertical_grad)
-                    tex_painter.fillRect(self.rect(), radial_grad)
-
-            painter.drawImage(0, 0, self.metal_texture)
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange:
+            update_frame_margin(self)
+            title_bar = getattr(self, "title_bar", None)
+            if title_bar is not None:
+                title_bar.sync_max_button()
+            self.update()
+        super().changeEvent(event)
 
     def eventFilter(self, obj, event):
         if event.type() in (QEvent.HoverMove, QEvent.MouseMove):
             if self.moving_window:
                 if self.drag_pos:
-                    self.move(event.globalPosition().toPoint() - self.drag_pos)
+                    drag_window_to(self, event.globalPosition().toPoint())
                 event.accept()
                 return True
 
@@ -587,7 +581,11 @@ Help:
         ):
             global_pos = event.globalPosition().toPoint()
             local_pos = self.mapFromGlobal(global_pos)
-            direction = self._get_resize_direction(local_pos)
+            direction = (
+                self._get_resize_direction(local_pos)
+                if not (self.isMaximized() or self.isFullScreen())
+                else None
+            )
 
             if direction:
                 self.resize_direction = direction
@@ -624,7 +622,7 @@ Help:
 
     def mouseMoveEvent(self, event):
         if self.moving_window and self.drag_pos:
-            self.move(event.globalPosition().toPoint() - self.drag_pos)
+            drag_window_to(self, event.globalPosition().toPoint())
             event.accept()
         else:
             super().mouseMoveEvent(event)
