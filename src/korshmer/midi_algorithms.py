@@ -1633,7 +1633,31 @@ OUTLIER_MIN_NOTES = 20
 OUTLIER_PERCENT = 3
 
 
-def smart_instrument_selector(stem_name, midi_data):
+def _best_fit(candidates, stem_min, stem_max, stem_range):
+    best = None
+    for name, inst_min, inst_max, prog in candidates:
+        inst_range = inst_max - inst_min
+        if stem_range > inst_range:
+            continue
+        if stem_min < inst_min:
+            total_shift = -(-(inst_min - stem_min) // 12) * 12
+        elif stem_max > inst_max:
+            total_shift = -(-(stem_max - inst_max) // 12) * -12
+        else:
+            total_shift = 0
+        if (
+            stem_min + total_shift < inst_min
+            or stem_max + total_shift > inst_max
+        ):
+            continue
+        if best is None or abs(total_shift) < abs(best[0]):
+            best = (total_shift, name, prog, inst_min, inst_max)
+            if total_shift == 0:
+                break
+    return best
+
+
+def smart_instrument_selector(stem_name, midi_data, preferred_programs=()):
     stem = stem_name.lower()
     if "drum" in stem:
         for i in midi_data.instruments:
@@ -1668,30 +1692,20 @@ def smart_instrument_selector(stem_name, midi_data):
             "synth_pad",
             "keys",
         ]
+    by_program = {
+        entry[3]: entry
+        for entries in INSTRUMENT_DB.values()
+        for entry in entries
+    }
+    preferred = [by_program[p] for p in preferred_programs if p in by_program]
     candidates = []
     for cat in search_categories:
         if cat in INSTRUMENT_DB:
             candidates.extend(INSTRUMENT_DB[cat])
-    best = None
-    for name, inst_min, inst_max, prog in candidates:
-        inst_range = inst_max - inst_min
-        if stem_range > inst_range:
-            continue
-        if stem_min < inst_min:
-            total_shift = -(-(inst_min - stem_min) // 12) * 12
-        elif stem_max > inst_max:
-            total_shift = -(-(stem_max - inst_max) // 12) * -12
-        else:
-            total_shift = 0
-        if (
-            stem_min + total_shift < inst_min
-            or stem_max + total_shift > inst_max
-        ):
-            continue
-        if best is None or abs(total_shift) < abs(best[0]):
-            best = (total_shift, name, prog, inst_min, inst_max)
-            if total_shift == 0:
-                break
+
+    best = _best_fit(preferred, stem_min, stem_max, stem_range)
+    if best is None:
+        best = _best_fit(candidates, stem_min, stem_max, stem_range)
     if best is None:
         default_inst = pretty_midi.Instrument(
             program=0,

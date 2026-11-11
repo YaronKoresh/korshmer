@@ -320,6 +320,34 @@ def level_render(audio):
     return audio
 
 
+def _render_with_guitar_amps(instruments, render_batch, sr):
+    from korshmer.audio_processing.guitar_amp import AMP_FOR_PROGRAM, amp
+
+    amped = {}
+    rest = []
+    for inst in instruments:
+        settings = None if inst.is_drum else AMP_FOR_PROGRAM.get(inst.program)
+        if settings is None or not inst.notes:
+            rest.append(inst)
+        else:
+            amped.setdefault(settings, []).append(inst)
+    if not amped:
+        return render_batch(instruments)
+    parts = [render_batch(rest, level=False)] if rest else []
+    for settings, group in amped.items():
+        dry = render_batch(group, level=False)
+        if dry is not None:
+            parts.append(amp(dry, sr, settings))
+    parts = [p for p in parts if p is not None and len(p)]
+    if not parts:
+        return None
+    length = max(len(p) for p in parts)
+    mix = np.zeros((length, 2), np.float32)
+    for part in parts:
+        mix[: len(part)] += part
+    return level_render(mix)
+
+
 def render_midi_to_wav(
     midi_path, save_path, fluid_dir, sf3_path, bpm=120.0, stop_callback=None
 ):
@@ -342,7 +370,7 @@ def render_midi_to_wav(
 
     available_kits = read_soundfont_kits(sf3_path)
 
-    def render_batch(instruments_batch):
+    def render_batch(instruments_batch, level=True):
         if not instruments_batch:
             return None
         try:
@@ -460,7 +488,8 @@ def render_midi_to_wav(
 
                 final_left = np.concatenate(audio_left)
                 final_right = np.concatenate(audio_right)
-                return level_render(np.vstack((final_left, final_right)).T)
+                mixed = np.vstack((final_left, final_right)).T
+                return level_render(mixed) if level else mixed
         except Exception as e:
             print(f"FluidSynth Render Error: {e}")
             return None
@@ -469,7 +498,7 @@ def render_midi_to_wav(
     if len(instruments) == 0:
         return None
 
-    final_audio = render_batch(instruments)
+    final_audio = _render_with_guitar_amps(instruments, render_batch, sr)
 
     if final_audio is not None:
         save_normalized_audio(save_path, final_audio, sr)

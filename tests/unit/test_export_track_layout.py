@@ -47,7 +47,7 @@ def _vocal_notes(_path, **_kwargs):
     ]
 
 
-def _same_instrument(stem_name, midi_data):
+def _same_instrument(stem_name, midi_data, preferred_programs=()):
     for inst in midi_data.instruments:
         inst.program = 0
         inst.name = f"{stem_name.capitalize()} - Acoustic Grand Piano"

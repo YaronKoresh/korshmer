@@ -1,4 +1,3 @@
-
 import numpy as np
 from scipy.ndimage import uniform_filter1d
 
@@ -9,8 +8,8 @@ HOP_LENGTH = 512
 FRAMES_PER_SECOND = SAMPLE_RATE / HOP_LENGTH
 SILENCE_RANGE_DB = 60.0
 LOUD_PERCENTILE = 95
-                                                                          
-                                                                       
+
+
 DB_PER_VELOCITY_DECADE = 40.0
 
 

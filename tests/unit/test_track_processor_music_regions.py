@@ -280,7 +280,7 @@ def test_merged_export_keeps_the_vocal_track_apart_from_the_piano(
         ],
     )
 
-    def default_piano(stem_name, midi):
+    def default_piano(stem_name, midi, preferred_programs=()):
         inst = pretty_midi.Instrument(
             0, name=f"{stem_name.capitalize()} - Default Piano"
         )

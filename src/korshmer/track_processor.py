@@ -29,6 +29,10 @@ from korshmer.audio_processing.stem_session import (
     collect_stems,
     normalize_detected_tempo,
 )
+from korshmer.audio_processing.timbre import (
+    analyze_timbre_file,
+    preferred_programs,
+)
 from korshmer.audio_processing.transcription_prep import (
     ModelOptions,
     onset_times as audio_onset_times,
@@ -541,12 +545,24 @@ def process_track(
                         m_dat, b_name, tempo, gm_mapping=enable_gm_drums
                     )
                 processed = []
+                stem_programs = ()
+                if not drum_check and not is_vocal_stem:
+                    try:
+                        stem_programs = preferred_programs(
+                            b_name, analyze_timbre_file(s_path)
+                        )
+                    except Exception as exc:
+                        print(
+                            f"Timbre analysis skipped: {exc}", file=sys.stderr
+                        )
                 for f_n, m_obj in stem_splits:
                     if (
                         len(m_obj.instruments) == 1
                         and not m_obj.instruments[0].is_drum
                     ):
-                        m_obj = smart_instrument_selector(b_name, m_obj)
+                        m_obj = smart_instrument_selector(
+                            b_name, m_obj, preferred_programs=stem_programs
+                        )
                     if is_vocal_stem:
                         for inst in m_obj.instruments:
                             inst.name = VOCAL_TRACK_NAME

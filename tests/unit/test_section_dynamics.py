@@ -47,7 +47,7 @@ def test_quiet_verse_and_loud_chorus_get_different_velocities():
     verse, chorus, verse2, chorus2 = _section_means(pm, 10.0, 4)
     assert chorus == pytest.approx(100, abs=2)
     assert chorus2 == pytest.approx(100, abs=2)
-                                              
+
     assert verse == pytest.approx(50, abs=4)
     assert verse2 == pytest.approx(verse, abs=2)
 
