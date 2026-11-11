@@ -11,12 +11,13 @@ from dataclasses import dataclass, field
 import numpy as np
 import pretty_midi
 import soundfile as sf
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 from korshmer.midi.bar_lines import bar_lines, beat_lines
 from korshmer.midi_processing.chord_detection import ChordDetector
 from korshmer.utils.tempo import midi_file_tempo
 from korshmer.utils.track_layout import instrument_name
+from korshmer.video.text_render import draw as _draw, load_font
 
 BASE_WIDTH = 1280
 BASE_HEIGHT = 720
@@ -324,7 +325,7 @@ class ClipScene:
         return int(round(value * self.k))
 
     def _font(self, size):
-        return ImageFont.load_default(size=self._s(size))
+        return load_font(self._s(size))
 
     def _box(self, box):
         return tuple(self._s(v) for v in box)
@@ -411,7 +412,7 @@ class ClipScene:
 
     def _build_background(self):
         img = Image.new("RGB", (self.width, self.height), BACKGROUND)
-        d = ImageDraw.Draw(img)
+        d = _draw(img)
         s = self._s
         d.text(
             (s(20), s(TITLE_Y)), self.specs.title, font=self.f_title, fill=TEXT
@@ -545,7 +546,7 @@ class ClipScene:
     def frame(self, t):
         t = min(max(t, 0.0), self.duration)
         img = self._background.copy()
-        d = ImageDraw.Draw(img)
+        d = _draw(img)
         s = self._s
         roll_top, key_top = self._roll[1], self._keys[1]
         window = (key_top - roll_top) / self._pps
