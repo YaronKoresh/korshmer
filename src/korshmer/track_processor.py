@@ -49,6 +49,7 @@ from korshmer.midi.adaptive_snap import (
     snap_adaptive,
     supports,
 )
+from korshmer.midi.section_dynamics import apply_section_dynamics_from_file
 from korshmer.midi.transcription_cleanup import (
     clean_transcription,
     drop_notes_outside_regions,
@@ -384,6 +385,7 @@ def process_track(
                     ]
                     model_path = variant_paths[0]
 
+                follow_audio_dynamics = False
                 if is_drum_stem:
                     progress(
                         trans_prog + 0.02,
@@ -441,6 +443,7 @@ def process_track(
                             trans_prog + 0.02,
                             desc=f"Fallback vocal transcription: {stem_name}...",
                         )
+                        follow_audio_dynamics = True
                         predict = _get_basic_pitch_predict()
                         _, m_dat, _ = predict(
                             model_path,
@@ -460,6 +463,7 @@ def process_track(
                         trans_prog + 0.02,
                         desc=f"AI Transcription in progress: {stem_name}...",
                     )
+                    follow_audio_dynamics = True
                     predict = _get_basic_pitch_predict()
                     model_kwargs = (
                         model_options or ModelOptions.for_stem(stem_name)
@@ -519,6 +523,14 @@ def process_track(
                         if drum_check
                         else normalize_note_velocities(m_dat)
                     )
+                    if follow_audio_dynamics and not drum_check:
+                        try:
+                            apply_section_dynamics_from_file(m_dat, s_path)
+                        except Exception as exc:
+                            print(
+                                f"Section dynamics skipped: {exc}",
+                                file=sys.stderr,
+                            )
                 m_dat = process_velocity(m_dat, velocity_mode, velocity_value)
                 if enable_cc_gen and not drum_check:
                     m_dat = generate_cc_from_audio(m_dat, s_path)

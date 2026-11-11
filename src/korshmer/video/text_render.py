@@ -1,4 +1,3 @@
-
 import functools
 import os
 import re
@@ -7,16 +6,13 @@ import sys
 from PIL import ImageDraw, ImageFont, features
 
 _HEBREW_FONT_FILES = (
-             
     "segoeui.ttf",
     "arial.ttf",
     "tahoma.ttf",
-           
     "NotoSansHebrew-Regular.ttf",
     "DejaVuSans.ttf",
     "FreeSans.ttf",
     "LiberationSans-Regular.ttf",
-           
     "Arial.ttf",
     "ArialHB.ttc",
 )
@@ -53,8 +49,7 @@ def _font_dirs():
 
 
 def _has_hebrew(font):
-                                                                       
-                                         
+
     try:
         letter = font.getmask("\u05d0")
         missing = font.getmask("\U0010fffd")
@@ -128,8 +123,7 @@ def _visual_line(line):
     paragraph = next((k for k in kinds if k in ("rtl", "ltr")), "rtl")
     if paragraph == "ltr":
         return _ltr_paragraph(tokens, kinds)
-                                                                       
-                                                                        
+
     strong = ["rtl" if k == "num" else k for k in kinds]
     for i, kind in enumerate(kinds):
         if kind:
@@ -149,17 +143,13 @@ def _visual_line(line):
             out.append("".join(toks))
         else:
             out.append(
-                "".join(
-                    t[::-1].translate(_MIRROR)
-                    for t in reversed(toks)
-                )
+                "".join(t[::-1].translate(_MIRROR) for t in reversed(toks))
             )
     return "".join(out)
 
 
 def _ltr_paragraph(tokens, kinds):
-                                                                     
-                                                                            
+
     out = []
     i = 0
     while i < len(tokens):
