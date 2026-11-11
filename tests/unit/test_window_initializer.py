@@ -217,3 +217,30 @@ class TestDragFromMaximized:
         drag_window_to(window, QPoint(0, 0))
         assert window.pos() == QPoint(251, 190)
         window.close()
+
+
+class TestCloseButtonCorner:
+    def test_close_button_corner_follows_the_window_state(self, qapp):
+        from korshmer.ui.styling import WINDOW_EDGE_WIDTH, WINDOW_RADIUS
+        from korshmer.ui.widgets.titlebar import KorshmerTitleBar
+
+        window = QMainWindow()
+        init_window_chrome(window)
+        bar = KorshmerTitleBar(window)
+        window.setMenuWidget(bar)
+        window.resize(500, 300)
+        window.show()
+        qapp.processEvents()
+        css = bar.btn_close.styleSheet()
+        corner = WINDOW_RADIUS - WINDOW_EDGE_WIDTH
+        assert f"border-top-right-radius: {corner}px" in css
+        assert bar.btn_close.property("framed") is True
+        window.showMaximized()
+        qapp.processEvents()
+        bar.sync_max_button()
+        assert bar.btn_close.property("framed") is False
+        window.showNormal()
+        qapp.processEvents()
+        bar.sync_max_button()
+        assert bar.btn_close.property("framed") is True
+        window.close()

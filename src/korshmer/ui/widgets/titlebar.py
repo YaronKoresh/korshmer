@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenuBar, QPushButton
 
 from korshmer import __version__
 
+from ..styling import WINDOW_EDGE_WIDTH, WINDOW_RADIUS
 from ..theming.color_utils import MAT_BORDER, MAT_HOVER, MAT_TEXT
 
 
@@ -278,13 +279,17 @@ class KorshmerTitleBar(QFrame):
         """
         )
 
+        corner = max(0, WINDOW_RADIUS - WINDOW_EDGE_WIDTH)
         style_close = (
             btn_style_base
-            + """
-            QPushButton:hover {
+            + f"""
+            QPushButton[framed="true"] {{
+                border-top-right-radius: {corner}px;
+            }}
+            QPushButton:hover {{
                 background-color: #ff0040;
                 color: white;
-            }
+            }}
         """
         )
 
@@ -300,6 +305,7 @@ class KorshmerTitleBar(QFrame):
 
         self.btn_close = QPushButton("✕")
         self.btn_close.setFixedSize(46, 32)
+        self.btn_close.setProperty("framed", True)
         self.btn_close.setStyleSheet(style_close)
         self.btn_close.clicked.connect(parent.close)
 
@@ -318,7 +324,13 @@ class KorshmerTitleBar(QFrame):
         self.sync_max_button()
 
     def sync_max_button(self):
-        self.btn_max.setText("❐" if self.parent_window.isMaximized() else "▢")
+        window = self.parent_window
+        self.btn_max.setText("❐" if window.isMaximized() else "▢")
+        framed = not (window.isMaximized() or window.isFullScreen())
+        if self.btn_close.property("framed") != framed:
+            self.btn_close.setProperty("framed", framed)
+            self.btn_close.style().unpolish(self.btn_close)
+            self.btn_close.style().polish(self.btn_close)
 
     def eventFilter(self, obj, event):
         if obj == self.menu_bar:
