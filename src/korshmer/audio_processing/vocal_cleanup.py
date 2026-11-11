@@ -4,6 +4,7 @@ from scipy import signal
 from scipy.ndimage import maximum_filter1d, uniform_filter, uniform_filter1d
 
 from korshmer.audio_processing.validation import validate_sample_rate
+from korshmer.ui.viewmodels.editor_vm import MAX_CLIP_GAIN
 
 HIGHPASS_HZ = 70.0
 N_FFT = 2048
@@ -23,7 +24,7 @@ PEAK_CEILING = 0.99
 EPSILON = 1e-10
 VOCAL_ABOVE_MIDI_DB = -4.0
 MIN_VOCAL_GAIN = 0.1
-MAX_VOCAL_GAIN = 4.0
+MAX_VOCAL_GAIN = MAX_CLIP_GAIN
 
 
 def frame_levels_db(channel, frame_length=N_FFT, hop_length=HOP_LENGTH):

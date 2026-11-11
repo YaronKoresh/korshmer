@@ -10,7 +10,13 @@ from .rate_limit import TokenBucket
 
 try:
     import websockets
-    from websockets.server import WebSocketServerProtocol
+
+    try:
+        from websockets.asyncio.server import (
+            ServerConnection as WebSocketServerProtocol,
+        )
+    except ImportError:
+        from websockets.server import WebSocketServerProtocol
 
     _HAS_WEBSOCKETS = True
 except ImportError:

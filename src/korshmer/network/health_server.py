@@ -340,6 +340,19 @@ class HealthServer:
                 code, body = health.handle(self.path)
                 self._send(code, body, include_body=False)
 
+            def _refuse(self) -> None:
+                try:
+                    length = int(self.headers.get("Content-Length") or 0)
+                except ValueError:
+                    length = 0
+                if 0 < length <= 64 * 1024:
+                    self.rfile.read(length)
+                else:
+                    self.close_connection = True
+                self.send_error(501, "Unsupported method")
+
+            do_POST = do_PUT = do_DELETE = do_PATCH = _refuse
+
             def _send(self, code, body, include_body=True) -> None:
                 payload = json.dumps(_jsonable(body), allow_nan=False).encode(
                     "utf-8"

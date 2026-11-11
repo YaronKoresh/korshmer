@@ -97,6 +97,12 @@ markers = [
     "performance: benchmark style tests",
     "limit_memory(size): fail when allocations exceed size (pytest-memray)",
 ]
+filterwarnings = [
+    "ignore:The `(hop_length|n_fft)` parameter is deprecated:FutureWarning:librosa",
+    "ignore:n_fft=.* is too large for input signal:UserWarning:librosa",
+    "ignore:Trying to estimate tuning from empty frequency set:UserWarning:librosa",
+    "ignore:invalid value encountered in cast:RuntimeWarning:numba",
+]
 
 # --- RUFF CONFIGURATION ---
 [tool.ruff]

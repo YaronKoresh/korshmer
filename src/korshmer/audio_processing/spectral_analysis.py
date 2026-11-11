@@ -95,9 +95,7 @@ class SpectralAnalyzer:
             _check_stft_out(out, audio, n_fft, hop_length)
 
         stft_matrix = _stft_into(audio, n_fft, hop_length, out=out)
-        stretched_stft = librosa.phase_vocoder(
-            stft_matrix, rate=rate, hop_length=hop_length
-        )
+        stretched_stft = librosa.phase_vocoder(stft_matrix, rate=rate)
         stretched_audio = librosa.istft(
             stretched_stft,
             hop_length=hop_length,

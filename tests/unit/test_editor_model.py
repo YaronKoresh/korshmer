@@ -3,6 +3,7 @@ import pretty_midi
 import soundfile as sf
 
 from korshmer.ui.viewmodels.editor_vm import (
+    MAX_CLIP_GAIN,
     TRACK_PALETTE,
     ClipModel,
     EditorModel,
@@ -217,7 +218,7 @@ class TestClips:
         assert clip.end == 3.5
         model.set_clip_mute(clip.id, True)
         model.set_clip_gain(clip.id, 99.0)
-        assert clip.muted and clip.gain == 4.0
+        assert clip.muted and clip.gain == MAX_CLIP_GAIN
         model.set_clip_waveform(clip.id, [0.1, 0.2], 7.0)
         assert clip.waveform == [0.1, 0.2] and clip.duration == 7.0
         model.remove_clip(clip.id)

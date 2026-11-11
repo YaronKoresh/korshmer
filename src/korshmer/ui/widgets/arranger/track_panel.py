@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from korshmer.constants import HELP_TEXTS
+from korshmer.ui.viewmodels.editor_vm import MAX_CLIP_GAIN
 from korshmer.ui.widgets.material import (
     MAT_ERROR,
     MAT_PRIMARY,
@@ -194,7 +195,7 @@ class ClipRow(QFrame):
         )
 
         self.gain_slider = QSlider(Qt.Horizontal)
-        self.gain_slider.setRange(0, 200)
+        self.gain_slider.setRange(0, int(MAX_CLIP_GAIN * 100))
         self.gain_slider.setValue(int(round(clip.gain * 100)))
         self.gain_slider.setFixedWidth(80)
         self.gain_slider.setToolTip(f"Clip gain {self.gain_slider.value()}%")

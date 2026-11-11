@@ -16,6 +16,7 @@ DIRECTORY_PATTERNS = (
     ".pytest_cache",
     ".ruff_cache",
     ".mypy_cache",
+    ".hypothesis",
     ".tox",
     ".nox",
     ".cache",

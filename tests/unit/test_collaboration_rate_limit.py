@@ -23,15 +23,18 @@ class FloodWS:
         self.closed = None
 
     def __aiter__(self):
-        async def gen():
-            for _ in range(self.count):
-                yield Operation(
-                    op_type=OpType.CURSOR_MOVE.value,
-                    session_id=self.session_id,
-                    peer_id="x",
-                ).to_json()
+        self._remaining = self.count
+        return self
 
-        return gen()
+    async def __anext__(self):
+        if self._remaining <= 0:
+            raise StopAsyncIteration
+        self._remaining -= 1
+        return Operation(
+            op_type=OpType.CURSOR_MOVE.value,
+            session_id=self.session_id,
+            peer_id="x",
+        ).to_json()
 
     async def send(self, message):
         self.sent.append(message)
