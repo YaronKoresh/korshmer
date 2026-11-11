@@ -602,3 +602,52 @@ def test_unclear_rhythm_falls_back_to_a_plain_join():
     noise = (0.2 * rng.standard_normal(40 * SR)).astype(np.float32)
     timeline = build_timeline(noise, [(0.0, 15.0), (25.0, 40.0)])
     assert timeline == [(0.0, 15.0, 0.0), (25.0, 40.0, 15.0)]
+
+
+def _gap_case(gap_score, chroma_gap):
+    times = np.arange(0, 60, 0.5) + 1.0
+    scores = np.where((times < 20) | (times > 40), 0.9, gap_score)
+    frames = int(61 * music_regions.FRAMES_PER_SECOND)
+    chroma = np.tile(
+        np.array([3.0, 0, 1, 0, 2, 1, 0, 2.5, 0, 1, 0, 0.5]), (frames, 1)
+    ).T
+    first = int(20 * music_regions.FRAMES_PER_SECOND)
+    last = int(40 * music_regions.FRAMES_PER_SECOND)
+    chroma[:, first:last] = np.asarray(chroma_gap, float)[:, None]
+    return times, scores, chroma
+
+
+ATONAL = [0, 2, 0, 3, 0, 0, 2, 0, 3, 0, 2, 3]
+
+
+def test_a_clearly_non_musical_atonal_gap_is_cut():
+    times, scores, chroma = _gap_case(0.02, ATONAL)
+    regions = music_regions._merge_piece_gaps(
+        [(0.0, 20.0), (40.0, 60.0)], times, scores, chroma, MusicRegionOptions()
+    )
+    assert regions == [(0.0, 20.0), (40.0, 60.0)]
+
+
+def test_a_short_gap_is_never_cut():
+    times, scores, chroma = _gap_case(0.02, ATONAL)
+    regions = music_regions._merge_piece_gaps(
+        [(0.0, 20.0), (24.0, 60.0)], times, scores, chroma, MusicRegionOptions()
+    )
+    assert regions == [(0.0, 60.0)]
+
+
+def test_a_half_musical_gap_is_kept():
+    times, scores, chroma = _gap_case(0.25, ATONAL)
+    regions = music_regions._merge_piece_gaps(
+        [(0.0, 20.0), (40.0, 60.0)], times, scores, chroma, MusicRegionOptions()
+    )
+    assert regions == [(0.0, 60.0)]
+
+
+def test_a_low_scoring_gap_in_the_same_key_is_kept():
+    same_key = [3.0, 0, 1, 0, 2, 1, 0, 2.5, 0, 1, 0, 0.5]
+    times, scores, chroma = _gap_case(0.02, same_key)
+    regions = music_regions._merge_piece_gaps(
+        [(0.0, 20.0), (40.0, 60.0)], times, scores, chroma, MusicRegionOptions()
+    )
+    assert regions == [(0.0, 60.0)]

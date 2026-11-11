@@ -84,6 +84,10 @@ class MusicRegionOptions:
     start_pad_s: float = 0.75
     end_pad_s: float = 1.0
     min_music_share: float = 0.30
+    gap_min_cut_s: float = 6.0
+    gap_music_mean: float = 0.15
+    gap_music_share: float = 0.25
+    gap_key_match: float = 0.80
     align_beats: bool = True
     smooth_windows: int = 5
     fade_s: float = 0.05
@@ -106,6 +110,10 @@ class MusicRegionOptions:
         validate_effect_number(
             self.min_music_share, "Minimum music share", 0, 1
         )
+        validate_effect_number(self.gap_min_cut_s, "Gap minimum cut", 0, 600)
+        validate_effect_number(self.gap_music_mean, "Gap music mean", 0, 1)
+        validate_effect_number(self.gap_music_share, "Gap music share", 0, 1)
+        validate_effect_number(self.gap_key_match, "Gap key match", -1, 1)
         validate_effect_integer(self.smooth_windows, "Smoothing windows", 1, 51)
         validate_effect_number(self.fade_s, "Fade length", 0, 5)
         for name, value in (
@@ -307,6 +315,11 @@ def _ramp(value, start, full):
 
 
 def _score_curve(audio, sample_rate, on_chunk=None):
+    times, scores, _ = _score_curve_and_chroma(audio, sample_rate, on_chunk)
+    return times, scores
+
+
+def _score_curve_and_chroma(audio, sample_rate, on_chunk=None):
     import librosa
 
     validate_effect_number(sample_rate, "Sample rate", 1000, 768000)
@@ -314,8 +327,9 @@ def _score_curve(audio, sample_rate, on_chunk=None):
     if sample_rate != SAMPLE_RATE:
         y = librosa.resample(y, orig_sr=sample_rate, target_sr=SAMPLE_RATE)
     if len(y) // HOP_LENGTH < int(WINDOW_S * FRAMES_PER_SECOND):
-        return np.zeros(0), np.zeros(0)
-    features = _window_features(_frame_features(y, on_chunk))
+        return np.zeros(0), np.zeros(0), None
+    frames = _frame_features(y, on_chunk)
+    features = _window_features(frames)
     logit = BIAS + sum(
         coef * features[name]
         for name, coef in zip(FEATURES, COEF, strict=False)
@@ -331,7 +345,7 @@ def _score_curve(audio, sample_rate, on_chunk=None):
     scores = np.where(
         quiet, 0.0, np.maximum(expit(logit), RHYTHM_SCORE * rhythm)
     )
-    return features["start"] + WINDOW_S / 2, scores
+    return features["start"] + WINDOW_S / 2, scores, frames["chroma"]
 
 
 def music_score_curve(
@@ -595,6 +609,55 @@ def _analysis_audio(audio, sample_rate):
     return librosa.resample(audio, orig_sr=sample_rate, target_sr=SAMPLE_RATE)
 
 
+def _chroma_profile(chroma, begin, end):
+    first = max(0, int(begin * FRAMES_PER_SECOND))
+    last = min(chroma.shape[1], int(end * FRAMES_PER_SECOND))
+    if last - first < FRAMES_PER_SECOND:
+        return None
+    profile = chroma[:, first:last].mean(1)
+    profile = profile - profile.mean()
+    norm = np.linalg.norm(profile)
+    return profile / norm if norm > 1e-9 else None
+
+
+def _gap_belongs_to_piece(times, scores, chroma, left, right, options):
+    gap_from, gap_to = left[1], right[0]
+    if gap_to - gap_from < options.gap_min_cut_s:
+        return True
+    inside = (times >= gap_from) & (times <= gap_to)
+    if not inside.any():
+        return True
+    gap_scores = scores[inside]
+    if gap_scores.mean() >= options.gap_music_mean:
+        return True
+    if (gap_scores >= options.exit).mean() >= options.gap_music_share:
+        return True
+    if chroma is None:
+        return False
+    gap = _chroma_profile(chroma, gap_from, gap_to)
+    around = [
+        _chroma_profile(chroma, *left),
+        _chroma_profile(chroma, *right),
+    ]
+    if gap is None or any(p is None for p in around):
+        return False
+    music = around[0] + around[1]
+    music = music / (np.linalg.norm(music) + 1e-9)
+    return float(gap @ music) >= options.gap_key_match
+
+
+def _merge_piece_gaps(regions, times, scores, chroma, options):
+    merged = []
+    for region in regions:
+        if merged and _gap_belongs_to_piece(
+            times, scores, chroma, merged[-1], region, options
+        ):
+            merged[-1] = (merged[-1][0], region[1])
+        else:
+            merged.append(region)
+    return merged
+
+
 def _find_regions(audio, sample_rate, options, on_chunk=None):
     audio = _mono(audio)
     duration = len(audio) / sample_rate
@@ -607,8 +670,11 @@ def _find_regions(audio, sample_rate, options, on_chunk=None):
             duration, f"shorter than {options.min_duration_s:g} s, left whole"
         )
     audio = _analysis_audio(audio, sample_rate)
-    times, scores = _score_curve(audio, SAMPLE_RATE, on_chunk)
+    times, scores, chroma = _score_curve_and_chroma(
+        audio, SAMPLE_RATE, on_chunk
+    )
     regions = segment_music(times, scores, duration, options)
+    regions = _merge_piece_gaps(regions, times, scores, chroma, options)
     kept = sum(end - start for start, end in regions)
     if not regions:
         return _result([], duration, False, "no music found", times, scores)
