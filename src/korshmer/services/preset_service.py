@@ -12,7 +12,7 @@ DEFAULT_PRESET = {
     "grid": "1/8",
     "quantize": 100,
     "swing": 0,
-    "vel_mode": "Fixed",
+    "vel_mode": "Original",
     "vel_val": 100,
     "stems": ["drums", "bass", "other", "guitar", "piano", "vocals"],
     "export": "Separate",
@@ -114,4 +114,4 @@ class PresetService:
             "Fixed": "Fixed",
             "Compressed": "Compressed",
         }
-        return mapping.get(mode_text, "Fixed")
+        return mapping.get(mode_text, "Original")

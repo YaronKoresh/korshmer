@@ -181,7 +181,7 @@ class TestPresetService:
         assert (
             PresetService.normalize_velocity_mode("Compressed") == "Compressed"
         )
-        assert PresetService.normalize_velocity_mode("unknown") == "Fixed"
+        assert PresetService.normalize_velocity_mode("unknown") == "Original"
 
     def test_build_preset_data(self):
         data = PresetService.build_preset_data(

@@ -138,7 +138,7 @@ class MainPagesMixin:
         self.combo_grid.setCurrentText("1/16")
         self.combo_velocity = QComboBox()
         self.combo_velocity.addItems(["Original", "Fixed", "Compressed"])
-        self.combo_velocity.setCurrentText("Fixed")
+        self.combo_velocity.setCurrentText("Original")
         h_top.addWidget(self.create_label_help("Grid:", HELP_TEXTS["grid"]))
         h_top.addWidget(self.combo_grid, 1)
         h_top.addWidget(self.create_label_help("Vel:", HELP_TEXTS["velocity"]))

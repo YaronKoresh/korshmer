@@ -623,3 +623,121 @@ def _copy_instrument(inst):
     out.pitch_bends = list(inst.pitch_bends)
     out.control_changes = list(inst.control_changes)
     return out
+
+
+def merge_cross_track_handoffs(instruments, gap=0.04, max_piece=0.6):
+    melodic = [inst for inst in instruments if not inst.is_drum]
+    by_pitch = {}
+    for index, inst in enumerate(melodic):
+        for note in inst.notes:
+            by_pitch.setdefault(note.pitch, []).append((note, index))
+    removed = {index: set() for index in range(len(melodic))}
+    folded = 0
+    for entries in by_pitch.values():
+        entries.sort(key=lambda e: (e[0].start, e[0].end))
+        chain = [entries[0]] if entries else []
+        chains = []
+        for entry in entries[1:]:
+            last = max(chain, key=lambda e: e[0].end)
+            if -gap <= entry[0].start - last[0].end <= gap:
+                chain.append(entry)
+            else:
+                chains.append(chain)
+                chain = [entry]
+        if chain:
+            chains.append(chain)
+        for chain in chains:
+            if len({index for _, index in chain}) < 2:
+                continue
+            share = {}
+            for note, index in chain:
+                share[index] = share.get(index, 0.0) + note.end - note.start
+            owner = max(share, key=share.get)
+            pieces = [e for e in chain if e[1] != owner]
+            if any(n.end - n.start > max_piece for n, _ in pieces):
+                continue
+            keep = min(
+                (n for n, i in chain if i == owner), key=lambda n: n.start
+            )
+            keep.start = min(n.start for n, _ in chain)
+            keep.end = max(n.end for n, _ in chain)
+            keep.velocity = max(n.velocity for n, _ in chain)
+            for note, index in chain:
+                if note is not keep:
+                    removed[index].add(id(note))
+                    folded += 1 if index != owner else 0
+    for index, inst in enumerate(melodic):
+        if removed[index]:
+            inst.notes = [n for n in inst.notes if id(n) not in removed[index]]
+    return folded
+
+
+PITCH_FLUX_HOP = 256
+PITCH_FLUX_LOWEST = 24
+PITCH_FLUX_BINS = 96
+PITCH_FLUX_PARTIALS = (0, 12, 19)
+
+
+def pitch_band_flux(audio, sample_rate):
+    import librosa
+
+    y = np.asarray(audio, dtype=np.float32)
+    if y.ndim > 1:
+        y = y.mean(axis=int(np.argmin(y.shape)))
+    spectrum = np.abs(
+        librosa.cqt(
+            y,
+            sr=sample_rate,
+            hop_length=PITCH_FLUX_HOP,
+            fmin=librosa.midi_to_hz(PITCH_FLUX_LOWEST),
+            n_bins=PITCH_FLUX_BINS,
+            bins_per_octave=12,
+        )
+    )
+    level = librosa.amplitude_to_db(spectrum, ref=np.max)
+    flux = np.maximum(0.0, np.diff(level, axis=1, prepend=level[:, :1]))
+    return flux, sample_rate / PITCH_FLUX_HOP
+
+
+def _attack_at(flux, frames_per_second, pitch, seconds):
+    rows = [
+        pitch - PITCH_FLUX_LOWEST + partial
+        for partial in PITCH_FLUX_PARTIALS
+        if 0 <= pitch - PITCH_FLUX_LOWEST + partial < flux.shape[0]
+    ]
+    if not rows:
+        return None
+    frame = int(round(seconds * frames_per_second))
+    lo, hi = max(0, frame - 2), min(flux.shape[1], frame + 3)
+    if hi <= lo:
+        return None
+    return float(flux[rows, lo:hi].max())
+
+
+def merge_unattacked_splits(inst, flux, frames_per_second, gap=0.05, ratio=0.5):
+    if inst.is_drum or len(inst.notes) < 2:
+        return 0
+    notes = sorted(inst.notes, key=lambda n: (n.pitch, n.start))
+    separate = [
+        _attack_at(flux, frames_per_second, b.pitch, b.start)
+        for a, b in zip(notes, notes[1:], strict=False)
+        if a.pitch != b.pitch or b.start - a.end > 2 * gap
+    ]
+    separate = [s for s in separate if s is not None]
+    if len(separate) < 5:
+        return 0
+    threshold = ratio * float(np.median(separate))
+    kept = [notes[0]]
+    joins = 0
+    for note in notes[1:]:
+        last = kept[-1]
+        if note.pitch == last.pitch and -gap <= note.start - last.end <= gap:
+            attack = _attack_at(flux, frames_per_second, note.pitch, note.start)
+            if attack is not None and attack < threshold:
+                last.end = max(last.end, note.end)
+                last.velocity = max(last.velocity, note.velocity)
+                joins += 1
+                continue
+        kept.append(note)
+    inst.notes = sorted(kept, key=lambda n: (n.start, n.pitch))
+    return joins

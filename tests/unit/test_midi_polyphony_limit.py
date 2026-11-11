@@ -30,6 +30,9 @@ class FakeFluidSynth:
     def set_chorus(self, *args):
         pass
 
+    def cc(self, *args):
+        pass
+
     def program_select(self, *args):
         pass
 

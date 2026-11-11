@@ -409,3 +409,103 @@ def test_scale_classes_follow_every_scale_name(root, mode, expected):
     from korshmer.midi.transcription_cleanup import _scale_classes
 
     assert _scale_classes(root, mode) == expected
+
+
+def _inst(program, notes, drum=False):
+    inst = pretty_midi.Instrument(program, is_drum=drum)
+    for start, end, pitch in notes:
+        inst.notes.append(pretty_midi.Note(80, pitch, start, end))
+    return inst
+
+
+def test_note_handed_between_tracks_is_joined_on_the_main_track():
+    from korshmer.midi.transcription_cleanup import merge_cross_track_handoffs
+
+    pad = _inst(89, [(0.0, 0.9, 60), (1.2, 2.0, 60)])
+    choir = _inst(53, [(0.9, 1.2, 60)])
+    guitar = _inst(27, [(2.0, 2.24, 60)])
+    folded = merge_cross_track_handoffs([pad, choir, guitar])
+    assert folded == 2
+    assert [(n.start, n.end) for n in pad.notes] == [(0.0, 2.24)]
+    assert choir.notes == [] and guitar.notes == []
+
+
+def test_doublings_long_answers_and_drums_are_kept():
+    from korshmer.midi.transcription_cleanup import merge_cross_track_handoffs
+
+    piano = _inst(0, [(0.0, 0.5, 64)])
+    guitar = _inst(27, [(0.0, 0.5, 64)])
+    assert merge_cross_track_handoffs([piano, guitar]) == 0
+    assert len(piano.notes) == len(guitar.notes) == 1
+
+    lead = _inst(81, [(0.0, 1.0, 67)])
+    answer = _inst(61, [(1.0, 2.5, 67)])
+    assert merge_cross_track_handoffs([lead, answer]) == 0
+
+    drums = _inst(0, [(0.0, 0.1, 36), (0.1, 0.2, 36)], drum=True)
+    bass = _inst(33, [(0.0, 0.1, 36)])
+    assert merge_cross_track_handoffs([drums, bass]) == 0
+    assert len(drums.notes) == 2
+
+
+def test_gap_larger_than_the_limit_is_a_new_note():
+    from korshmer.midi.transcription_cleanup import merge_cross_track_handoffs
+
+    pad = _inst(89, [(0.0, 1.0, 60)])
+    choir = _inst(53, [(1.1, 1.3, 60)])
+    assert merge_cross_track_handoffs([pad, choir]) == 0
+
+
+def _tone_stem(segments, sr=22050):
+    total = max(end for _, end, _ in segments) + 0.5
+    y = np.zeros(int(total * sr))
+    for start, end, pitch in segments:
+        t = np.arange(int((end - start) * sr)) / sr
+        f = 440 * 2 ** ((pitch - 69) / 12)
+        y[int(start * sr) : int(start * sr) + len(t)] += np.sin(
+            2 * np.pi * f * t
+        ) * np.exp(-t * 1.5)
+    return y.astype(np.float32), sr
+
+
+def test_pieces_without_a_new_attack_are_joined():
+    from korshmer.midi.transcription_cleanup import (
+        merge_unattacked_splits,
+        pitch_band_flux,
+    )
+
+    plucks = [(i * 1.0, i * 1.0 + 0.9, 45 + (i % 5) * 2) for i in range(8)]
+    held = (9.0, 11.0, 52)
+    audio, sr = _tone_stem(plucks + [held] + [(12.0, 12.5, 52), (12.5, 13, 52)])
+    flux, fps = pitch_band_flux(audio, sr)
+    inst = pretty_midi.Instrument(33)
+    for start, end, pitch in plucks:
+        inst.notes.append(pretty_midi.Note(80, pitch, start, end))
+
+    inst.notes += [
+        pretty_midi.Note(80, 52, 9.0, 10.0),
+        pretty_midi.Note(70, 52, 10.0, 11.0),
+        pretty_midi.Note(80, 52, 12.0, 12.5),
+        pretty_midi.Note(80, 52, 12.5, 13.0),
+    ]
+    assert merge_unattacked_splits(inst, flux, fps) == 1
+    spans = sorted((n.start, n.end) for n in inst.notes if n.pitch == 52)
+    assert (9.0, 11.0) in spans
+    assert (12.0, 12.5) in spans and (12.5, 13.0) in spans
+
+
+def test_too_few_reference_notes_changes_nothing():
+    from korshmer.midi.transcription_cleanup import (
+        merge_unattacked_splits,
+        pitch_band_flux,
+    )
+
+    audio, sr = _tone_stem([(0.0, 2.0, 50)])
+    flux, fps = pitch_band_flux(audio, sr)
+    inst = pretty_midi.Instrument(33)
+    inst.notes = [
+        pretty_midi.Note(80, 50, 0.0, 1.0),
+        pretty_midi.Note(80, 50, 1.0, 2.0),
+    ]
+    assert merge_unattacked_splits(inst, flux, fps) == 0
+    assert len(inst.notes) == 2

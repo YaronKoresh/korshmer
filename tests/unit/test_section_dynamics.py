@@ -97,3 +97,23 @@ def test_from_file_matches_in_memory(tmp_path):
     va = [n.velocity for n in a.instruments[0].notes]
     vb = [n.velocity for n in b.instruments[0].notes]
     assert np.allclose(va, vb, atol=1)
+
+
+def test_voices_stay_nearly_dry_and_bass_tight():
+    from korshmer.audio_processors import effect_sends
+
+    vocal_reverb, vocal_chorus = effect_sends(53)
+    default_reverb, _ = effect_sends(0)
+    assert vocal_reverb < default_reverb
+    assert vocal_chorus == 0
+    assert effect_sends(33)[0] < default_reverb
+    assert effect_sends(0, is_drum=True)[1] == 0
+
+
+def test_vocals_use_a_fast_attack_voice_and_dynamics_are_on_by_default():
+    from korshmer import track_processor
+    from korshmer.services.preset_service import PresetService
+
+    assert track_processor.VOCAL_PROGRAM == 53
+    assert PresetService.normalize_velocity_mode("Original") == "Original"
+    assert PresetService.normalize_velocity_mode(None) == "Original"

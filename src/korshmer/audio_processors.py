@@ -229,6 +229,23 @@ MAX_SIMULTANEOUS_NOTES = 128
 REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.25)
 CHORUS_SETTINGS = (3, 0.3, 0.3, 8.0, 0)
 RENDER_TARGET_RMS_DB = -12.0
+CC_REVERB_SEND = 91
+CC_CHORUS_SEND = 93
+VOICE_PROGRAMS = frozenset({52, 53, 54, 85})
+
+
+def effect_sends(program, is_drum=False):
+    if is_drum:
+        return 25, 0
+    if program in VOICE_PROGRAMS:
+        return 15, 0
+    if 32 <= program <= 39:
+        return 8, 0
+    if 24 <= program <= 31:
+        return 25, 10
+    return 40, 20
+
+
 RENDER_LIMIT_KNEE = 0.5
 
 
@@ -404,6 +421,9 @@ def render_midi_to_wav(
                     if is_drum and available_kits:
                         program = resolve_drum_kit(inst.program, available_kits)
                     fs.program_select(channel, sfid, bank, program)
+                    reverb, chorus = effect_sends(program, is_drum)
+                    fs.cc(channel, CC_REVERB_SEND, reverb)
+                    fs.cc(channel, CC_CHORUS_SEND, chorus)
                     for note in inst.notes:
                         events.push(
                             MidiEvent(

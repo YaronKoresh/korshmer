@@ -57,8 +57,11 @@ from korshmer.midi.section_dynamics import apply_section_dynamics_from_file
 from korshmer.midi.transcription_cleanup import (
     clean_transcription,
     drop_notes_outside_regions,
+    merge_cross_track_handoffs,
     merge_note_variants,
+    merge_unattacked_splits,
     options_for_cleanup,
+    pitch_band_flux,
     split_notes_at_onsets,
 )
 from korshmer.midi_algorithms import (
@@ -82,7 +85,9 @@ BASS_SPLIT_MIN_PART = 0.12
 BASS_SPLIT_GAP = 0.04
 POLISH_MIN_NOTE = 0.06
 MIDI_STEM_TYPES = ("drums", "bass", "other", "vocals", "guitar", "piano")
-VOCAL_PROGRAM = 52
+
+
+VOCAL_PROGRAM = 53
 VOCAL_TRACK_NAME = "Vocals"
 KEPT_TRACK_NAMES = frozenset({VOCAL_TRACK_NAME})
 MUSIC_ONLY_NAME = "music_only.wav"
@@ -507,6 +512,20 @@ def process_track(
                         options=options_for_cleanup(stem_name, cleanup_options),
                         onsets=stem_onsets,
                     )
+                    try:
+                        import librosa
+
+                        stem_audio, stem_rate = librosa.load(
+                            s_path, sr=22050, mono=True
+                        )
+                        flux, flux_fps = pitch_band_flux(stem_audio, stem_rate)
+                        for inst in m_dat.instruments:
+                            merge_unattacked_splits(inst, flux, flux_fps)
+                    except Exception as exc:
+                        print(
+                            f"Joining split notes skipped: {exc}",
+                            file=sys.stderr,
+                        )
                 if (
                     not drum_check
                     and scale_type != "Auto (Detect)"
@@ -527,15 +546,20 @@ def process_track(
                         if drum_check
                         else normalize_note_velocities(m_dat)
                     )
-                    if follow_audio_dynamics and not drum_check:
-                        try:
-                            apply_section_dynamics_from_file(m_dat, s_path)
-                        except Exception as exc:
-                            print(
-                                f"Section dynamics skipped: {exc}",
-                                file=sys.stderr,
-                            )
                 m_dat = process_velocity(m_dat, velocity_mode, velocity_value)
+
+                if (
+                    velocity_mode != "Fixed"
+                    and follow_audio_dynamics
+                    and not drum_check
+                ):
+                    try:
+                        apply_section_dynamics_from_file(m_dat, s_path)
+                    except Exception as exc:
+                        print(
+                            f"Section dynamics skipped: {exc}",
+                            file=sys.stderr,
+                        )
                 if enable_cc_gen and not drum_check:
                     m_dat = generate_cc_from_audio(m_dat, s_path)
                 if is_vocal_stem:
@@ -589,6 +613,13 @@ def process_track(
                     tmp_midis.extend(res)
 
         progress(0.95, desc="Merging & Exporting...")
+        handoffs = merge_cross_track_handoffs(
+            [inst for _, m, _, _ in tmp_midis for inst in m.instruments]
+        )
+        if handoffs:
+            progress(
+                0.95, desc=f"Joined {handoffs} notes split between instruments"
+            )
 
         beat_grid = None
         if quantize_strength > 0:

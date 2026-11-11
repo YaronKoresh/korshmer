@@ -20,7 +20,9 @@ class PresetsMixin:
         self.combo_grid.setCurrentText(p.get("grid", "1/8"))
         self.slider_quantize.setValue(p.get("quantize", 100))
         self.slider_swing.setValue(p.get("swing", 0))
-        vm = PresetService.normalize_velocity_mode(p.get("vel_mode", "Fixed"))
+        vm = PresetService.normalize_velocity_mode(
+            p.get("vel_mode", "Original")
+        )
         self.combo_velocity.setCurrentText(vm)
         self.slider_vel_val.setValue(p.get("vel_val", 80))
         self.rad_merged.setChecked(p.get("export", "Separate") == "Merged")
@@ -98,7 +100,9 @@ class PresetsMixin:
         self.combo_grid.setCurrentText(p.get("grid", "1/8"))
         self.slider_quantize.setValue(p.get("quantize", 100))
         self.slider_swing.setValue(p.get("swing", 0))
-        vm = PresetService.normalize_velocity_mode(p.get("vel_mode", "Fixed"))
+        vm = PresetService.normalize_velocity_mode(
+            p.get("vel_mode", "Original")
+        )
         self.combo_velocity.setCurrentText(vm)
         self.slider_vel_val.setValue(p.get("vel_val", 80))
         self.rad_merged.setChecked(p.get("export", "Separate") == "Merged")
