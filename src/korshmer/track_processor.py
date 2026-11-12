@@ -55,6 +55,7 @@ from korshmer.midi.adaptive_snap import (
 )
 from korshmer.midi.section_dynamics import (
     apply_section_dynamics_from_file,
+    drop_silent_notes_from_file,
     song_loud_level_from_files,
 )
 from korshmer.midi.transcription_cleanup import (
@@ -370,17 +371,14 @@ def process_track(
             return generated_files
 
         song_loud_db = None
-        if velocity_mode != "Fixed":
-            try:
-                song_loud_db = song_loud_level_from_files(
-                    os.path.join(stems_path, stem)
-                    for stem in stem_files
-                    if "drum" not in stem.lower()
-                )
-            except Exception as exc:
-                progress(
-                    STEM_FILTER_PROGRESS, desc=f"Song loudness skipped: {exc}"
-                )
+        try:
+            song_loud_db = song_loud_level_from_files(
+                os.path.join(stems_path, stem)
+                for stem in stem_files
+                if "drum" not in stem.lower()
+            )
+        except Exception as exc:
+            progress(STEM_FILTER_PROGRESS, desc=f"Song loudness skipped: {exc}")
 
         def process_stem_worker(idx, stem_name):
             try:
@@ -512,6 +510,13 @@ def process_track(
                 drum_check = "drum" in stem_name.lower()
                 if music_regions:
                     drop_notes_outside_regions(m_dat, music_regions)
+                if not drum_check and song_loud_db is not None:
+                    try:
+                        drop_silent_notes_from_file(m_dat, s_path, song_loud_db)
+                    except Exception as exc:
+                        progress(
+                            arr_prog, desc=f"Silent-note check skipped: {exc}"
+                        )
                 stem_onsets = (
                     audio_onset_times(variant_paths[0]) if variant_paths else []
                 )

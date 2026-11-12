@@ -9,7 +9,11 @@ from korshmer import track_processor
 
 SR = 22050
 SECONDS = 12.0
-STEMS = {"bass": (-6.0, 110.0, 45), "other": (-18.0, 220.0, 57)}
+STEMS = {
+    "bass": (-6.0, 110.0, 45),
+    "other": (-18.0, 220.0, 57),
+    "piano": (-70.0, 330.0, 69),
+}
 
 
 def _tone(level_db, frequency):
@@ -93,3 +97,9 @@ def test_fixed_velocity_mode_still_exports_one_level(tmp_path, monkeypatch):
         tmp_path, monkeypatch, velocity_mode="Fixed", velocity_value=70
     )
     assert means == {"bass": 70, "other": 70}
+
+
+def test_stem_that_is_silent_in_the_song_exports_no_notes(
+    tmp_path, monkeypatch
+):
+    assert set(_convert(tmp_path, monkeypatch)) == {"bass", "other"}

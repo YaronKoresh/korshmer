@@ -55,6 +55,17 @@ def test_a_plain_beat_is_found_hit_by_hit(bpm):
     assert extra <= len(truth) * 0.05
 
 
+def test_low_rumble_between_kicks_is_not_counted_as_kicks():
+    audio, truth = make_drum_loop(120.0, bars=8)
+    t = np.arange(len(audio)) / SAMPLE_RATE
+    wobble = 1 + 0.6 * np.sin(2 * np.pi * 7.3 * t) * np.sin(2 * np.pi * 0.9 * t)
+    hum = np.sin(2 * np.pi * 58 * t) + 0.6 * np.sin(2 * np.pi * 97 * t + 1)
+    hits = dt.find_hits(audio + (0.02 * wobble * hum), SAMPLE_RATE)
+    kicks = [hit for hit in hits if hit[1] == dt.KICK]
+    found, _ = _match(kicks, [hit for hit in truth if hit[0] == "kick"])
+    assert found["kick"][0] == found["kick"][1] == len(kicks)
+
+
 def test_toms_and_open_hats_get_their_own_names():
     audio, truth = make_drum_loop(120.0, bars=8, fills=True, open_hats=True)
     found, extra = _match(dt.find_hits(audio, SAMPLE_RATE), truth)

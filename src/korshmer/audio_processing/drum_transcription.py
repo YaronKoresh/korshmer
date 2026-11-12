@@ -26,6 +26,9 @@ PEAK_FLOOR = 0.06
 SNARE_NOISE_RATIO = 0.25
 SNARE_MAX_NOISE_RATIO = 6.0
 KICK_LOW_TO_BODY = 1.5
+KICK_MIN_RISE = 2.5
+KICK_MIN_LEVEL = 0.06
+ATTACK_FRAMES = 4
 PAD_FRAMES = 12
 BLEED_TOLERANCE_SECONDS = 0.03
 BLEED_MARGIN = 2.0
@@ -93,6 +96,14 @@ def _pick(envelope, name, frame_rate):
 def _window_energy(magnitude, band_slice, frame, frames=6):
     stop = min(magnitude.shape[1], frame + frames)
     return float(np.mean(magnitude[band_slice, frame:stop]))
+
+
+def _attack(raw, band_slice, frame):
+    track = raw[band_slice].mean(axis=0)
+    before = track[max(0, frame - ATTACK_FRAMES) : max(0, frame - 1)]
+    quiet = float(np.mean(before)) if before.size else 0.0
+    after = float(np.max(track[frame : frame + ATTACK_FRAMES]))
+    return after, after / max(quiet, EPSILON)
 
 
 def _decay_seconds(magnitude, band_slice, frame, frame_rate):
@@ -218,13 +229,22 @@ def find_hits(audio, sample_rate=SAMPLE_RATE):
     high_frames = _pick(high_flux, "high", frame_rate)
 
     hits = []
-    kicks = []
+    struck = []
     for frame in low_frames:
         low_energy = _window_energy(magnitude, low, frame)
         body_energy = _window_energy(magnitude, body, frame)
-        if low_energy >= KICK_LOW_TO_BODY * body_energy:
-            kicks.append(frame)
-            hits.append((frame, KICK, float(low_flux[frame]), "low"))
+        level, rise = _attack(raw, low, frame)
+        if (
+            low_energy >= KICK_LOW_TO_BODY * body_energy
+            and rise >= KICK_MIN_RISE
+        ):
+            struck.append((frame, level))
+    kicks = []
+    if struck:
+        loud = float(np.percentile([level for _, level in struck], 95))
+        kicks = [f for f, level in struck if level >= KICK_MIN_LEVEL * loud]
+    for frame in kicks:
+        hits.append((frame, KICK, float(low_flux[frame]), "low"))
     low_frames = np.array(kicks, dtype=int)
     kick_noise_ratio = 0.0
     kick_body_ratio = 0.0

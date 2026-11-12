@@ -11,6 +11,9 @@ LOUD_PERCENTILE = 95
 
 
 DB_PER_VELOCITY_DECADE = 40.0
+SILENT_BELOW_SONG_DB = 30.0
+NOTE_LEVEL_WINDOW_S = 0.1
+NOTE_LEVEL_SPAN_S = 0.5
 
 
 def loudness_curve(audio, sample_rate, window_s=3.0):
@@ -56,6 +59,46 @@ def song_loud_level_from_files(paths, window_s=3.0):
         (librosa.load(str(p), sr=SAMPLE_RATE, mono=True)[0] for p in paths),
         SAMPLE_RATE,
         window_s,
+    )
+
+
+def drop_silent_notes(
+    midi_data,
+    audio,
+    sample_rate,
+    reference_db,
+    *,
+    below_db=SILENT_BELOW_SONG_DB,
+):
+    validate_effect_number(reference_db, "Dynamics reference", -200, 200)
+    validate_effect_number(below_db, "Silence range", 0, 120)
+    times, level = loudness_curve(audio, sample_rate, NOTE_LEVEL_WINDOW_S)
+    if len(level) == 0:
+        return 0
+    floor = reference_db - below_db
+    dropped = 0
+    for inst in midi_data.instruments:
+        if inst.is_drum:
+            continue
+        heard = []
+        for note in inst.notes:
+            stop = min(note.end, note.start + NOTE_LEVEL_SPAN_S)
+            first = int(np.searchsorted(times, note.start, side="right")) - 1
+            last = int(np.searchsorted(times, stop, side="left"))
+            span = level[max(0, first) : max(first, last) + 1]
+            if span.size and float(span.max()) >= floor:
+                heard.append(note)
+        dropped += len(inst.notes) - len(heard)
+        inst.notes = heard
+    return dropped
+
+
+def drop_silent_notes_from_file(midi_data, path, reference_db, **options):
+    import librosa
+
+    audio, _ = librosa.load(str(path), sr=SAMPLE_RATE, mono=True)
+    return drop_silent_notes(
+        midi_data, audio, SAMPLE_RATE, reference_db, **options
     )
 
 

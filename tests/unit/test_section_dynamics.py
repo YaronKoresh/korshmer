@@ -6,6 +6,8 @@ import soundfile as sf
 from korshmer.midi.section_dynamics import (
     apply_section_dynamics,
     apply_section_dynamics_from_file,
+    drop_silent_notes,
+    drop_silent_notes_from_file,
     song_loud_level,
     song_loud_level_from_files,
 )
@@ -142,6 +144,33 @@ def test_reference_level_must_be_a_finite_number():
         apply_section_dynamics(
             _midi(10.0, 1), _song([-6]), SR, reference_db=float("nan")
         )
+
+
+def test_notes_over_a_silent_part_of_the_stem_are_dropped():
+    lead, stem = _song([-8, -8, -8]), _song([-20, -70, -30])
+    song = song_loud_level([lead, stem], SR)
+    pm = _midi(10.0, 3)
+    dropped = drop_silent_notes(pm, stem, SR, song)
+    starts = [n.start for n in pm.instruments[0].notes]
+    assert dropped == 10
+    assert len(starts) == 20
+    assert not [s for s in starts if 10.0 <= s < 20.0]
+
+
+def test_silent_note_check_keeps_drums_and_matches_files(tmp_path):
+    stem = _song([-70, -8]).astype(np.float32)
+    song = song_loud_level([stem], SR)
+    drums = _midi(10.0, 2, drum=True)
+    assert drop_silent_notes(drums, stem, SR, song) == 0
+    assert len(drums.instruments[0].notes) == 20
+    path = tmp_path / "piano.wav"
+    sf.write(path, stem, SR)
+    a, b = _midi(10.0, 2), _midi(10.0, 2)
+    assert drop_silent_notes(a, stem, SR, song) == 10
+    assert drop_silent_notes_from_file(b, str(path), song) == 10
+    assert drop_silent_notes(_midi(1.0, 1), np.zeros(10), SR, song) == 0
+    with pytest.raises(ValueError):
+        drop_silent_notes(_midi(1.0, 1), stem, SR, float("inf"))
 
 
 def test_voices_stay_nearly_dry_and_bass_tight():
