@@ -6,6 +6,8 @@ import soundfile as sf
 from korshmer.midi.section_dynamics import (
     apply_section_dynamics,
     apply_section_dynamics_from_file,
+    song_loud_level,
+    song_loud_level_from_files,
 )
 
 SR = 22050
@@ -97,6 +99,49 @@ def test_from_file_matches_in_memory(tmp_path):
     va = [n.velocity for n in a.instruments[0].notes]
     vb = [n.velocity for n in b.instruments[0].notes]
     assert np.allclose(va, vb, atol=1)
+
+
+def test_backing_stem_follows_the_song_and_not_its_own_peak():
+    lead, backing = _song([-6, -6]), _song([-18, -6])
+    song = song_loud_level([lead, backing], SR)
+    lead_midi, backing_midi = _midi(10.0, 2), _midi(10.0, 2)
+    apply_section_dynamics(lead_midi, lead, SR, reference_db=song)
+    apply_section_dynamics(backing_midi, backing, SR, reference_db=song)
+    assert _section_means(lead_midi, 10.0, 2) == pytest.approx(
+        [100, 100], abs=2
+    )
+    assert _section_means(backing_midi, 10.0, 2) == pytest.approx(
+        [50, 100], abs=4
+    )
+
+
+def test_stem_that_is_soft_all_song_long_stays_soft():
+    lead, backing = _song([-8]), _song([-20])
+    song = song_loud_level([backing, lead], SR)
+    alone, in_song = _midi(10.0, 1), _midi(10.0, 1)
+    apply_section_dynamics(alone, backing, SR)
+    apply_section_dynamics(in_song, backing, SR, reference_db=song)
+    assert _section_means(alone, 10.0, 1)[0] == pytest.approx(100, abs=2)
+    assert _section_means(in_song, 10.0, 1)[0] == pytest.approx(50, abs=4)
+
+
+def test_song_level_skips_silence_and_matches_files(tmp_path):
+    loud, soft = _song([-6]), _song([-18])
+    song = song_loud_level([soft, np.zeros(10), loud], SR)
+    assert song == pytest.approx(song_loud_level([loud], SR))
+    assert song_loud_level([], SR) is None
+    assert song_loud_level([np.zeros(10)], SR) is None
+    paths = [tmp_path / "bass.wav", tmp_path / "other.wav"]
+    for path, audio in zip(paths, (loud, soft), strict=True):
+        sf.write(path, audio.astype(np.float32), SR)
+    assert song_loud_level_from_files(paths) == pytest.approx(song, abs=0.1)
+
+
+def test_reference_level_must_be_a_finite_number():
+    with pytest.raises(ValueError):
+        apply_section_dynamics(
+            _midi(10.0, 1), _song([-6]), SR, reference_db=float("nan")
+        )
 
 
 def test_voices_stay_nearly_dry_and_bass_tight():

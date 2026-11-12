@@ -53,7 +53,10 @@ from korshmer.midi.adaptive_snap import (
     snap_adaptive,
     supports,
 )
-from korshmer.midi.section_dynamics import apply_section_dynamics_from_file
+from korshmer.midi.section_dynamics import (
+    apply_section_dynamics_from_file,
+    song_loud_level_from_files,
+)
 from korshmer.midi.transcription_cleanup import (
     clean_transcription,
     drop_notes_outside_regions,
@@ -366,6 +369,19 @@ def process_track(
             progress(1.0, desc="Done!")
             return generated_files
 
+        song_loud_db = None
+        if velocity_mode != "Fixed":
+            try:
+                song_loud_db = song_loud_level_from_files(
+                    os.path.join(stems_path, stem)
+                    for stem in stem_files
+                    if "drum" not in stem.lower()
+                )
+            except Exception as exc:
+                progress(
+                    STEM_FILTER_PROGRESS, desc=f"Song loudness skipped: {exc}"
+                )
+
         def process_stem_worker(idx, stem_name):
             try:
                 check_stop()
@@ -554,7 +570,9 @@ def process_track(
                     and not drum_check
                 ):
                     try:
-                        apply_section_dynamics_from_file(m_dat, s_path)
+                        apply_section_dynamics_from_file(
+                            m_dat, s_path, reference_db=song_loud_db
+                        )
                     except Exception as exc:
                         print(
                             f"Section dynamics skipped: {exc}",

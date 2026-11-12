@@ -32,6 +32,33 @@ def loudness_curve(audio, sample_rate, window_s=3.0):
     return times, level
 
 
+def loud_level(level):
+    audible = level[level > level.max() - SILENCE_RANGE_DB]
+    return float(np.percentile(audible, LOUD_PERCENTILE))
+
+
+def song_loud_level(stems, sample_rate, window_s=3.0):
+    loudest = None
+    for audio in stems:
+        _, level = loudness_curve(audio, sample_rate, window_s)
+        if len(level) == 0:
+            continue
+        stem_loud = loud_level(level)
+        if loudest is None or stem_loud > loudest:
+            loudest = stem_loud
+    return loudest
+
+
+def song_loud_level_from_files(paths, window_s=3.0):
+    import librosa
+
+    return song_loud_level(
+        (librosa.load(str(p), sr=SAMPLE_RATE, mono=True)[0] for p in paths),
+        SAMPLE_RATE,
+        window_s,
+    )
+
+
 def apply_section_dynamics(
     midi_data,
     audio,
@@ -41,9 +68,12 @@ def apply_section_dynamics(
     max_drop_db=18.0,
     window_s=3.0,
     min_velocity=1,
+    reference_db=None,
 ):
     validate_effect_number(amount, "Dynamics amount", 0, 2)
     validate_effect_number(max_drop_db, "Dynamics range", 0, 60)
+    if reference_db is not None:
+        validate_effect_number(reference_db, "Dynamics reference", -200, 200)
     notes = [
         n
         for inst in midi_data.instruments
@@ -55,8 +85,7 @@ def apply_section_dynamics(
     times, level = loudness_curve(audio, sample_rate, window_s)
     if len(level) == 0:
         return 0
-    audible = level[level > level.max() - SILENCE_RANGE_DB]
-    loud = float(np.percentile(audible, LOUD_PERCENTILE))
+    loud = loud_level(level) if reference_db is None else float(reference_db)
     changed = 0
     for note in notes:
         middle = 0.5 * (note.start + min(note.end, note.start + 0.5))
