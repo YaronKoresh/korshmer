@@ -676,9 +676,12 @@ PITCH_FLUX_HOP = 256
 PITCH_FLUX_LOWEST = 24
 PITCH_FLUX_BINS = 96
 PITCH_FLUX_PARTIALS = (0, 12, 19)
+REATTACK_MIN_RISE_DB = 3.0
+REATTACK_BEFORE_S = (0.1, 0.02)
+REATTACK_AFTER_S = 0.08
 
 
-def pitch_band_flux(audio, sample_rate):
+def pitch_band_level(audio, sample_rate):
     import librosa
 
     y = np.asarray(audio, dtype=np.float32)
@@ -695,8 +698,60 @@ def pitch_band_flux(audio, sample_rate):
         )
     )
     level = librosa.amplitude_to_db(spectrum, ref=np.max)
-    flux = np.maximum(0.0, np.diff(level, axis=1, prepend=level[:, :1]))
-    return flux, sample_rate / PITCH_FLUX_HOP
+    return level, sample_rate / PITCH_FLUX_HOP
+
+
+def level_flux(level):
+    return np.maximum(0.0, np.diff(level, axis=1, prepend=level[:, :1]))
+
+
+def pitch_band_flux(audio, sample_rate):
+    level, frames_per_second = pitch_band_level(audio, sample_rate)
+    return level_flux(level), frames_per_second
+
+
+def _pitch_rows(pitch, height):
+    return [
+        pitch - PITCH_FLUX_LOWEST + partial
+        for partial in PITCH_FLUX_PARTIALS
+        if 0 <= pitch - PITCH_FLUX_LOWEST + partial < height
+    ]
+
+
+def _rise_at(level, frames_per_second, pitch, seconds):
+    rows = _pitch_rows(pitch, level.shape[0])
+    frame = int(round(seconds * frames_per_second))
+    far, near = (int(round(s * frames_per_second)) for s in REATTACK_BEFORE_S)
+    after = int(round(REATTACK_AFTER_S * frames_per_second))
+    before = level[rows, max(0, frame - far) : max(0, frame - near)]
+    onward = level[rows, frame : frame + max(1, after)]
+    if not rows or before.size == 0 or onward.size == 0:
+        return None
+    loud_before = np.mean(10.0 ** (before / 10.0))
+    loud_onward = np.mean(10.0 ** (onward / 10.0))
+    return float(10.0 * np.log10(loud_onward / loud_before))
+
+
+def merge_sustained_splits(
+    inst, level, frames_per_second, gap=0.05, min_rise_db=REATTACK_MIN_RISE_DB
+):
+    if inst.is_drum or len(inst.notes) < 2:
+        return 0
+    notes = sorted(inst.notes, key=lambda n: (n.pitch, n.start))
+    kept = [notes[0]]
+    joins = 0
+    for note in notes[1:]:
+        last = kept[-1]
+        if note.pitch == last.pitch and -gap <= note.start - last.end <= gap:
+            rise = _rise_at(level, frames_per_second, note.pitch, note.start)
+            if rise is not None and rise < min_rise_db:
+                last.end = max(last.end, note.end)
+                last.velocity = max(last.velocity, note.velocity)
+                joins += 1
+                continue
+        kept.append(note)
+    inst.notes = sorted(kept, key=lambda n: (n.start, n.pitch))
+    return joins
 
 
 def _attack_at(flux, frames_per_second, pitch, seconds):

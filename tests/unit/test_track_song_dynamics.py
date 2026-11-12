@@ -103,3 +103,36 @@ def test_stem_that_is_silent_in_the_song_exports_no_notes(
     tmp_path, monkeypatch
 ):
     assert set(_convert(tmp_path, monkeypatch)) == {"bass", "other"}
+
+
+class _SungNote:
+    velocity, pitch = 90, 64
+
+    def __init__(self, start):
+        self.start, self.end = start, start + 0.4
+
+
+def test_vocals_use_the_vocal_voice_and_follow_the_song_level(
+    tmp_path, monkeypatch
+):
+    from korshmer.audio_processing import vocal_melody
+
+    monkeypatch.setitem(STEMS, "vocals", (-18.0, 330.0, 64))
+    monkeypatch.delitem(STEMS, "piano")
+    monkeypatch.setattr(
+        vocal_melody,
+        "transcribe_vocal_melody",
+        lambda *_a, **_k: [
+            _SungNote(s) for s in np.arange(0.5, SECONDS - 1.0, 0.5)
+        ],
+    )
+    monkeypatch.setattr(
+        track_processor, "DATA_DIR", str(tmp_path / "data"), raising=True
+    )
+    means = _convert(tmp_path, monkeypatch)
+    assert means["vocals"] == pytest.approx(means["bass"] / 2, rel=0.15)
+    folder = next((tmp_path / "data" / "song").iterdir()) / "MIDI"
+    voice = pretty_midi.PrettyMIDI(str(folder / "vocals.mid")).instruments
+    assert [(i.name, i.program) for i in voice] == [
+        (track_processor.VOCAL_TRACK_NAME, track_processor.VOCAL_PROGRAM)
+    ]

@@ -61,11 +61,13 @@ from korshmer.midi.section_dynamics import (
 from korshmer.midi.transcription_cleanup import (
     clean_transcription,
     drop_notes_outside_regions,
+    level_flux,
     merge_cross_track_handoffs,
     merge_note_variants,
+    merge_sustained_splits,
     merge_unattacked_splits,
     options_for_cleanup,
-    pitch_band_flux,
+    pitch_band_level,
     split_notes_at_onsets,
 )
 from korshmer.midi_algorithms import (
@@ -451,6 +453,7 @@ def process_track(
                             vocal_instrument.notes.append(midi_note)
 
                         m_dat.instruments.append(vocal_instrument)
+                        follow_audio_dynamics = True
                         progress(
                             trans_prog + 0.1,
                             desc=f"Vocal notes detected: {len(vocal_notes)}",
@@ -539,9 +542,13 @@ def process_track(
                         stem_audio, stem_rate = librosa.load(
                             s_path, sr=22050, mono=True
                         )
-                        flux, flux_fps = pitch_band_flux(stem_audio, stem_rate)
+                        level, level_fps = pitch_band_level(
+                            stem_audio, stem_rate
+                        )
+                        flux = level_flux(level)
                         for inst in m_dat.instruments:
-                            merge_unattacked_splits(inst, flux, flux_fps)
+                            merge_unattacked_splits(inst, flux, level_fps)
+                            merge_sustained_splits(inst, level, level_fps)
                     except Exception as exc:
                         print(
                             f"Joining split notes skipped: {exc}",
@@ -603,18 +610,18 @@ def process_track(
                             f"Timbre analysis skipped: {exc}", file=sys.stderr
                         )
                 for f_n, m_obj in stem_splits:
-                    if (
+                    if is_vocal_stem:
+                        for inst in m_obj.instruments:
+                            inst.name = VOCAL_TRACK_NAME
+                            if not inst.is_drum:
+                                inst.program = VOCAL_PROGRAM
+                    elif (
                         len(m_obj.instruments) == 1
                         and not m_obj.instruments[0].is_drum
                     ):
                         m_obj = smart_instrument_selector(
                             b_name, m_obj, preferred_programs=stem_programs
                         )
-                    if is_vocal_stem:
-                        for inst in m_obj.instruments:
-                            inst.name = VOCAL_TRACK_NAME
-                            if inst.program == 0 and not inst.is_drum:
-                                inst.program = VOCAL_PROGRAM
                     processed.append((f_n, m_obj, drum_check, s_path))
                 return processed
             except Exception as e:
