@@ -79,7 +79,6 @@ from korshmer.midi_algorithms import (
     generate_cc_from_audio,
     normalize_note_velocities,
     process_velocity,
-    simplify_chord_density,
     smart_decompose_stem,
     smart_instrument_selector,
 )
@@ -548,7 +547,9 @@ def process_track(
                         flux = level_flux(level)
                         for inst in m_dat.instruments:
                             merge_unattacked_splits(inst, flux, level_fps)
-                            merge_sustained_splits(inst, level, level_fps)
+                            merge_sustained_splits(
+                                inst, level, level_fps, flux=flux
+                            )
                     except Exception as exc:
                         print(
                             f"Joining split notes skipped: {exc}",
@@ -686,7 +687,6 @@ def process_track(
             midi_obj = fix_legato_and_flutter(
                 midi_obj, min_duration=POLISH_MIN_NOTE
             )
-            midi_obj = simplify_chord_density(midi_obj, max_voices=4)
             if beat_grid is not None and supports(grid_div):
                 counts = snap_adaptive(
                     midi_obj,

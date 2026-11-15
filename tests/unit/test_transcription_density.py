@@ -223,20 +223,26 @@ def _vote_inputs(shift):
     return first, second
 
 
-def test_vote_tolerance_covers_a_note_shifted_by_0_07_s():
+def test_strict_vote_confirms_a_note_shifted_by_0_07_s():
     first, second = _vote_inputs(0.07)
 
-    wide = merge_note_variants([first, second])
-    narrow = merge_note_variants([first, second], tolerance=0.06)
+    wide = merge_note_variants([first, second], keep_seconds=None)
+    narrow = merge_note_variants(
+        [first, second], tolerance=0.06, keep_seconds=None
+    )
 
     assert [n.pitch for n in wide.instruments[0].notes] == [60]
-    assert narrow.instruments[0].notes == []
+    assert [n.pitch for n in narrow.instruments[0].notes] == [60]
 
 
-def test_vote_tolerance_stops_short_of_a_0_10_s_shift():
+def test_strict_vote_stops_short_of_a_0_10_s_shift():
     first, second = _vote_inputs(0.10)
 
-    assert merge_note_variants([first, second]).instruments[0].notes == []
+    strict = merge_note_variants([first, second], keep_seconds=None)
+    default = merge_note_variants([first, second])
+
+    assert strict.instruments[0].notes == []
+    assert [n.pitch for n in default.instruments[0].notes] == [60, 64]
 
 
 def _first_only_vote(**kwargs):
@@ -253,10 +259,10 @@ def _first_only_vote(**kwargs):
     return [n.pitch for n in merged.instruments[0].notes]
 
 
-def test_first_only_note_survives_only_when_long_and_louder_than_median():
-    assert _first_only_vote() == [60]
+def test_first_only_note_is_dropped_only_when_short_and_quieter_than_median():
+    assert _first_only_vote() == [60, 62, 64]
     assert _first_only_vote(keep_seconds=None) == []
-    assert _first_only_vote(keep_seconds=0.1) == [60, 64]
+    assert _first_only_vote(keep_seconds=0.1) == [60, 62, 64, 65]
 
 
 def test_first_only_vote_without_notes_does_not_fail():

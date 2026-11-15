@@ -157,7 +157,7 @@ def _chord_predict(_path, **_kwargs):
     return None, midi, []
 
 
-def test_dense_chords_end_up_on_one_capped_track(tmp_path, monkeypatch):
+def test_dense_chords_end_up_whole_on_one_track(tmp_path, monkeypatch):
     midis = _export(
         tmp_path,
         monkeypatch,
@@ -169,7 +169,7 @@ def test_dense_chords_end_up_on_one_capped_track(tmp_path, monkeypatch):
     instruments = pretty_midi.PrettyMIDI(midis[0]).instruments
     assert [i.name for i in instruments] == ["Grand Piano"]
     notes = instruments[0].notes
-    assert notes
+    assert len(notes) == 32
     for note in notes:
         sounding = [n for n in notes if n.start <= note.start < n.end]
-        assert len(sounding) <= 6
+        assert len(sounding) == 8

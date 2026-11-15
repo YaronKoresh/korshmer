@@ -442,6 +442,13 @@ def smooth_note_velocity(inst, strength):
     return len(notes)
 
 
+def _sounds_with(other, note, tolerance):
+    if abs(other.start - note.start) <= tolerance:
+        return True
+    shared = min(note.end, other.end) - max(note.start, other.start)
+    return shared >= OVERLAP_SHARE * (note.end - note.start)
+
+
 def merge_note_variants(midis, tolerance=0.08, need=2, *, keep_seconds=0.4):
     first = midis[0]
     tempi = first.get_tempo_changes()[1]
@@ -454,17 +461,14 @@ def merge_note_variants(midis, tolerance=0.08, need=2, *, keep_seconds=0.4):
 
     def keeps(n):
         votes = 1 + sum(
-            any(
-                abs(m.start - n.start) <= tolerance
-                for m in table.get(n.pitch, ())
-            )
+            any(_sounds_with(m, n, tolerance) for m in table.get(n.pitch, ()))
             for table in others
         )
-        return votes >= need or (
-            keep_seconds is not None
-            and n.end - n.start >= keep_seconds
-            and n.velocity > median
-        )
+        if votes >= need:
+            return True
+        if keep_seconds is None:
+            return False
+        return n.end - n.start >= keep_seconds or n.velocity >= median
 
     for inst in first.instruments:
         copy = _copy_instrument(inst)
@@ -733,18 +737,35 @@ def _rise_at(level, frames_per_second, pitch, seconds):
 
 
 def merge_sustained_splits(
-    inst, level, frames_per_second, gap=0.05, min_rise_db=REATTACK_MIN_RISE_DB
+    inst,
+    level,
+    frames_per_second,
+    gap=0.05,
+    min_rise_db=REATTACK_MIN_RISE_DB,
+    flux=None,
+    ratio=0.5,
 ):
     if inst.is_drum or len(inst.notes) < 2:
         return 0
     notes = sorted(inst.notes, key=lambda n: (n.pitch, n.start))
+    threshold = None
+    if flux is not None:
+        threshold = _attack_threshold(
+            notes, flux, frames_per_second, gap, ratio
+        )
     kept = [notes[0]]
     joins = 0
     for note in notes[1:]:
         last = kept[-1]
         if note.pitch == last.pitch and -gap <= note.start - last.end <= gap:
             rise = _rise_at(level, frames_per_second, note.pitch, note.start)
-            if rise is not None and rise < min_rise_db:
+            attack = None
+            if threshold is not None:
+                attack = _attack_at(
+                    flux, frames_per_second, note.pitch, note.start
+                )
+            struck = attack is not None and attack >= threshold
+            if rise is not None and rise < min_rise_db and not struck:
                 last.end = max(last.end, note.end)
                 last.velocity = max(last.velocity, note.velocity)
                 joins += 1
@@ -769,10 +790,7 @@ def _attack_at(flux, frames_per_second, pitch, seconds):
     return float(flux[rows, lo:hi].max())
 
 
-def merge_unattacked_splits(inst, flux, frames_per_second, gap=0.05, ratio=0.5):
-    if inst.is_drum or len(inst.notes) < 2:
-        return 0
-    notes = sorted(inst.notes, key=lambda n: (n.pitch, n.start))
+def _attack_threshold(notes, flux, frames_per_second, gap, ratio):
     separate = [
         _attack_at(flux, frames_per_second, b.pitch, b.start)
         for a, b in zip(notes, notes[1:], strict=False)
@@ -780,8 +798,17 @@ def merge_unattacked_splits(inst, flux, frames_per_second, gap=0.05, ratio=0.5):
     ]
     separate = [s for s in separate if s is not None]
     if len(separate) < 5:
+        return None
+    return ratio * float(np.median(separate))
+
+
+def merge_unattacked_splits(inst, flux, frames_per_second, gap=0.05, ratio=0.5):
+    if inst.is_drum or len(inst.notes) < 2:
         return 0
-    threshold = ratio * float(np.median(separate))
+    notes = sorted(inst.notes, key=lambda n: (n.pitch, n.start))
+    threshold = _attack_threshold(notes, flux, frames_per_second, gap, ratio)
+    if threshold is None:
+        return 0
     kept = [notes[0]]
     joins = 0
     for note in notes[1:]:
