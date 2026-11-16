@@ -1,3 +1,4 @@
+import logging
 import os
 import queue
 from collections import deque
@@ -32,7 +33,10 @@ from korshmer.midi.performance_recorder import (
     open_input_port,
 )
 from korshmer.ui.viewmodels.arranger_vm import ArrangerViewModel
-from korshmer.ui.viewmodels.editor_vm import compute_clip_waveform
+from korshmer.ui.viewmodels.editor_vm import (
+    TempoNormalizeError,
+    compute_clip_waveform,
+)
 from korshmer.ui.widgets.arranger.track_panel import TrackPanel
 from korshmer.ui.widgets.material import MAT_ERROR, MAT_PRIMARY, MAT_TEXT
 from korshmer.ui.widgets.material.button import (
@@ -52,6 +56,13 @@ from korshmer.utils.tempo import midi_file_tempo, validate_bpm
 
 DEFAULT_GRID_LABEL = "1/16"
 ZOOM_STEP = 1.25
+EVEN_BPM_HELP = (
+    "Even BPM: when a song changes tempo, move every note and audio clip "
+    "onto one average tempo so the whole song sits on a single grid. "
+    "Turn it off to keep the tempo changes of the song; the grid then "
+    "follows them."
+)
+ALIGNED_CLIPS_DIR = "tempo_aligned"
 SNAP_HELP = (
     "Snaps note edits to the current grid. Hold Alt while dragging to bypass."
 )
@@ -465,6 +476,14 @@ class ArrangerTimeline(QWidget):
         self.btn_snap.setChecked(True)
         self.btn_snap.toggled.connect(self.set_snap)
 
+        self.btn_even_bpm = MaterialToggleButton("Even BPM", MAT_PRIMARY)
+        self.btn_even_bpm.setFixedSize(90, 30)
+        self.btn_even_bpm.setToolTip(EVEN_BPM_HELP)
+        self.btn_even_bpm.setChecked(True)
+        self.btn_even_bpm.toggled.connect(self.set_even_bpm)
+        self._tempo_problem = None
+        self.piano_roll.clips_changed.connect(self._retry_even_bpm)
+
         lbl_grid = QLabel("Grid")
         lbl_grid.setStyleSheet(f"color: {MAT_TEXT};")
         self.combo_grid = QComboBox()
@@ -491,6 +510,7 @@ class ArrangerTimeline(QWidget):
         toolbar.addWidget(self.btn_redo)
         toolbar.addSpacing(12)
         toolbar.addWidget(self.btn_snap)
+        toolbar.addWidget(self.btn_even_bpm)
         toolbar.addWidget(lbl_grid)
         toolbar.addWidget(self.combo_grid)
         toolbar.addSpacing(12)
@@ -604,7 +624,73 @@ class ArrangerTimeline(QWidget):
             self.piano_roll.detect_grid_offset(pm)
         self.piano_roll.load_model()
         self._on_model_changed()
+        self._tempo_problem = None
+        self.apply_even_bpm()
         return created
+
+    def _aligned_clip(self, clip, tempo_map, bpm):
+        from korshmer.audio_processing.tempo_align import align_clip_to_tempo
+
+        return align_clip_to_tempo(
+            clip.path,
+            clip.start,
+            tempo_map,
+            bpm,
+            os.path.join(str(DATA_DIR), ALIGNED_CLIPS_DIR),
+        )
+
+    def _after_tempo_switch(self):
+        self.piano_roll.tempo = self.model.tempo
+        self.piano_roll.load_model()
+        for clip in self.model.clips:
+            if not clip.waveform:
+                self._queue_waveform(clip)
+        self._start_visible_waveforms()
+        self.tempo_changed.emit(float(self.model.tempo))
+        self._on_model_changed()
+
+    def _report_tempo_problem(self, text):
+        if text == self._tempo_problem:
+            return
+        self._tempo_problem = text
+        logging.getLogger(__name__).error(text)
+        QMessageBox.warning(self, "Even BPM", text)
+
+    def apply_even_bpm(self):
+        if not self.btn_even_bpm.isChecked() or self.model.tempo_map is None:
+            return False
+        self.piano_roll.sync_model_from_scene()
+        try:
+            self.model.normalize_tempo(self._aligned_clip)
+        except TempoNormalizeError as problem:
+            self._report_tempo_problem(str(problem))
+            return False
+        except Exception as problem:
+            self._report_tempo_problem(
+                f"Even BPM was not applied: {problem}. Turn off Even BPM "
+                "to keep the tempo changes of the song."
+            )
+            return False
+        self._tempo_problem = None
+        self._after_tempo_switch()
+        return True
+
+    def _retry_even_bpm(self):
+        if self._tempo_problem is not None:
+            self.apply_even_bpm()
+
+    def set_even_bpm(self, enabled):
+        if enabled:
+            return self.apply_even_bpm()
+        self._tempo_problem = None
+        self.piano_roll.sync_model_from_scene()
+        if not self.model.restore_tempo():
+            return False
+        self._after_tempo_switch()
+        return True
+
+    def to_editor_time(self, seconds):
+        return self.model.to_editor_time(seconds)
 
     def get_midi_from_editor(self):
         self.piano_roll.sync_model_from_scene()

@@ -24,8 +24,9 @@ from korshmer.midi import (
     time_stretch,
     transpose_midi,
 )
+from korshmer.midi.tempo_map import even_tempo_copy, restore_tempo_changes
 from korshmer.midi_algorithms import (
-    _save_modified_midi,
+    _save_modified_midi as _save_plain_midi,
     add_drum_fill,
     add_ghost_notes,
     apply_arpeggiator,
@@ -59,8 +60,24 @@ from korshmer.midi_algorithms import (
     smart_quantize,
     split_by_pitch,
 )
-from korshmer.utils.midi_loading import load_pretty_midi
+from korshmer.utils.midi_loading import load_pretty_midi as _load_plain_midi
 from korshmer.utils.track_layout import merge_by_instrument
+
+
+def load_pretty_midi(path, **kwargs):
+    return even_tempo_copy(_load_plain_midi(path, **kwargs))
+
+
+def _save_modified_midi(
+    pm, original_path, suffix, one_track_each=True, time_ratio=1.0
+):
+    try:
+        original = _load_plain_midi(original_path)
+    except (EOFError, OSError, ValueError):
+        original = None
+    if original is not None:
+        pm = restore_tempo_changes(pm, original, time_ratio)
+    return _save_plain_midi(pm, original_path, suffix, one_track_each)
 
 
 def generate_sustain_pedal(midi_data, threshold=0.1):
@@ -308,7 +325,7 @@ def process_speed(path, ratio):
     pm = load_pretty_midi(path)
     pm = time_stretch(pm, ratio)
     suffix = "Fast" if ratio < 1 else "Slow"
-    return _save_modified_midi(pm, path, suffix)
+    return _save_modified_midi(pm, path, suffix, time_ratio=ratio)
 
 
 def process_melody_gen(path, root, scale, bpm=120.0):

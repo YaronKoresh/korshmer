@@ -9,7 +9,7 @@ import pretty_midi
 from korshmer.constants import NOTE_NAMES
 from korshmer.midi.tempo_map import TempoMap
 from korshmer.utils.instrument_names import sanitize_instrument_name
-from korshmer.utils.tempo import validate_bpm
+from korshmer.utils.tempo import BPM_DECIMALS, validate_bpm
 from korshmer.utils.track_layout import (
     instrument_name,
     is_general_midi_name,
@@ -309,6 +309,7 @@ class ClipModel:
         "kind",
         "color",
         "waveform",
+        "source",
     )
 
     def __init__(
@@ -337,6 +338,7 @@ class ClipModel:
             self.kind, CLIP_KIND_COLORS["audio"]
         )
         self.waveform = []
+        self.source = None
 
     @property
     def end(self):
@@ -356,6 +358,7 @@ class ClipModel:
             self.color,
         )
         clone.waveform = self.waveform
+        clone.source = self.source
         return clone
 
     def to_dict(self):
@@ -370,10 +373,17 @@ class ClipModel:
             "solo": self.solo,
             "kind": self.kind,
             "color": self.color,
+            "source": list(self.source) if self.source else None,
         }
 
     @classmethod
     def from_dict(cls, data):
+        clip = cls._from_dict(data)
+        clip.source = _clip_source(data.get("source"))
+        return clip
+
+    @classmethod
+    def _from_dict(cls, data):
         return cls(
             data.get("id", 0),
             data.get("path", ""),
@@ -394,6 +404,43 @@ def _grid_offset_value(value):
     if not math.isfinite(value) or value < 0:
         return 0.0
     return float(value)
+
+
+MAX_CLIP_TEMPO_CHANGE = 0.10
+
+
+class TempoNormalizeError(ValueError):
+    def __init__(self, clips):
+        self.clip_names = [name for name, _ in clips]
+        worst = max(change for _, change in clips)
+        names = ", ".join(f"'{name}'" for name in self.clip_names)
+        super().__init__(
+            f"Even BPM was not applied: the audio clip {names} would need "
+            f"its speed changed by up to {worst:.0%}, more than the "
+            f"{MAX_CLIP_TEMPO_CHANGE:.0%} that still sounds right. "
+            "Turn off Even BPM to keep the tempo changes of the song, "
+            "or remove that audio clip and turn Even BPM on again."
+        )
+
+
+def _clip_source(value):
+    try:
+        path, start, duration = value
+        return str(path), float(start), float(duration)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalized_from_dict(data):
+    try:
+        tempo_map = TempoMap.from_pairs(data["map"])
+        return {
+            "map": tempo_map,
+            "bpm": float(data["bpm"]),
+            "tempo": float(data["tempo"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _changing_tempo_map(pm):
@@ -420,6 +467,7 @@ class EditorModel:
         self.tempo = validate_bpm(tempo)
         self.grid_offset = 0.0
         self.tempo_map = None
+        self.normalized = None
         self._next_track_id = 1
         self._next_note_id = 1
         self._next_clip_id = 1
@@ -564,6 +612,27 @@ class EditorModel:
         for note in self._selected_notes(note_ids):
             note.start = max(0.0, note.start + float(seconds))
 
+    def _moved_by_beats(self, note, beats):
+        tempo_map = self.tempo_map
+        start = tempo_map.seconds_at(tempo_map.beats_at(note.start) + beats)
+        end = tempo_map.seconds_at(tempo_map.beats_at(note.end) + beats)
+        start = max(0.0, start)
+        return start, max(MIN_NOTE_DURATION, end - start)
+
+    def shift_notes_by_beats(self, note_ids, beats):
+        if self.tempo_map is None:
+            self.shift_notes(note_ids, float(beats) * 60.0 / self.tempo)
+            return
+        for note in self._selected_notes(note_ids):
+            note.start, note.duration = self._moved_by_beats(note, float(beats))
+
+    def beats_length(self, start, beats):
+        if self.tempo_map is None:
+            return float(beats) * 60.0 / self.tempo
+        tempo_map = self.tempo_map
+        end = tempo_map.seconds_at(tempo_map.beats_at(start) + float(beats))
+        return end - float(start)
+
     def quantize_notes(
         self, note_ids, grid_seconds, strength=1.0, grid_offset=None
     ):
@@ -612,6 +681,12 @@ class EditorModel:
             return
         if self.tempo_map is not None:
             self.tempo_map = self.tempo_map.stretched(factor)
+        if self.normalized is not None:
+            self.normalized = {
+                "map": self.normalized["map"].stretched(factor),
+                "bpm": self.normalized["bpm"] / factor,
+                "tempo": self.normalized["tempo"] / factor,
+            }
         for note in self.notes:
             note.start *= factor
             note.duration = max(MIN_NOTE_DURATION, note.duration * factor)
@@ -656,6 +731,20 @@ class EditorModel:
             return []
         span_start = min(n.start for n in selected)
         span_end = max(n.end for n in selected)
+        if self.tempo_map is not None and beat_seconds and beat_seconds > 0:
+            beats = self.tempo_map.beats_at(span_end) - self.tempo_map.beats_at(
+                span_start
+            )
+            beats = max(1, math.ceil(beats - 1e-9))
+            return [
+                self.add_note(
+                    n.track_id,
+                    n.pitch,
+                    *self._moved_by_beats(n, beats),
+                    n.velocity,
+                )
+                for n in selected
+            ]
         offset = span_end - span_start
         if beat_seconds and beat_seconds > 0:
             offset = math.ceil(offset / beat_seconds - 1e-9) * beat_seconds
@@ -769,7 +858,9 @@ class EditorModel:
         if replace:
             self.tracks.clear()
             self.notes.clear()
+        if replace or not self.notes:
             self.tempo_map = _changing_tempo_map(pm)
+            self.normalized = None
         created = []
         instruments = list(getattr(pm, "instruments", None) or [])
         for inst in instruments:
@@ -803,7 +894,7 @@ class EditorModel:
 
     def to_pretty_midi(self, tempo=None, respect_mute_solo=True):
         bpm = validate_bpm(tempo, default=self.tempo) if tempo else self.tempo
-        if self.tempo_map is not None and not tempo:
+        if self.tempo_map is not None and abs(bpm - self.tempo) < 1e-6:
             pm = self.tempo_map.new_pretty_midi()
         else:
             pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
@@ -837,6 +928,72 @@ class EditorModel:
             pm.instruments, keep_shared_names=True
         )
         return pm
+
+    def _retime(self, convert):
+        for note in self.notes:
+            start = max(0.0, float(convert(note.start)))
+            end = float(convert(note.end))
+            note.start = start
+            note.duration = max(MIN_NOTE_DURATION, end - start)
+        self.grid_offset = max(0.0, float(convert(self.grid_offset)))
+        self._undo_stack.clear()
+        self._redo_stack.clear()
+
+    def normalize_tempo(self, align_clip):
+        tempo_map = self.tempo_map
+        if tempo_map is None:
+            return False
+        end = max(self.end_time(), tempo_map.starts[-1])
+        bpm = round(tempo_map.average_bpm(end), BPM_DECIMALS)
+        changes = [
+            (clip, tempo_map.largest_change(clip.start, clip.end, bpm))
+            for clip in self.clips
+        ]
+        unfit = [
+            (clip.name, change)
+            for clip, change in changes
+            if change > MAX_CLIP_TEMPO_CHANGE
+        ]
+        if unfit:
+            raise TempoNormalizeError(unfit)
+        aligned = [
+            (clip, *align_clip(clip, tempo_map, bpm)) for clip in self.clips
+        ]
+        for clip, path, duration in aligned:
+            clip.source = (clip.path, clip.start, clip.duration)
+            clip.path = str(path)
+            clip.start = max(0.0, float(tempo_map.warp(clip.start, bpm)))
+            clip.duration = max(0.0, float(duration))
+            clip.waveform = []
+        self._retime(lambda t: tempo_map.warp(t, bpm))
+        self.normalized = {"map": tempo_map, "bpm": bpm, "tempo": self.tempo}
+        self.tempo_map = None
+        self.tempo = validate_bpm(bpm)
+        return True
+
+    def restore_tempo(self):
+        state = self.normalized
+        if state is None:
+            return False
+        tempo_map, bpm = state["map"], state["bpm"]
+        for clip in self.clips:
+            clip.start = max(0.0, float(tempo_map.unwarp(clip.start, bpm)))
+            if clip.source is not None:
+                clip.path, _, clip.duration = clip.source
+                clip.source = None
+                clip.waveform = []
+        self._retime(lambda t: tempo_map.unwarp(t, bpm))
+        self.tempo_map = tempo_map
+        self.tempo = validate_bpm(state["tempo"])
+        self.normalized = None
+        return True
+
+    def to_editor_time(self, seconds):
+        if self.normalized is None:
+            return float(seconds)
+        return float(
+            self.normalized["map"].warp(seconds, self.normalized["bpm"])
+        )
 
     def end_time(self):
         latest = 0.0
@@ -904,6 +1061,13 @@ class EditorModel:
             "tempo": self.tempo,
             "grid_offset": self.grid_offset,
             "tempo_map": self.tempo_map.as_pairs() if self.tempo_map else None,
+            "normalized": {
+                "map": self.normalized["map"].as_pairs(),
+                "bpm": self.normalized["bpm"],
+                "tempo": self.normalized["tempo"],
+            }
+            if self.normalized
+            else None,
             "tracks": [t.to_dict() for t in self.tracks.values()],
             "notes": [n.to_dict() for n in self.notes],
             "clips": [c.to_dict() for c in self.clips],
@@ -917,6 +1081,7 @@ class EditorModel:
         self.tempo = validate_bpm(data.get("tempo", self.tempo))
         self.grid_offset = _grid_offset_value(data.get("grid_offset", 0.0))
         self.tempo_map = _tempo_map_from_pairs(data.get("tempo_map"))
+        self.normalized = _normalized_from_dict(data.get("normalized"))
         for entry in data.get("tracks", []) or []:
             track = TrackModel.from_dict(entry)
             self.tracks[track.id] = track

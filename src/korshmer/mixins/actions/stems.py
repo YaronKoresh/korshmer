@@ -156,6 +156,8 @@ class StemsActionsMixin:
         offset = getattr(session, "grid_offset", None)
         if isinstance(offset, numbers.Real) and not isinstance(offset, bool):
             if hasattr(roll, "set_grid_offset"):
+                if hasattr(arranger, "to_editor_time"):
+                    offset = arranger.to_editor_time(float(offset))
                 roll.set_grid_offset(float(offset))
         elif hasattr(roll, "detect_grid_offset") and hasattr(
             arranger, "get_midi_from_editor"

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from korshmer.constants import GRID_RESOLUTIONS
 from korshmer.exceptions import InvalidFileError
+from korshmer.midi.tempo_map import even_tempo_copy
 from korshmer.ui.utils.throttle import EventThrottle
 from korshmer.ui.viewmodels.editor_vm import (
     MIN_NOTE_DURATION,
@@ -453,9 +454,15 @@ class InteractivePianoRoll(QGraphicsView):
     def detect_grid_offset(self, midi):
         from korshmer.midi_generation.song_match import estimate_offset
 
+        tempo_map = getattr(self.model, "tempo_map", None)
         try:
-            offset = estimate_offset(midi, self.vm.tempo)
-        except (ValueError, TypeError):
+            if tempo_map is None:
+                offset = estimate_offset(midi, self.vm.tempo)
+            else:
+                even = even_tempo_copy(midi)
+                bpm = float(even.get_tempo_changes()[1][0])
+                offset = tempo_map.unwarp(estimate_offset(even, bpm), bpm)
+        except (ValueError, TypeError, IndexError):
             offset = 0.0
         self.set_grid_offset(offset)
         return offset
@@ -790,7 +797,7 @@ class InteractivePianoRoll(QGraphicsView):
         start = x / pps if pps > 0 else 0.0
         duration = max(
             MIN_NOTE_DURATION,
-            (60.0 / self.vm.tempo) * self.default_note_length_beats,
+            self.model.beats_length(start, self.default_note_length_beats),
         )
 
         self.model.snapshot()
@@ -1112,8 +1119,10 @@ class InteractivePianoRoll(QGraphicsView):
         note_ids = self._selected_note_ids()
         if not note_ids or not steps:
             return 0
-        seconds = self.grid_step_seconds() * steps
-        self._apply_edit(lambda: self.model.shift_notes(note_ids, seconds))
+        beats = steps / max(1, int(self.grid_divisions))
+        self._apply_edit(
+            lambda: self.model.shift_notes_by_beats(note_ids, beats)
+        )
         return len(note_ids)
 
     def _selection_or_all(self):

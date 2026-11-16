@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 from dataclasses import dataclass
 
@@ -142,6 +143,20 @@ class TempoMap:
         near = np.abs(bpms - centre) <= MAIN_TOLERANCE * centre
         return float(np.average(bpms[near], weights=spans[near]))
 
+    def average_bpm(self, end) -> float:
+        end = _number(end, "End time")
+        if end <= 0:
+            return self.bpms[0]
+        return float(60.0 * self.beats_at(end) / end)
+
+    def largest_change(self, begin, end, bpm) -> float:
+        starts = np.asarray(self.starts)
+        ends = np.append(starts[1:], np.inf)
+        inside = (starts < end) & (ends > begin)
+        if not inside.any():
+            inside = starts == starts.max()
+        return float(np.abs(np.asarray(self.bpms)[inside] / bpm - 1.0).max())
+
     def scaled(self, factor) -> TempoMap:
         factor = _number(factor, "Tempo factor")
         if factor <= 0:
@@ -178,6 +193,32 @@ class TempoMap:
             resolution=MIDI_RESOLUTION, initial_tempo=self.bpms[0]
         )
         return self.apply_to(pm)
+
+
+def even_tempo_copy(pm):
+    tempo_map = TempoMap.from_pretty_midi(pm)
+    if tempo_map.is_uniform:
+        return pm
+    bpm = tempo_map.main_bpm(pm.get_end_time())
+    even = pretty_midi.PrettyMIDI(resolution=pm.resolution, initial_tempo=bpm)
+    even.instruments = retime_instruments(
+        copy.deepcopy(pm.instruments), lambda t: tempo_map.warp(t, bpm)
+    )
+    return even
+
+
+def restore_tempo_changes(pm, original, time_ratio=1.0):
+    tempo_map = TempoMap.from_pretty_midi(original)
+    if tempo_map.is_uniform:
+        return pm
+    bpm = tempo_map.main_bpm(original.get_end_time())
+    stretched = tempo_map.stretched(time_ratio)
+    restored = stretched.new_pretty_midi()
+    restored.instruments = retime_instruments(
+        copy.deepcopy(pm.instruments),
+        lambda t: stretched.unwarp(t, bpm / time_ratio),
+    )
+    return restored
 
 
 def retime_instruments(instruments, convert):
