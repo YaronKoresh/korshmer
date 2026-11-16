@@ -87,15 +87,24 @@ def midi_file_tempo(path):
         midi = mido.MidiFile(str(path))
     except (OSError, ValueError, EOFError, KeyError, IndexError):
         return None
-    first = None
+    changes = {}
+    end = 0
     for track in midi.tracks:
         tick = 0
         for message in track:
             tick += message.time
             if message.type == "set_tempo" and message.tempo > 0:
-                if first is None or tick < first[0]:
-                    first = (tick, message.tempo)
-                break
-    if first is None:
+                changes.setdefault(tick, message.tempo)
+        end = max(end, tick)
+    if not changes:
         return None
-    return validate_bpm(60_000_000.0 / first[1])
+    ticks = sorted(changes)
+    lasting: dict[int, int] = {}
+    for tick, until in zip(ticks, [*ticks[1:], end], strict=True):
+        tempo = changes[tick]
+        lasting[tempo] = lasting.get(tempo, 0) + max(0, until - tick) * tempo
+    main = changes[ticks[0]]
+    for tick in ticks:
+        if lasting[changes[tick]] > lasting[main]:
+            main = changes[tick]
+    return validate_bpm(60_000_000.0 / main)

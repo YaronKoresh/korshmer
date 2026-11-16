@@ -1,5 +1,8 @@
+from dataclasses import dataclass
+
 import librosa
 import numpy as np
+from scipy.ndimage import median_filter
 
 from korshmer.audio_processing.validation import validate_sample_rate
 
@@ -19,6 +22,27 @@ LOCAL_SEARCH = 0.12
 LOCAL_MIN_CORRELATION = 0.1
 LOCAL_MIN_WINDOWS = 3
 LOCAL_AGREEMENT = 0.015
+PROFILE_WINDOW_S = 8.0
+PROFILE_STEP_S = 2.0
+PROFILE_SMOOTH = 3
+STEADY_TOLERANCE = 0.006
+STEADY_MIN_S = 8.0
+CHANGE_MIN = 0.02
+
+
+@dataclass(frozen=True)
+class TempoProfile:
+    main_bpm: float
+    times: np.ndarray
+    bpms: np.ndarray
+    sections: tuple[tuple[float, float, float], ...]
+
+    @property
+    def changes(self) -> bool:
+        tempos = [bpm for _, _, bpm in self.sections]
+        return bool(tempos) and max(tempos) - min(tempos) >= CHANGE_MIN * min(
+            tempos
+        )
 
 
 def _beat_line_tempo(envelope, sr, candidate):
@@ -66,10 +90,12 @@ def _window_tempo(window, frames_per_second, candidate):
     return LOCAL_BEATS * 60.0 * frames_per_second / (peak + shift)
 
 
-def local_tempos(envelope, sr, candidate):
+def local_tempos(
+    envelope, sr, candidate, window_s=LOCAL_WINDOW_S, step_s=LOCAL_STEP_S
+):
     frames_per_second = sr / HOP_LENGTH
-    size = int(LOCAL_WINDOW_S * frames_per_second)
-    step = int(LOCAL_STEP_S * frames_per_second)
+    size = int(window_s * frames_per_second)
+    step = int(step_s * frames_per_second)
     found = []
     for first in range(0, len(envelope) - size + 1, max(1, step)):
         tempo = _window_tempo(
@@ -109,6 +135,53 @@ def _refine_by_alignment(onset_times, tempo):
                 float(tempos[index]),
             )
     return best_tempo if best_alignment >= MIN_ALIGNMENT else tempo
+
+
+def steady_sections(times, bpms, step_s=PROFILE_STEP_S):
+    sections = []
+    first = 0
+    count = len(bpms)
+    while first < count:
+        last = first
+        while last + 1 < count:
+            middle = np.median(bpms[first : last + 2])
+            run = bpms[first : last + 2]
+            if np.abs(run - middle).max() > STEADY_TOLERANCE * middle:
+                break
+            last += 1
+        begin = float(times[first] - step_s / 2)
+        end = float(times[last] + step_s / 2)
+        if end - begin >= STEADY_MIN_S:
+            tempo = float(np.median(bpms[first : last + 1]))
+            sections.append((max(0.0, begin), end, tempo))
+        first = last + 1
+    return tuple(sections)
+
+
+def tempo_profile(y, sr):
+    main = estimate_tempo(y, sr)
+    if main is None:
+        return None
+    envelope = librosa.onset.onset_strength(
+        y=np.asarray(y, dtype=np.float32), sr=sr, hop_length=HOP_LENGTH
+    )
+    found = local_tempos(envelope, sr, main, PROFILE_WINDOW_S, PROFILE_STEP_S)
+    if len(found) < PROFILE_SMOOTH:
+        return TempoProfile(main, np.zeros(0), np.zeros(0), ())
+    times = np.array([t for t, _ in found]) + PROFILE_WINDOW_S / 2
+    bpms = median_filter(
+        np.array([b for _, b in found]), size=PROFILE_SMOOTH, mode="nearest"
+    )
+    return TempoProfile(main, times, bpms, steady_sections(times, bpms))
+
+
+def tempo_profile_of_file(path):
+    try:
+        y, sr = librosa.load(path, sr=None)
+        return tempo_profile(y, sr)
+    except Exception as e:
+        print(f"Tempo profile failed: {e}")
+        return None
 
 
 def estimate_tempo(y, sr):

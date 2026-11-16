@@ -29,6 +29,7 @@ from korshmer.audio_processing.stem_session import (
     collect_stems,
     normalize_detected_tempo,
 )
+from korshmer.audio_processing.tempo_estimation import tempo_profile_of_file
 from korshmer.audio_processing.timbre import (
     analyze_timbre_file,
     preferred_programs,
@@ -57,6 +58,11 @@ from korshmer.midi.section_dynamics import (
     apply_section_dynamics_from_file,
     drop_silent_notes_from_file,
     song_loud_level_from_files,
+)
+from korshmer.midi.tempo_follow import (
+    follow_song_tempo,
+    real_offset,
+    write_midi,
 )
 from korshmer.midi.transcription_cleanup import (
     clean_transcription,
@@ -97,6 +103,9 @@ VOCAL_TRACK_NAME = "Vocals"
 KEPT_TRACK_NAMES = frozenset({VOCAL_TRACK_NAME})
 MUSIC_ONLY_NAME = "music_only.wav"
 NO_NOTES_TEXT = "Done! No notes were found to export."
+
+
+TEMPO_PROFILE_MATCH = 0.01
 
 
 def song_grid_offset(midis, tempo):
@@ -206,6 +215,13 @@ def process_track(
         tempo = float(
             normalize_detected_tempo(analyse_tempo(trimmed_audio_file))
         )
+        tempo_profile = tempo_profile_of_file(trimmed_audio_file)
+        if (
+            tempo_profile is not None
+            and abs(tempo_profile.main_bpm - tempo)
+            > TEMPO_PROFILE_MATCH * tempo
+        ):
+            tempo_profile = None
         detected_root_idx, detected_mode = detect_key_and_mode(
             trimmed_audio_file
         )
@@ -654,6 +670,12 @@ def process_track(
                 0.95, desc=f"Joined {handoffs} notes split between instruments"
             )
 
+        follower = follow_song_tempo(
+            tempo_profile, [m for _, m, _, _ in tmp_midis], tempo
+        )
+        if follower is not None:
+            progress(0.95, desc=follower.summary())
+
         beat_grid = None
         if quantize_strength > 0:
             onset_times = [
@@ -728,14 +750,14 @@ def process_track(
                 m = polish_midi(m)
                 polished.append(m)
                 out_path = os.path.join(output_folder, fname)
-                header = pretty_midi.PrettyMIDI(initial_tempo=tempo)
-                header.instruments = m.instruments
-                header.write(out_path)
+                write_midi(follower, m.instruments, out_path, tempo)
                 generated_files.append(out_path)
                 midi_outputs.append(out_path)
             if not polished:
                 progress(0.99, desc=NO_NOTES_TEXT)
-            session_grid_offset = song_grid_offset(polished, tempo)
+            session_grid_offset = real_offset(
+                follower, song_grid_offset(polished, tempo)
+            )
             write_manifest()
             report_snapping()
             progress(1.0, desc="Done!" if polished else NO_NOTES_TEXT)
@@ -757,7 +779,7 @@ def process_track(
                 polished.append(pm_part)
                 out_name = f"{file_name}{suffix}.mid"
                 out_path = os.path.join(output_folder, out_name)
-                pm_part.write(out_path)
+                write_midi(follower, pm_part.instruments, out_path, tempo)
                 return out_path
 
             if not all_instruments:
@@ -773,7 +795,9 @@ def process_track(
                     saved_path = save_part(chunk, suffix=f"_Part{part_num}")
                     generated_files.append(saved_path)
                     midi_outputs.append(saved_path)
-            session_grid_offset = song_grid_offset(polished, tempo)
+            session_grid_offset = real_offset(
+                follower, song_grid_offset(polished, tempo)
+            )
             write_manifest()
             report_snapping()
             progress(1.0, desc="Done!" if polished else NO_NOTES_TEXT)

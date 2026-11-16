@@ -7,6 +7,7 @@ import numpy as np
 import pretty_midi
 
 from korshmer.constants import NOTE_NAMES
+from korshmer.midi.tempo_map import TempoMap
 from korshmer.utils.instrument_names import sanitize_instrument_name
 from korshmer.utils.tempo import validate_bpm
 from korshmer.utils.track_layout import (
@@ -395,6 +396,22 @@ def _grid_offset_value(value):
     return float(value)
 
 
+def _changing_tempo_map(pm):
+    try:
+        found = TempoMap.from_pretty_midi(pm)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return None if found.is_uniform else found
+
+
+def _tempo_map_from_pairs(pairs):
+    try:
+        found = TempoMap.from_pairs(pairs or [])
+    except (TypeError, ValueError):
+        return None
+    return None if found.is_uniform else found
+
+
 class EditorModel:
     def __init__(self, tempo=120.0):
         self.tracks = {}
@@ -402,6 +419,7 @@ class EditorModel:
         self.clips = []
         self.tempo = validate_bpm(tempo)
         self.grid_offset = 0.0
+        self.tempo_map = None
         self._next_track_id = 1
         self._next_note_id = 1
         self._next_clip_id = 1
@@ -554,8 +572,17 @@ class EditorModel:
             return
         amount = max(0.0, min(1.0, float(strength)))
         origin = self.grid_offset if grid_offset is None else float(grid_offset)
+        tempo_map = self.tempo_map
+        if tempo_map is not None:
+            grid = grid * self.tempo / 60.0
+            origin = tempo_map.beats_at(origin)
         for note in self._selected_notes(note_ids):
-            target = round((note.start - origin) / grid) * grid + origin
+            start = note.start
+            if tempo_map is not None:
+                start = tempo_map.beats_at(start)
+            target = round((start - origin) / grid) * grid + origin
+            if tempo_map is not None:
+                target = tempo_map.seconds_at(target)
             note.start = max(0.0, note.start + (target - note.start) * amount)
 
     def humanize_notes(self, note_ids, timing_sec, velocity_amt, seed=None):
@@ -583,6 +610,8 @@ class EditorModel:
         factor = float(ratio)
         if factor <= 0 or abs(factor - 1.0) < 1e-9:
             return
+        if self.tempo_map is not None:
+            self.tempo_map = self.tempo_map.stretched(factor)
         for note in self.notes:
             note.start *= factor
             note.duration = max(MIN_NOTE_DURATION, note.duration * factor)
@@ -740,6 +769,7 @@ class EditorModel:
         if replace:
             self.tracks.clear()
             self.notes.clear()
+            self.tempo_map = _changing_tempo_map(pm)
         created = []
         instruments = list(getattr(pm, "instruments", None) or [])
         for inst in instruments:
@@ -773,7 +803,10 @@ class EditorModel:
 
     def to_pretty_midi(self, tempo=None, respect_mute_solo=True):
         bpm = validate_bpm(tempo, default=self.tempo) if tempo else self.tempo
-        pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+        if self.tempo_map is not None and not tempo:
+            pm = self.tempo_map.new_pretty_midi()
+        else:
+            pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
         tracks = (
             self.active_tracks()
             if respect_mute_solo
@@ -870,6 +903,7 @@ class EditorModel:
             "version": 1,
             "tempo": self.tempo,
             "grid_offset": self.grid_offset,
+            "tempo_map": self.tempo_map.as_pairs() if self.tempo_map else None,
             "tracks": [t.to_dict() for t in self.tracks.values()],
             "notes": [n.to_dict() for n in self.notes],
             "clips": [c.to_dict() for c in self.clips],
@@ -882,6 +916,7 @@ class EditorModel:
         self._redo_stack.clear()
         self.tempo = validate_bpm(data.get("tempo", self.tempo))
         self.grid_offset = _grid_offset_value(data.get("grid_offset", 0.0))
+        self.tempo_map = _tempo_map_from_pairs(data.get("tempo_map"))
         for entry in data.get("tracks", []) or []:
             track = TrackModel.from_dict(entry)
             self.tracks[track.id] = track

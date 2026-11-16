@@ -1,6 +1,8 @@
 import logging
 import math
 
+import numpy as np
+
 from korshmer.constants import NOTE_NAMES, SCALES
 from korshmer.utils.tempo import MAX_BPM, MIN_BPM
 
@@ -41,6 +43,41 @@ class PianoRollViewModel:
         self._root_note_idx = 0
         self.scale_intervals = SCALES["Chromatic"]
         self.grid_offset = 0.0
+        self.tempo_map = None
+
+    @property
+    def follows_tempo_map(self):
+        return self.tempo_map is not None and not self.tempo_map.is_uniform
+
+    def _snap_on_map(self, x, divisions):
+        steps = max(1, int(divisions))
+        origin = self.tempo_map.beats_at(self.grid_offset)
+        beat = self.tempo_map.beats_at(self.x_to_time(x))
+        snapped = round((beat - origin) * steps) / steps + origin
+        seconds = self.tempo_map.seconds_at(snapped)
+        if seconds < 0:
+            seconds = self.tempo_map.seconds_at(
+                snapped + math.ceil(-snapped * steps - 1e-9) / steps
+            )
+        return max(0.0, self.time_to_x(seconds))
+
+    def mapped_lines(self, left_x, right_x, divisions=1):
+        if not self.follows_tempo_map:
+            return None
+        steps = max(1, int(divisions))
+        origin = self.tempo_map.beats_at(self.grid_offset)
+        first = self.tempo_map.beats_at(self.x_to_time(left_x)) - origin
+        last = self.tempo_map.beats_at(self.x_to_time(right_x)) - origin
+        index = np.arange(
+            math.floor(first * steps), math.ceil(last * steps) + 1
+        )
+        seconds = self.tempo_map.seconds_at(origin + index / steps)
+        xs = np.atleast_1d(seconds) * self.pixels_per_second
+        return [
+            (float(x), int(i) // steps if i % steps == 0 else None)
+            for x, i in zip(xs, index, strict=True)
+            if left_x <= x < right_x
+        ]
 
     @property
     def grid_offset_x(self):
@@ -113,6 +150,8 @@ class PianoRollViewModel:
         return x / self.pixels_per_second if self.pixels_per_second > 0 else 0
 
     def snap_to_beat(self, x):
+        if self.follows_tempo_map:
+            return self._snap_on_map(x, 1)
         bw = self.beat_width
         origin = self.grid_offset_x
         return round((x - origin) / bw) * bw + origin
@@ -124,6 +163,8 @@ class PianoRollViewModel:
         return (60.0 / self.tempo) / max(1, int(divisions))
 
     def snap_to_grid(self, x, divisions=1):
+        if self.follows_tempo_map:
+            return self._snap_on_map(x, divisions)
         step = self.grid_step(divisions)
         if step <= 0:
             return max(0.0, x)

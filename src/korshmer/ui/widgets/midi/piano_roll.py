@@ -95,6 +95,7 @@ class PianoKeyItem(QGraphicsRectItem):
         self.track_name = ""
         self.grid_divisions = 1
         self.grid_origin = 0.0
+        self.snap_with = None
         self.snap_enabled = True
         self.dim_alpha = 1.0
         self.total_rows = 128
@@ -243,6 +244,8 @@ class PianoKeyItem(QGraphicsRectItem):
         return max(0, min(max_y, snapped))
 
     def _snap_x(self, x, step):
+        if self.snap_with is not None:
+            return self.snap_with(x)
         return round((x - self.grid_origin) / step) * step + self.grid_origin
 
     def snapGrid(self, new_pos):
@@ -623,6 +626,7 @@ class InteractivePianoRoll(QGraphicsView):
                 item.grid_x = new_beat_width
 
         self.model.scale_note_times(ratio)
+        self.vm.tempo_map = getattr(self.model, "tempo_map", None)
         self.model.grid_offset = self.vm.grid_offset
         for item in self._note_items.values():
             item.grid_origin = self.vm.grid_offset_x
@@ -826,6 +830,7 @@ class InteractivePianoRoll(QGraphicsView):
         )
         item.grid_divisions = self.grid_divisions
         item.grid_origin = self.vm.grid_offset_x
+        item.snap_with = self.snap_x if self.vm.follows_tempo_map else None
         item.snap_enabled = self.snap_enabled
         item.total_rows = self.vm.total_divisions
         if track is not None:
@@ -895,6 +900,7 @@ class InteractivePianoRoll(QGraphicsView):
             selected_clips = set(self._selected_clip_ids())
 
         self.vm.grid_offset = getattr(self.model, "grid_offset", 0.0)
+        self.vm.tempo_map = getattr(self.model, "tempo_map", None)
         self._note_items.clear()
         self._clip_items.clear()
         self._lane_item = None

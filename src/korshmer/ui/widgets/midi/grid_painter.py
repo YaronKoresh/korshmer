@@ -31,7 +31,44 @@ class GridPainter:
 
         beat_width = vm.beat_width
         origin = getattr(vm, "grid_offset_x", 0.0)
-        if beat_width > 5:
+        mapped_lines = getattr(vm, "mapped_lines", None)
+        mapped = (
+            mapped_lines(draw_left, draw_right, grid_divisions)
+            if mapped_lines is not None and beat_width > 5
+            else None
+        )
+        if mapped is not None:
+            fine = grid_divisions > 1 and (
+                scale_x * beat_width / max(1, grid_divisions) > 6
+            )
+            for line_x, beat_idx in mapped:
+                bar = beat_idx is not None and beat_idx % 4 == 0
+                if bar and line_x <= 0.5:
+                    continue
+                if beat_idx is None:
+                    if not fine:
+                        continue
+                    painter.setPen(pen_grid)
+                elif bar:
+                    painter.setPen(pen_bar)
+                elif scale_x * beat_width > 10:
+                    painter.setPen(pen_beat)
+                else:
+                    continue
+                painter.drawLine(
+                    int(line_x), int(draw_top), int(line_x), int(draw_bottom)
+                )
+                if bar and scale_x > 0.3:
+                    painter.save()
+                    painter.scale(1 / scale_x, 1 / scale_y)
+                    painter.setPen(QColor(0, 0, 0, 200))
+                    painter.drawText(
+                        int(line_x * scale_x + 5),
+                        int(viewport_rect.top() * scale_y + 30 + lane_px),
+                        str(beat_idx // 4 + 1),
+                    )
+                    painter.restore()
+        elif beat_width > 5:
             start_beat_idx = math.floor((draw_left - origin) / beat_width)
             current_x = origin + start_beat_idx * beat_width
             beat_idx = start_beat_idx
