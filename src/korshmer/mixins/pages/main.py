@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from korshmer.constants import GRID_RESOLUTIONS, HELP_TEXTS, NOTE_NAMES, SCALES
+from korshmer.services.preset_service import DEFAULT_SEPARATION
 from korshmer.ui.theming.color_utils import (
     BEAT_INDICATOR_OFF,
     BPM_SPINBOX_NORMAL,
@@ -282,7 +283,7 @@ class MainPagesMixin:
         self.chk_music_only.setChecked(True)
         self.combo_separation = QComboBox()
         self.combo_separation.addItems(["Fast", "Balanced", "Best"])
-        self.combo_separation.setCurrentText("Best")
+        self.combo_separation.setCurrentText(DEFAULT_SEPARATION)
         lc.addWidget(
             self.create_checkbox_with_help(self.chk_cc, HELP_TEXTS["cc"])
         )

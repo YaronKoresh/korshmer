@@ -227,6 +227,25 @@ def build_main_stylesheet():
                 border-color: {MAT_PRIMARY};
             }}
 
+            QRadioButton {{
+                spacing: 8px;
+                font-size: 11px;
+            }}
+            QRadioButton::indicator {{
+                width: 14px;
+                height: 14px;
+                border: 1px solid #5F6368;
+                border-radius: 8px;
+                background-color: white;
+            }}
+            QRadioButton::indicator:checked {{
+                width: 6px;
+                height: 6px;
+                border: 5px solid {MAT_PRIMARY};
+                border-radius: 8px;
+                background-color: white;
+            }}
+
             QSplitter::handle {{
                 background-color: {MAT_BORDER};
             }}

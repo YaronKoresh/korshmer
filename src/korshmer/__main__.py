@@ -15,7 +15,13 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 from korshmer import __version__
 from korshmer.audio_processors import render_editor_mix
-from korshmer.constants import BASE_DIR, DATA_DIR, FLUID_DIR, SF3_PATH
+from korshmer.constants import (
+    BASE_DIR,
+    DATA_DIR,
+    FLUID_DIR,
+    SF3_PATH,
+    TEMP_DIR,
+)
 from korshmer.core.audio_setup import init_audio_and_midi_processors
 from korshmer.core.window_initializer import (
     drag_window_to,
@@ -904,9 +910,10 @@ Help:
 
             self.arranger.piano_roll.playback_offset = 0
 
-            temp_mid = os.path.join(DATA_DIR, "editor_temp.mid")
+            os.makedirs(TEMP_DIR, exist_ok=True)
+            temp_mid = os.path.join(TEMP_DIR, "editor_temp.mid")
             play_midi.write(temp_mid)
-            preview_wav = os.path.join(DATA_DIR, "editor_preview.wav")
+            preview_wav = os.path.join(TEMP_DIR, "editor_preview.wav")
 
             if (
                 hasattr(self, "preview_thread")

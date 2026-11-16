@@ -63,13 +63,13 @@ def _convert(window, monkeypatch):
     return _FakeWorker.created[0].params
 
 
-def test_the_conversion_defaults_skip_non_music_and_use_best(
+def test_the_conversion_defaults_skip_non_music_and_use_balanced(
     window, monkeypatch
 ):
     params = _convert(window, monkeypatch)
 
     assert params["music_options"].enabled is True
-    assert params["separation_options"].quality == "best"
+    assert params["separation_options"].quality == "balanced"
     assert [
         window.combo_separation.itemText(i)
         for i in range(window.combo_separation.count())

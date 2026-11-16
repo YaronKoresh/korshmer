@@ -32,6 +32,21 @@ FRIENDLY_OUTPUT_NAMES = {
     "MIDI": "MIDI files",
     "music_only.wav": "Song without the talking",
 }
+WORKING_FILE_NAMES = frozenset(
+    {
+        "editor_temp.mid",
+        "editor_preview.wav",
+        "full_mix_temp.mid",
+        "full_mix_preview.wav",
+        "temp_preview.wav",
+        "temp_spectrum.png",
+        "temp_trimmed.wav",
+        "stems_session.json",
+    }
+)
+WORKING_FILE_PREFIXES = ("~", ".")
+WORKING_FILE_ENDINGS = (".tmp", ".temp", ".part", ".bak", ".lock", ".log")
+WORKING_FILE_MARKS = (".temp.", ".tmp.")
 RUN_FOLDER_RE = re.compile(
     r"^(\d{4})_(\d{2})_(\d{2})__(\d{2})_(\d{2})_(\d{2})(?:__\d+)?$"
 )
@@ -125,6 +140,16 @@ class FileManagementService:
         return path.lower().endswith(FileManagementService.VALID_EXTENSIONS)
 
     @staticmethod
+    def is_working_file(name):
+        name = str(name).lower()
+        return (
+            name in WORKING_FILE_NAMES
+            or name.startswith(WORKING_FILE_PREFIXES)
+            or name.endswith(WORKING_FILE_ENDINGS)
+            or any(mark in name for mark in WORKING_FILE_MARKS)
+        )
+
+    @staticmethod
     def display_name(name):
         name = str(name)
         if name in FRIENDLY_OUTPUT_NAMES:
@@ -154,6 +179,8 @@ class FileManagementService:
                 if os.path.isdir(full_path) and name in skip_names:
                     continue
                 if name.startswith(".") or name.startswith("_"):
+                    continue
+                if FileManagementService.is_working_file(name):
                     continue
                 if name in skip_names:
                     continue

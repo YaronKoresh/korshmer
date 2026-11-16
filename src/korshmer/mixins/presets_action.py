@@ -1,5 +1,9 @@
 from korshmer.event_bus import Event, publish
-from korshmer.services.preset_service import PresetService, validate_preset_name
+from korshmer.services.preset_service import (
+    DEFAULT_SEPARATION,
+    PresetService,
+    validate_preset_name,
+)
 from korshmer.utils.text_input import get_limited_text
 
 
@@ -29,7 +33,7 @@ class PresetsMixin:
         self.rad_separate.setChecked(p.get("export", "Separate") != "Merged")
         self.chk_cc.setChecked(p.get("cc", True))
         self.chk_gm.setChecked(p.get("gm", True))
-        self.chk_wav32.setChecked(p.get("wav32", True))
+        self.chk_wav32.setChecked(p.get("wav32", False))
         stems = p.get("stems", [])
         self.btn_drums.setChecked("drums" in stems)
         self.btn_bass.setChecked("bass" in stems)
@@ -91,6 +95,7 @@ class PresetsMixin:
     def apply_preset_default(self):
         defaults = PresetService.get_default()
         self.apply_preset_data(defaults)
+        self.combo_separation.setCurrentText(DEFAULT_SEPARATION)
         publish(Event.STATUS_UPDATE, text="Settings reset to default")
 
     def apply_preset_data(self, p):
@@ -109,7 +114,7 @@ class PresetsMixin:
         self.rad_separate.setChecked(p.get("export", "Separate") != "Merged")
         self.chk_cc.setChecked(p.get("cc", True))
         self.chk_gm.setChecked(p.get("gm", True))
-        self.chk_wav32.setChecked(p.get("wav32", True))
+        self.chk_wav32.setChecked(p.get("wav32", False))
         stems = p.get("stems", [])
         self.btn_drums.setChecked("drums" in stems)
         self.btn_bass.setChecked("bass" in stems)

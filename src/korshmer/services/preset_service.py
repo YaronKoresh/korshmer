@@ -5,6 +5,7 @@ from pathlib import Path
 
 from korshmer.constants import PRESETS_FILE
 
+DEFAULT_SEPARATION = "Balanced"
 DEFAULT_PRESET = {
     "octave": "Original",
     "root": "Auto",
@@ -18,7 +19,7 @@ DEFAULT_PRESET = {
     "export": "Separate",
     "cc": True,
     "gm": True,
-    "wav32": True,
+    "wav32": False,
 }
 
 
