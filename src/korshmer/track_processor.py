@@ -671,7 +671,10 @@ def process_track(
             )
 
         follower = follow_song_tempo(
-            tempo_profile, [m for _, m, _, _ in tmp_midis], tempo
+            tempo_profile,
+            [m for _, m, _, _ in tmp_midis],
+            tempo,
+            breaks=[region[0] for region in music_regions[1:]],
         )
         if follower is not None:
             progress(0.95, desc=follower.summary())

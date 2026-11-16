@@ -131,3 +131,44 @@ def test_the_profile_of_real_audio_finds_both_tempos():
     assert profile.sections[-1][2] == pytest.approx(118.0, abs=0.6)
     steady, _ = make_drum_loop(123.4, bars=24)
     assert not tempo_profile(steady, SAMPLE_RATE).changes
+
+
+def _grid_error(even, step):
+    off = (even - even[0]) / step
+    return np.abs(off - np.round(off))
+
+
+def test_a_jump_in_the_beat_at_a_cut_is_absorbed_by_the_map():
+    times = np.arange(4.0, 150.0, 2.0)
+    bpms = np.interp(times, [23.0, 30.0], [SLOW, FAST])
+    profile = TempoProfile(FAST, times, bpms, steady_sections(times, bpms))
+    onsets = _sixteenths(end_beat=280)
+    cut = 80.0
+    jumped = np.where(onsets >= cut, onsets + 0.07, onsets)
+    step = 60.0 / FAST / 4
+
+    blind = follow_tempo(profile, jumped)
+    aware = follow_tempo(profile, jumped, breaks=[cut])
+    after = jumped > cut + 3.0
+    before = (jumped > 34.0) & (jumped < cut - 3.0)
+    for found in (blind, aware):
+        assert not found.is_uniform
+    even = aware.warp(jumped, FAST)
+    both = np.concatenate([even[before], even[after]])
+    assert _grid_error(both, step).max() < 0.1
+    assert aware.main_bpm(end=float(jumped[-1])) == pytest.approx(FAST, abs=0.2)
+    assert aware.largest_change(0.0, 140.0, FAST) == pytest.approx(
+        1 - SLOW / FAST, abs=0.01
+    )
+
+
+def test_a_section_whose_notes_fit_the_grid_poorly_is_still_followed():
+    rng = np.random.default_rng(5)
+    onsets = _sixteenths()
+    loose = np.where(
+        onsets > 32.0, onsets + rng.uniform(-0.05, 0.05, len(onsets)), onsets
+    )
+    found = follow_tempo(_profile(), np.sort(loose))
+    assert not found.is_uniform
+    assert found.bpms[0] == pytest.approx(SLOW, abs=0.2)
+    assert found.main_bpm(end=float(onsets[-1])) == pytest.approx(FAST, abs=0.5)

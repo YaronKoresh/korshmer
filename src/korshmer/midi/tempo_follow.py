@@ -15,6 +15,8 @@ SECTION_SEARCH = 0.012
 SECTION_MIN_ONSETS = 16
 SECTION_MIN_ALIGNMENT = 0.25
 SECTION_MIN_BEATS = 8
+LOOSE_SEARCH = 0.003
+PIECE_MAX_S = 32.0
 BRIDGE_POINTS = 257
 BRIDGE_MIN_ONSETS = 12
 BRIDGE_MIN_GAIN = 0.05
@@ -22,9 +24,25 @@ BRIDGE_WIDE_BENDS = np.linspace(-0.6, 0.6, 31)
 BRIDGE_NARROW_BENDS = np.linspace(-0.3, 0.3, 13)
 
 
-def _section_beats(section, onsets):
-    begin, end, bpm = section
+def _pieces(sections, breaks):
+    pieces = []
+    for begin, end, bpm in sections:
+        inside = sorted(b for b in breaks if begin < b < end)
+        for first, last in zip([begin, *inside], [*inside, end], strict=True):
+            parts = max(1, math.ceil((last - first) / PIECE_MAX_S))
+            edges = np.linspace(first, last, parts + 1)
+            pieces.extend(
+                (float(a), float(b), bpm)
+                for a, b in zip(edges, edges[1:], strict=False)
+            )
+    return pieces
+
+
+def _piece_grid(piece, onsets):
+    begin, end, bpm = piece
     inside = onsets[(onsets >= begin) & (onsets <= end)]
+    if len(inside) < SECTION_MIN_ONSETS:
+        return None
     fine = fit_beat_grid(
         inside,
         bpm,
@@ -32,23 +50,52 @@ def _section_beats(section, onsets):
         search=SECTION_SEARCH,
         min_onsets=SECTION_MIN_ONSETS,
         min_alignment=SECTION_MIN_ALIGNMENT,
+    ) or fit_beat_grid(
+        inside,
+        bpm,
+        FINE_DIVISIONS,
+        search=LOOSE_SEARCH,
+        min_onsets=SECTION_MIN_ONSETS,
+        min_alignment=0.0,
     )
     if fine is None:
         return None
-    tempo, fine_offset, _ = fine
+    return fine[0], fine[1], inside
+
+
+def _curve_beats(profile, begin, end):
+    grid = np.linspace(begin, end, BRIDGE_POINTS)
+    local = np.interp(grid, profile.times, profile.bpms)
+    rate = (local[1:] + local[:-1]) / 120.0
+    return np.concatenate([[0.0], np.cumsum(rate * np.diff(grid))]), grid
+
+
+def _first_beat(piece, tempo, fine_offset, inside, anchors, profile):
+    begin = piece[0]
     beat = 60.0 / tempo
     step = beat / FINE_DIVISIONS
-    coarse = fit_beat_grid(
-        inside, tempo, 1, search=0.0, min_onsets=1, min_alignment=0.0
+    if not anchors:
+        coarse = fit_beat_grid(
+            inside, tempo, 1, search=0.0, min_onsets=1, min_alignment=0.0
+        )
+        origin = fine_offset
+        if coarse is not None:
+            origin += round((coarse[1] - fine_offset) / step) * step
+        return origin + math.ceil((begin - origin) / beat) * beat
+    last = anchors[-1][0]
+    start = (
+        fine_offset + math.ceil((max(begin, last) - fine_offset) / step) * step
     )
-    origin = fine_offset
-    if coarse is not None:
-        origin += round((coarse[1] - fine_offset) / step) * step
-    first = origin + math.ceil((begin - origin) / beat) * beat
-    count = int(math.floor((end - first) / beat))
-    if count < SECTION_MIN_BEATS:
-        return None
-    return first, first + count * beat, count, tempo
+    choices = start + step * np.arange(FINE_DIVISIONS)
+    travelled = np.array(
+        [_curve_beats(profile, last, c)[0][-1] for c in choices]
+    )
+    first = float(
+        choices[int(np.argmin(np.abs(travelled - np.round(travelled))))]
+    )
+    while _curve_beats(profile, last, first)[0][-1] < 0.5:
+        first += beat
+    return first
 
 
 def _onset_fit(phase, grid, onsets):
@@ -79,10 +126,7 @@ def _bent_phase(phase, grid, onsets):
 
 def _bridge(anchors, target_time, profile, onsets):
     time, beat = anchors[-1]
-    grid = np.linspace(time, target_time, BRIDGE_POINTS)
-    local = np.interp(grid, profile.times, profile.bpms)
-    rate = (local[1:] + local[:-1]) / 120.0
-    phase = np.concatenate([[0.0], np.cumsum(rate * np.diff(grid))])
+    phase, grid = _curve_beats(profile, time, target_time)
     count = max(1, int(round(phase[-1])))
     phase = _bent_phase(phase * (count / phase[-1]), grid, onsets)
     marks = np.interp(np.arange(1, count), phase, grid)
@@ -91,26 +135,25 @@ def _bridge(anchors, target_time, profile, onsets):
     anchors.append((float(target_time), beat + count))
 
 
-def follow_tempo(profile, onset_times) -> TempoMap:
+def follow_tempo(profile, onset_times, breaks=()) -> TempoMap:
     onsets = np.sort(np.asarray(list(onset_times), dtype=float))
     onsets = onsets[np.isfinite(onsets)]
     anchors: list[tuple[float, float]] = []
-    for section in profile.sections:
-        found = _section_beats(section, onsets)
+    for piece in _pieces(profile.sections, breaks):
+        found = _piece_grid(piece, onsets)
         if found is None:
             continue
-        first, last, count, tempo = found
-        if not anchors:
-            anchors.append((first, 0.0))
-        else:
-            beat = 60.0 / tempo
-            while first <= anchors[-1][0] + beat / 2 and count > 1:
-                first += beat
-                count -= 1
-            if first <= anchors[-1][0]:
-                continue
+        tempo, fine_offset, inside = found
+        beat = 60.0 / tempo
+        first = _first_beat(piece, tempo, fine_offset, inside, anchors, profile)
+        count = int(math.floor((piece[1] - first) / beat))
+        if count < SECTION_MIN_BEATS:
+            continue
+        if anchors:
             _bridge(anchors, first, profile, onsets)
-        anchors.append((last, anchors[-1][1] + count))
+        else:
+            anchors.append((first, 0.0))
+        anchors.append((first + count * beat, anchors[-1][1] + count))
     if len(anchors) < 2:
         return TempoMap.uniform(profile.main_bpm)
     return TempoMap.from_anchors(anchors)
@@ -145,7 +188,7 @@ class TempoFollower:
         )
 
 
-def follow_song_tempo(profile, midis, bpm):
+def follow_song_tempo(profile, midis, bpm, breaks=()):
     if profile is None or not profile.changes:
         return None
     onsets = [
@@ -154,7 +197,7 @@ def follow_song_tempo(profile, midis, bpm):
         for inst in midi.instruments
         for note in inst.notes
     ]
-    tempo_map = follow_tempo(profile, onsets)
+    tempo_map = follow_tempo(profile, onsets, breaks)
     if tempo_map.is_uniform:
         return None
     follower = TempoFollower(tempo_map, float(bpm))

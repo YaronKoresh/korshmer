@@ -10,6 +10,7 @@ import pretty_midi
 SAME_TEMPO = 1e-6
 MAIN_TOLERANCE = 0.005
 MIDI_RESOLUTION = 960
+LASTING_S = 2.0
 
 
 def _number(value, label):
@@ -153,6 +154,9 @@ class TempoMap:
         starts = np.asarray(self.starts)
         ends = np.append(starts[1:], np.inf)
         inside = (starts < end) & (ends > begin)
+        lasting = inside & (ends - starts >= LASTING_S)
+        if lasting.any():
+            inside = lasting
         if not inside.any():
             inside = starts == starts.max()
         return float(np.abs(np.asarray(self.bpms)[inside] / bpm - 1.0).max())

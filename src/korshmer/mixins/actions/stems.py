@@ -138,11 +138,14 @@ class StemsActionsMixin:
 
     def _apply_session_tempo(self, session):
         bpm = round(validate_bpm(getattr(session, "tempo", None)), BPM_DECIMALS)
+        arranger = getattr(self, "arranger", None)
+        model = getattr(arranger, "model", None)
+        if getattr(model, "normalized", None) is not None:
+            return
         spin_bpm = getattr(self, "spin_bpm", None)
         if spin_bpm is not None:
             bpm = max(spin_bpm.minimum(), min(spin_bpm.maximum(), bpm))
             spin_bpm.setValue(bpm)
-        arranger = getattr(self, "arranger", None)
         roll = getattr(arranger, "piano_roll", None)
         if roll is not None and hasattr(roll, "set_tempo"):
             roll.set_tempo(float(bpm))
@@ -183,13 +186,15 @@ class StemsActionsMixin:
         vocals = cleaned_vocals_path(session)
         if vocals and hasattr(arranger, "add_audio_clip"):
             try:
-                arranger.add_audio_clip(
+                clip = arranger.add_audio_clip(
                     vocals,
                     0.0,
                     name="Vocals",
                     kind="vocals",
                     gain=vocal_gain_for_file(vocals),
                 )
+                if hasattr(arranger, "align_clip_to_song"):
+                    arranger.align_clip_to_song(clip)
                 loaded += 1
             except Exception as exc:
                 logger.error(f"Could not add vocals clip: {exc}")

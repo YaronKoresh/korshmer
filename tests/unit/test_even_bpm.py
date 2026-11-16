@@ -29,7 +29,9 @@ WILD = TempoMap((0.0, 12.0), (100.0, 150.0))
 END_BEAT = 60
 
 
-def _song_midi(tempo_map=SONG, beats=range(0, END_BEAT)):
+def _song_midi(tempo_map=SONG, beats=None):
+    if beats is None:
+        beats = range(0, END_BEAT)
     pm = tempo_map.new_pretty_midi()
     inst = pretty_midi.Instrument(0)
     for beat in beats:
@@ -39,7 +41,9 @@ def _song_midi(tempo_map=SONG, beats=range(0, END_BEAT)):
     return pm
 
 
-def _clicks(tempo_map=SONG, beats=range(1, END_BEAT - 1, 2)):
+def _clicks(tempo_map=SONG, beats=None):
+    if beats is None:
+        beats = range(1, END_BEAT - 1, 2)
     seconds = float(tempo_map.seconds_at(END_BEAT))
     audio = np.zeros(int(seconds * SR), dtype=np.float32)
     burst = np.hanning(256) * np.sin(2 * np.pi * 2000 * np.arange(256) / SR)
@@ -304,3 +308,102 @@ def test_a_wild_clip_reports_what_to_do_and_removing_it_retries(
     assert model.clips == []
     assert model.normalized is not None
     assert len(arranger.shown) == 1
+
+
+def _plain_midi(count=8, bpm=110.0):
+    pm = pretty_midi.PrettyMIDI(initial_tempo=bpm)
+    inst = pretty_midi.Instrument(0)
+    for index in range(count):
+        inst.notes.append(
+            pretty_midi.Note(90, 72, index * 0.5, index * 0.5 + 0.1)
+        )
+    pm.instruments.append(inst)
+    return pm
+
+
+def test_loading_on_top_of_existing_notes_still_takes_the_tempo_changes():
+    model = EditorModel(tempo=110.0)
+    model.load_midi(_plain_midi())
+    assert model.tempo_map is None
+    model.load_midi(_song_midi(), replace=False)
+    assert model.tempo_map is not None
+    assert model.normalize_tempo(_fake_align([]))
+    bpm = model.tempo
+
+    model.load_midi(_song_midi(beats=(40, 41)), replace=False)
+    added = sorted(n.start for n in model.notes if n.pitch == 60)[-1]
+    assert added == pytest.approx(SONG.warp(SONG.seconds_at(59), bpm))
+    late = [n for n in model.notes if n.id > len(model.notes) - 2]
+    assert sorted(n.start for n in late) == pytest.approx(
+        [float(SONG.warp(SONG.seconds_at(b), bpm)) for b in (40, 41)]
+    )
+    model.load_midi(_plain_midi(count=1), replace=False)
+    assert model.notes[-1].start == 0.0
+
+    model.snapshot()
+    model.clear()
+    assert model.normalized is None and model.tempo_map is None
+    assert model.undo()
+    assert model.normalized is not None
+
+    model.load_midi(_plain_midi())
+    assert model.normalized is None and model.tempo_map is None
+
+
+def test_a_clip_added_after_normalizing_can_be_moved_onto_the_even_tempo():
+    model = EditorModel(tempo=110.0)
+    model.load_midi(_song_midi())
+    model.normalize_tempo(_fake_align([]))
+    clip = model.add_clip("late.wav", start=12.0, name="Late", duration=10.0)
+    calls = []
+    assert model.normalize_clip(clip, _fake_align(calls))
+    assert clip.path == "late.wav.even.wav"
+    assert clip.start == pytest.approx(SONG.warp(12.0, model.tempo))
+    assert not model.normalize_clip(clip, _fake_align(calls))
+    assert len(calls) == 1
+    model.restore_tempo()
+    assert (clip.path, clip.source) == ("late.wav", None)
+    assert clip.start == pytest.approx(12.0)
+    assert not model.normalize_clip(clip, _fake_align(calls))
+
+
+def test_the_arranger_evens_out_a_song_loaded_on_top_of_other_notes(
+    arranger, clip_path
+):
+    arranger.load_midi_object(_plain_midi())
+    assert arranger.model.normalized is None
+    arranger.load_midi_object(_song_midi(), replace=False)
+    model = arranger.model
+    assert model.normalized is not None
+    assert arranger.piano_roll.tempo == model.tempo
+    clip = arranger.add_audio_clip(clip_path, 0.0, name="Vocals")
+    assert arranger.align_clip_to_song(clip)
+    assert clip.source is not None
+    assert not arranger.align_clip_to_song(clip)
+    assert arranger.shown == []
+
+
+def test_loading_the_next_file_of_a_song_keeps_the_even_tempo(
+    arranger, clip_path, tmp_path
+):
+    first = tmp_path / "bass.mid"
+    second = tmp_path / "keys.mid"
+    _song_midi(beats=range(0, END_BEAT, 2)).write(str(first))
+    _song_midi(beats=range(1, END_BEAT, 2)).write(str(second))
+    arranger.add_audio_clip(clip_path, 0.0, name="Vocals")
+    for path in (first, second):
+        arranger.load_midi_file(
+            str(path), replace=False, tempo=110.0, file_tempo=False
+        )
+    model = arranger.model
+    bpm = model.tempo
+    assert model.normalized is not None
+    assert model.normalized["bpm"] == bpm
+    assert 100.0 < bpm < 110.0
+    assert arranger.piano_roll.tempo == bpm
+    starts = np.array(sorted(n.start for n in model.notes))
+    assert len(starts) == END_BEAT
+    assert np.diff(starts) == pytest.approx(60.0 / bpm, abs=0.004)
+    assert _click_times(sf.read(model.clips[0].path)[0]) == pytest.approx(
+        np.arange(1, END_BEAT - 1, 2) * 60 / bpm, abs=0.03
+    )

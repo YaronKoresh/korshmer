@@ -595,7 +595,8 @@ class ArrangerTimeline(QWidget):
         declared = midi_file_tempo(path) if file_tempo else None
         if declared:
             tempo = declared
-        if tempo and float(tempo) > 0:
+        evened = self.model.normalized is not None and not replace
+        if tempo and float(tempo) > 0 and not evened:
             self.piano_roll.set_tempo(validate_bpm(tempo))
             self.tempo_changed.emit(float(self.piano_roll.tempo))
         base_tempo = float(self.piano_roll.tempo)
@@ -673,6 +674,27 @@ class ArrangerTimeline(QWidget):
             return False
         self._tempo_problem = None
         self._after_tempo_switch()
+        return True
+
+    def align_clip_to_song(self, clip):
+        if clip is None or self.model.normalized is None:
+            return False
+        try:
+            if not self.model.normalize_clip(clip, self._aligned_clip):
+                return False
+        except TempoNormalizeError as problem:
+            self._report_tempo_problem(str(problem))
+            return False
+        except Exception as problem:
+            self._report_tempo_problem(
+                f"The clip '{clip.name}' was not moved onto the even "
+                f"tempo: {problem}. Turn off Even BPM or remove that clip."
+            )
+            return False
+        self.piano_roll.load_model(keep_selection=True)
+        self._queue_waveform(clip)
+        self._start_visible_waveforms()
+        self._on_model_changed()
         return True
 
     def _retry_even_bpm(self):

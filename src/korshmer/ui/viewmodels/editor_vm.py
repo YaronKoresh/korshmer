@@ -479,6 +479,8 @@ class EditorModel:
         self.tracks.clear()
         self.notes.clear()
         self.clips.clear()
+        self.tempo_map = None
+        self.normalized = None
 
     def _allocate_track_id(self):
         track_id = self._next_track_id
@@ -858,9 +860,9 @@ class EditorModel:
         if replace:
             self.tracks.clear()
             self.notes.clear()
-        if replace or not self.notes:
-            self.tempo_map = _changing_tempo_map(pm)
+            self.tempo_map = None
             self.normalized = None
+        convert = self._adopt_tempo_changes(pm)
         created = []
         instruments = list(getattr(pm, "instruments", None) or [])
         for inst in instruments:
@@ -881,16 +883,23 @@ class EditorModel:
                     is_drum=bool(inst.is_drum),
                 )
             for note in inst.notes:
+                start, end = convert(note.start), convert(note.end)
                 self.add_note(
-                    track.id,
-                    note.pitch,
-                    note.start,
-                    note.end - note.start,
-                    note.velocity,
+                    track.id, note.pitch, start, end - start, note.velocity
                 )
             if track not in created:
                 created.append(track)
         return created
+
+    def _adopt_tempo_changes(self, pm):
+        if _changing_tempo_map(pm) is None:
+            return float
+        state = self.normalized
+        if state is not None:
+            return lambda t: float(state["map"].warp(t, state["bpm"]))
+        if self.tempo_map is None:
+            self.tempo_map = _changing_tempo_map(pm)
+        return float
 
     def to_pretty_midi(self, tempo=None, respect_mute_solo=True):
         bpm = validate_bpm(tempo, default=self.tempo) if tempo else self.tempo
@@ -971,6 +980,22 @@ class EditorModel:
         self.tempo = validate_bpm(bpm)
         return True
 
+    def normalize_clip(self, clip, align_clip):
+        state = self.normalized
+        if state is None or clip.source is not None:
+            return False
+        tempo_map, bpm = state["map"], state["bpm"]
+        change = tempo_map.largest_change(clip.start, clip.end, bpm)
+        if change > MAX_CLIP_TEMPO_CHANGE:
+            raise TempoNormalizeError([(clip.name, change)])
+        path, duration = align_clip(clip, tempo_map, bpm)
+        clip.source = (clip.path, clip.start, clip.duration)
+        clip.path = str(path)
+        clip.start = max(0.0, float(tempo_map.warp(clip.start, bpm)))
+        clip.duration = max(0.0, float(duration))
+        clip.waveform = []
+        return True
+
     def restore_tempo(self):
         state = self.normalized
         if state is None:
@@ -1016,10 +1041,12 @@ class EditorModel:
             {tid: t.copy() for tid, t in self.tracks.items()},
             [n.copy() for n in self.notes],
             [c.copy() for c in self.clips],
+            self.tempo_map,
+            self.normalized,
         )
 
     def _restore(self, state):
-        tracks, notes, clips = state
+        tracks, notes, clips, self.tempo_map, self.normalized = state
         self.tracks = {tid: t.copy() for tid, t in tracks.items()}
         self.notes = [n.copy() for n in notes]
         self.clips = [c.copy() for c in clips]

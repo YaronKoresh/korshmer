@@ -67,6 +67,9 @@ def engine(mock_qt_app, monkeypatch):
         "korshmer.core.audio_engine.sd.query_devices",
         lambda *args, **kwargs: {"default_samplerate": SAMPLE_RATE},
     )
+    monkeypatch.setattr(
+        AudioEngine, "_check_memory_usage", lambda self, threshold=0.8: False
+    )
     eng = AudioEngine()
     yield eng
     eng.timer.stop()
