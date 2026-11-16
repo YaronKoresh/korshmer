@@ -45,7 +45,6 @@ from korshmer.project_management import (
     ExportManager,
     ImportManager,
     ProjectManager,
-    VersionControlManager,
 )
 from korshmer.track_processor import process_track
 from korshmer.ui.animations import BpmAnimator
@@ -157,7 +156,6 @@ class MainWindow(
         self.asset_manager = AssetManager.get_instance(BASE_DIR)
         self.export_manager = ExportManager(BASE_DIR)
         self.import_manager = ImportManager(BASE_DIR)
-        self.version_control = VersionControlManager(BASE_DIR)
         self.cloud_sync = CloudSyncManager(BASE_DIR)
         self.collaboration = CollaborationManager(BASE_DIR)
         self.analytics = AnalyticsManager(BASE_DIR)

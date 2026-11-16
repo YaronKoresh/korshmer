@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from korshmer.core.control_bar import ControlBar
 from korshmer.core.window_initializer import frame_margin
 from korshmer.event_bus import Event, publish
+from korshmer.services.file_management import FileManagementService
 from korshmer.ui.layout_config import (
     LEFT_PANEL_HEADER_HEIGHT,
     LEFT_PANEL_MIN_WIDTH,
@@ -112,13 +113,13 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
         lcl.addWidget(self.btn_refresh)
         lcl.addWidget(self.btn_mix_preview)
 
-        self.lbl_input = QLabel("Added Input Files")
+        self.lbl_input = QLabel("Songs to convert")
         self.lbl_input.setStyleSheet("text-transform: uppercase;")
 
         self.input_list = FileDropList()
         self.input_list.setFocusPolicy(Qt.NoFocus)
 
-        self.lbl_output = QLabel("Generated Output Files")
+        self.lbl_output = QLabel("My music")
         self.lbl_output.setStyleSheet("text-transform: uppercase;")
         self.output_list = OutputFileList()
         self.output_list.setFocusPolicy(Qt.NoFocus)
@@ -347,7 +348,11 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
         lbl_icon.setFixedWidth(24)
         lbl_icon.setAlignment(Qt.AlignCenter)
 
-        lbl_name = MarqueeLabel(file_name, speed=1, color="#202124")
+        shown_name = file_name
+        if is_output:
+            shown_name = FileManagementService.display_name(file_name)
+        lbl_name = MarqueeLabel(shown_name, speed=1, color="#202124")
+        widget.setToolTip(file_name)
         lbl_name.setFixedHeight(28)
 
         l.addWidget(lbl_icon)

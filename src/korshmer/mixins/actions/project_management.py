@@ -127,15 +127,15 @@ class ProjectManagementActionsMixin:
 
     def create_snapshot_action(self):
         description, ok = get_limited_text(
-            self, "Create Snapshot", "Description (optional):"
+            self, "Save a Version", "What changed? (optional):"
         )
         if ok:
             success = self.project_manager.create_snapshot(description)
             if success:
-                publish(Event.STATUS_UPDATE, text="Snapshot created")
+                publish(Event.STATUS_UPDATE, text="Version saved")
             else:
                 QMessageBox.warning(
-                    self, "Snapshot Failed", "Failed to create snapshot"
+                    self, "Version Not Saved", "The version could not be saved"
                 )
 
     def save_template_action(self):
@@ -233,15 +233,17 @@ class ProjectManagementActionsMixin:
         snapshots = self.project_manager.list_snapshots()
         if not snapshots:
             QMessageBox.information(
-                self, "No Snapshots", "No snapshots available"
+                self,
+                "No Versions",
+                "No versions yet. Use File → Save a Version first.",
             )
             return
 
         snapshot_names = [s.name for s in snapshots]
         snapshot_name, ok = QInputDialog.getItem(
             self,
-            "Restore Snapshot",
-            "Select Snapshot:",
+            "Versions",
+            "Go back to this version:",
             snapshot_names,
             0,
             False,
@@ -253,11 +255,13 @@ class ProjectManagementActionsMixin:
             if success:
                 publish(
                     Event.STATUS_UPDATE,
-                    text=f"Restored snapshot: {snapshot_name}",
+                    text=f"Went back to version: {snapshot_name}",
                 )
             else:
                 QMessageBox.warning(
-                    self, "Restore Failed", "Failed to restore snapshot"
+                    self,
+                    "Version Not Restored",
+                    "That version could not be restored",
                 )
 
     def list_backups_action(self):
@@ -318,149 +322,6 @@ class ProjectManagementActionsMixin:
         )
 
         QMessageBox.information(self, "Project Statistics", msg)
-
-    def version_control_init_action(self):
-        success = self.version_control.init_repository()
-        if success:
-            publish(Event.STATUS_UPDATE, text="Git repository initialized")
-            QMessageBox.information(
-                self,
-                "Version Control",
-                "Git repository initialized successfully",
-            )
-        else:
-            QMessageBox.warning(
-                self, "Version Control", "Failed to initialize Git repository"
-            )
-
-    def version_control_commit_action(self):
-        if not self.version_control.enabled:
-            QMessageBox.warning(
-                self, "Version Control", "Git repository not initialized"
-            )
-            return
-
-        message, ok = get_limited_text(
-            self, "Commit Changes", "Commit Message:"
-        )
-        if ok and message:
-            success = self.version_control.commit(message)
-            if success:
-                publish(Event.STATUS_UPDATE, text="Changes committed")
-            else:
-                QMessageBox.warning(
-                    self, "Commit Failed", "Failed to commit changes"
-                )
-
-    def version_control_history_action(self):
-        if not self.version_control.enabled:
-            QMessageBox.warning(
-                self, "Version Control", "Git repository not initialized"
-            )
-            return
-
-        commits = self.version_control.get_commit_history(20)
-        if not commits:
-            QMessageBox.information(self, "Commit History", "No commits found")
-            return
-
-        msg = "Recent Commits:\n\n"
-        for commit in commits:
-            date_str = commit.get("date")
-            if isinstance(date_str, str) and len(date_str) >= 10:
-                display_date = date_str[:10]
-            else:
-                display_date = "Unknown date"
-            author = commit.get("author", "Unknown author")
-            msg += f"{display_date} - {author}\n"
-            msg += f"  {commit.get('message', '')}\n\n"
-
-        QMessageBox.information(self, "Commit History", msg)
-
-    def version_control_status_action(self):
-        status = self.version_control.get_status()
-
-        msg = "Version Control Status:\n\n"
-        msg += f"Enabled: {'Yes' if status['enabled'] else 'No'}\n"
-        msg += f"Repository: {'Exists' if status['repository_exists'] else 'Not initialized'}\n"
-
-        if status["current_branch"]:
-            msg += f"Current Branch: {status['current_branch']}\n\n"
-
-        if status["modified_files"]:
-            msg += f"Modified Files ({len(status['modified_files'])}):\n"
-            for f in status["modified_files"][:10]:
-                msg += f"  {f}\n"
-            if len(status["modified_files"]) > 10:
-                msg += f"  ... and {len(status['modified_files']) - 10} more\n"
-            msg += "\n"
-
-        if status["staged_files"]:
-            msg += f"Staged Files ({len(status['staged_files'])}):\n"
-            for f in status["staged_files"][:10]:
-                msg += f"  {f}\n"
-            if len(status["staged_files"]) > 10:
-                msg += f"  ... and {len(status['staged_files']) - 10} more\n"
-            msg += "\n"
-
-        if status["untracked_files"]:
-            msg += f"Untracked Files ({len(status['untracked_files'])}):\n"
-            for f in status["untracked_files"][:10]:
-                msg += f"  {f}\n"
-            if len(status["untracked_files"]) > 10:
-                msg += f"  ... and {len(status['untracked_files']) - 10} more\n"
-
-        QMessageBox.information(self, "Version Control Status", msg)
-
-    def version_control_create_branch_action(self):
-        if not self.version_control.enabled:
-            QMessageBox.warning(
-                self, "Version Control", "Git repository not initialized"
-            )
-            return
-
-        branch_name, ok = get_limited_text(
-            self, "Create Branch", "Branch Name:"
-        )
-        if ok and branch_name:
-            success = self.version_control.create_branch(branch_name)
-            if success:
-                publish(
-                    Event.STATUS_UPDATE, text=f"Branch created: {branch_name}"
-                )
-            else:
-                QMessageBox.warning(
-                    self, "Branch Creation Failed", "Failed to create branch"
-                )
-
-    def version_control_checkout_branch_action(self):
-        if not self.version_control.enabled:
-            QMessageBox.warning(
-                self, "Version Control", "Git repository not initialized"
-            )
-            return
-
-        branches = self.version_control.get_branches()
-        if not branches:
-            QMessageBox.information(
-                self, "No Branches", "No branches available"
-            )
-            return
-
-        branch, ok = QInputDialog.getItem(
-            self, "Checkout Branch", "Select Branch:", branches, 0, False
-        )
-
-        if ok and branch:
-            success = self.version_control.checkout_branch(branch)
-            if success:
-                publish(
-                    Event.STATUS_UPDATE, text=f"Switched to branch: {branch}"
-                )
-            else:
-                QMessageBox.warning(
-                    self, "Checkout Failed", "Failed to checkout branch"
-                )
 
     def migrate_project_action(self):
         if not self.project_manager.current_project_path:

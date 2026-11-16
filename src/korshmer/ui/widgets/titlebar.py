@@ -6,6 +6,33 @@ from korshmer import __version__
 from ..styling import WINDOW_EDGE_WIDTH, WINDOW_RADIUS
 from ..theming.color_utils import MAT_BORDER, MAT_HOVER, MAT_TEXT
 
+FILE_MENU = (
+    ("New Song", "new_project_action"),
+    ("Open Song…", "load_project_action"),
+    ("Save Song", "save_project_action"),
+    ("Save Song As…", "save_project_as_action"),
+    None,
+    ("Save a Version", "create_snapshot_action"),
+    ("Versions…", "restore_snapshot_action"),
+    None,
+    ("Import Audio Files…", "import_audio_files_action"),
+    ("Export Many Files…", "batch_export_action"),
+    None,
+)
+MORE_MENU = (
+    ("Automatic Backups", "list_backups_action"),
+    ("Save as Template", "save_template_action"),
+    ("Check Song Files", "check_integrity_action"),
+    ("Song Statistics", "project_stats_action"),
+    ("Manage Samples", "manage_assets_action"),
+    ("Update an Old Song File", "migrate_project_action"),
+)
+HELP_MENU = (
+    ("Find a Tool…", "focus_tool_finder"),
+    ("Start Tutorial", "start_tutorial_action"),
+    ("Keyboard Shortcuts", "_show_help"),
+)
+
 
 class KorshmerTitleBar(QFrame):
     def __init__(self, parent=None):
@@ -50,194 +77,30 @@ class KorshmerTitleBar(QFrame):
         """
         )
 
+        def run(name):
+            def call():
+                action = getattr(parent, name, None)
+                if action is not None:
+                    action()
+
+            return call
+
+        def fill(menu, entries):
+            for entry in entries:
+                if entry is None:
+                    menu.addSeparator()
+                else:
+                    menu.addAction(entry[0], run(entry[1]))
+
         file_menu = self.menu_bar.addMenu("File")
-        file_menu.addAction(
-            "New Project",
-            lambda: (
-                parent.new_project_action()
-                if hasattr(parent, "new_project_action")
-                else None
-            ),
-        )
-        file_menu.addAction(
-            "Open Project",
-            lambda: (
-                parent.load_project_action()
-                if hasattr(parent, "load_project_action")
-                else None
-            ),
-        )
-        file_menu.addAction(
-            "Save Project",
-            lambda: (
-                parent.save_project_action()
-                if hasattr(parent, "save_project_action")
-                else None
-            ),
-        )
-        file_menu.addAction(
-            "Save Project As",
-            lambda: (
-                parent.save_project_as_action()
-                if hasattr(parent, "save_project_as_action")
-                else None
-            ),
-        )
-        file_menu.addSeparator()
-        file_menu.addAction(
-            "Import Audio Files",
-            lambda: (
-                parent.import_audio_files_action()
-                if hasattr(parent, "import_audio_files_action")
-                else None
-            ),
-        )
-        file_menu.addAction(
-            "Batch Export",
-            lambda: (
-                parent.batch_export_action()
-                if hasattr(parent, "batch_export_action")
-                else None
-            ),
-        )
+        fill(file_menu, FILE_MENU)
+        more_menu = file_menu.addMenu("More")
+        fill(more_menu, MORE_MENU)
         file_menu.addSeparator()
         file_menu.addAction("Exit", parent.close)
 
-        project_menu = self.menu_bar.addMenu("Project")
-        project_menu.addAction(
-            "Create Snapshot",
-            lambda: (
-                parent.create_snapshot_action()
-                if hasattr(parent, "create_snapshot_action")
-                else None
-            ),
-        )
-        project_menu.addAction(
-            "Restore Snapshot",
-            lambda: (
-                parent.restore_snapshot_action()
-                if hasattr(parent, "restore_snapshot_action")
-                else None
-            ),
-        )
-        project_menu.addAction(
-            "List Backups",
-            lambda: (
-                parent.list_backups_action()
-                if hasattr(parent, "list_backups_action")
-                else None
-            ),
-        )
-        project_menu.addSeparator()
-        project_menu.addAction(
-            "Save as Template",
-            lambda: (
-                parent.save_template_action()
-                if hasattr(parent, "save_template_action")
-                else None
-            ),
-        )
-        project_menu.addAction(
-            "Migrate Project",
-            lambda: (
-                parent.migrate_project_action()
-                if hasattr(parent, "migrate_project_action")
-                else None
-            ),
-        )
-        project_menu.addSeparator()
-        project_menu.addAction(
-            "Check Integrity",
-            lambda: (
-                parent.check_integrity_action()
-                if hasattr(parent, "check_integrity_action")
-                else None
-            ),
-        )
-        project_menu.addAction(
-            "Project Statistics",
-            lambda: (
-                parent.project_stats_action()
-                if hasattr(parent, "project_stats_action")
-                else None
-            ),
-        )
-        project_menu.addSeparator()
-        project_menu.addAction(
-            "Manage Assets",
-            lambda: (
-                parent.manage_assets_action()
-                if hasattr(parent, "manage_assets_action")
-                else None
-            ),
-        )
-
-        version_control_menu = self.menu_bar.addMenu("Version Control")
-        version_control_menu.addAction(
-            "Initialize Repository",
-            lambda: (
-                parent.version_control_init_action()
-                if hasattr(parent, "version_control_init_action")
-                else None
-            ),
-        )
-        version_control_menu.addAction(
-            "Commit Changes",
-            lambda: (
-                parent.version_control_commit_action()
-                if hasattr(parent, "version_control_commit_action")
-                else None
-            ),
-        )
-        version_control_menu.addAction(
-            "View History",
-            lambda: (
-                parent.version_control_history_action()
-                if hasattr(parent, "version_control_history_action")
-                else None
-            ),
-        )
-        version_control_menu.addAction(
-            "Status",
-            lambda: (
-                parent.version_control_status_action()
-                if hasattr(parent, "version_control_status_action")
-                else None
-            ),
-        )
-        version_control_menu.addSeparator()
-        version_control_menu.addAction(
-            "Create Branch",
-            lambda: (
-                parent.version_control_create_branch_action()
-                if hasattr(parent, "version_control_create_branch_action")
-                else None
-            ),
-        )
-        version_control_menu.addAction(
-            "Checkout Branch",
-            lambda: (
-                parent.version_control_checkout_branch_action()
-                if hasattr(parent, "version_control_checkout_branch_action")
-                else None
-            ),
-        )
-
         help_menu = self.menu_bar.addMenu("Help")
-        help_menu.addAction(
-            "Start Tutorial",
-            lambda: (
-                parent.start_tutorial_action()
-                if hasattr(parent, "start_tutorial_action")
-                else None
-            ),
-        )
-        help_menu.addAction(
-            "Keyboard Shortcuts",
-            lambda: (
-                parent._show_help() if hasattr(parent, "_show_help") else None
-            ),
-        )
+        fill(help_menu, HELP_MENU)
 
         layout.addWidget(self.menu_bar)
 

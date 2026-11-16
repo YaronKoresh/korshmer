@@ -49,7 +49,6 @@ try:
         ExportManager,
         ImportManager,
         ProjectManager,
-        VersionControlManager,
     )
 
     _PM_AVAILABLE = True
@@ -164,11 +163,6 @@ class ComponentRegistry:
             (AssetManager, "asset_manager", {"base_dir": base_dir}),
             (ExportManager, "export_manager", {"base_dir": base_dir}),
             (ImportManager, "import_manager", {"base_dir": base_dir}),
-            (
-                VersionControlManager,
-                "version_control_manager",
-                {"base_dir": base_dir},
-            ),
             (CloudSyncManager, "cloud_sync_manager", {"base_dir": base_dir}),
             (
                 CollaborationManager,

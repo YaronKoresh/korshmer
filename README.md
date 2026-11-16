@@ -146,7 +146,7 @@ Q: How do I separate vocals from a song?
 A: Select the audio file and press Separate Stems (BUILDER tab or Audio Tools). The stems (vocals, drums, bass, guitar, piano, other) are saved next to the output and you are offered to load them into the editor: the vocals become a draggable audio clip and the instruments become MIDI lanes. This requires significant processing time and memory.
 
 Q: How do I put the separated vocals on the MIDI timeline?
-A: Accept the "Load into editor" prompt after separation, press the 🎤 button next to any audio file in the output list, or drag the file from the output list onto the editor. The clip sits in the audio lane above the notes; drag it to move it in time and double-click it to mute. Play Editor and Export Mix render the MIDI lanes together with the clips.
+A: Accept the "Load into editor" prompt after separation, press the 🎤 button next to any audio file in the My music list, or drag the file from that list onto the editor. The clip sits in the audio lane above the notes; drag it to move it in time and double-click it to mute. Play Editor and Export Mix render the MIDI lanes together with the clips.
 
 Q: How do I build a full song quickly?
 A: Open the MIDI Generator, choose a style and mood, tick the roles you want, and press Generate → Editor. Key and tempo come from the THEORY tab (Auto detects them from the editor).
@@ -185,7 +185,7 @@ Q: MIDI playback has no sound
 A: Verify FluidSynth is properly installed and the SoundFont file exists at the configured path. Check audio device settings in your system.
 
 Q: My changes aren't being saved
-A: Ensure the `saved_data/` directory exists and is writable. Check disk space availability. Use File → Save Project explicitly.
+A: Ensure the `saved_data/` directory exists and is writable. Check disk space availability. Use File → Save Song explicitly.
 
 # Troubleshooting
 

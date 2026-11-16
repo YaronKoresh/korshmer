@@ -180,7 +180,7 @@ class TutorialManager:
                 title="The Main Interface",
                 description=(
                     "KORSHMER features a custom hardware-inspired interface with Neon Blue aesthetics. "
-                    "The top bar contains the main menu with File, Project, and Version Control options. "
+                    "The File menu at the top opens and saves songs and keeps their versions. "
                     "Take a moment to explore the clean, modern design."
                 ),
             ),

@@ -1,11 +1,40 @@
 import json
 import logging
 import os
+import re
+from datetime import datetime
 from pathlib import Path
 
 from korshmer.constants import INPUT_LIST_FILE
 from korshmer.exceptions import InvalidFileError
 from korshmer.utils.filesystem import MIDI_EXTENSIONS, sanitize_path
+
+INTERNAL_OUTPUT_NAMES = frozenset(
+    {
+        "logs",
+        "temp_preview.wav",
+        "tempo_aligned",
+        "plugins",
+        "analytics",
+        "assets",
+        "backups",
+        "imports",
+        "projects",
+        "snapshots",
+        "templates",
+    }
+)
+FRIENDLY_OUTPUT_NAMES = {
+    "Processed_MIDI": "Edited MIDI",
+    "exports": "Exported files",
+    "Processed_Audio": "Edited audio",
+    "Stems": "Separated instruments",
+    "MIDI": "MIDI files",
+    "music_only.wav": "Song without the talking",
+}
+RUN_FOLDER_RE = re.compile(
+    r"^(\d{4})_(\d{2})_(\d{2})__(\d{2})_(\d{2})_(\d{2})(?:__\d+)?$"
+)
 
 
 class FileManagementService:
@@ -96,9 +125,23 @@ class FileManagementService:
         return path.lower().endswith(FileManagementService.VALID_EXTENSIONS)
 
     @staticmethod
+    def display_name(name):
+        name = str(name)
+        if name in FRIENDLY_OUTPUT_NAMES:
+            return FRIENDLY_OUTPUT_NAMES[name]
+        stamp = RUN_FOLDER_RE.match(name)
+        if stamp is None:
+            return name
+        try:
+            made = datetime(*(int(part) for part in stamp.groups()))
+        except ValueError:
+            return name
+        return made.strftime("%d %b %Y, %H:%M")
+
+    @staticmethod
     def list_output_files(directory, skip_names=None):
         if skip_names is None:
-            skip_names = {"logs", "temp_preview.wav"}
+            skip_names = INTERNAL_OUTPUT_NAMES
         try:
             items = os.listdir(directory)
             items.sort(

@@ -324,7 +324,7 @@ class ArrangerTimeline(QWidget):
         self.splitter.setSizes([340, 820])
 
         self.lbl_placeholder = QLabel(
-            "Drop MIDI or Audio Here, or Select from Output List",
+            "Drop MIDI or Audio Here, or pick it from My music",
             self.piano_roll,
         )
         self.lbl_placeholder.setWordWrap(True)

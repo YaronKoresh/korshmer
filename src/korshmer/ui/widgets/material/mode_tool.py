@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -12,6 +12,9 @@ from PySide6.QtWidgets import (
 from korshmer.ui.widgets.material.button import HelpButton, MaterialButton
 from korshmer.ui.widgets.material.card import MaterialCard
 
+HIGHLIGHT_MS = 1500
+HIGHLIGHT_STYLE = "color: #1A73E8; font-size: 15px;"
+
 
 @dataclass
 class ToolMode:
@@ -19,6 +22,7 @@ class ToolMode:
     action: object
     widgets: tuple = field(default_factory=tuple)
     help: str = ""
+    keywords: str = ""
 
 
 class ModeToolCard(MaterialCard):
@@ -38,6 +42,7 @@ class ModeToolCard(MaterialCard):
         if len(set(labels)) != len(labels):
             raise ValueError("Mode labels must be unique")
         self.modes = list(modes)
+        self.title = str(title)
         self._base_help = help_text
 
         layout = QVBoxLayout(self)
@@ -101,3 +106,9 @@ class ModeToolCard(MaterialCard):
 
     def apply(self):
         return self.current_mode().action()
+
+    def highlight(self, milliseconds=HIGHLIGHT_MS):
+        self.title_label.setStyleSheet(HIGHLIGHT_STYLE)
+        QTimer.singleShot(
+            int(milliseconds), lambda: self.title_label.setStyleSheet("")
+        )

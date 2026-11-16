@@ -119,6 +119,13 @@ class MainWindowUiSetupMixin:
             ("toggle_snap", "N", self.editor_toggle_snap),
             ("build_song", "Ctrl+B", self.run_midi_generator),
         ]
+        finder_action = QAction(self)
+        finder_action.setShortcut(
+            QKeySequence(shortcuts.get("find_tool", "Ctrl+K"))
+        )
+        finder_action.triggered.connect(lambda: self.focus_tool_finder())
+        self.addAction(finder_action)
+
         for key, default, handler in editor_bindings:
             action = QAction(self)
             action.setShortcut(QKeySequence(shortcuts.get(key, default)))
