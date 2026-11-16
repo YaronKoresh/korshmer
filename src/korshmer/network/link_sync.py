@@ -8,7 +8,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
-from korshmer.utils.tempo import DEFAULT_BPM, validate_bpm
+from korshmer.utils.tempo import BPM_DECIMALS, DEFAULT_BPM, validate_bpm
 
 _logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ class LinkSync:
         if not math.isfinite(raw):
             _logger.warning("Ignoring non-finite Link tempo %r", bpm)
             return
-        value = validate_bpm(raw)
+        value = round(validate_bpm(raw), BPM_DECIMALS)
         last = self._last_seen
         if last is not None and abs(value - last) < _EPSILON:
             return

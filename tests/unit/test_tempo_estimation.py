@@ -59,3 +59,30 @@ def test_estimate_tempo_rejects_invalid_sample_rate(sr):
     audio, _ = make_drum_loop(120.0, bars=4)
     with pytest.raises(ValueError):
         estimate_tempo(audio, sr)
+
+
+def test_a_slower_intro_does_not_blur_the_tempo_of_the_song():
+    intro, _ = make_drum_loop(109.1, bars=20)
+    body, _ = make_drum_loop(118.0, bars=40)
+    audio = np.concatenate([intro, body])
+    assert estimate_tempo(audio, SAMPLE_RATE) == pytest.approx(118.0, abs=0.3)
+
+
+def test_local_tempos_follow_a_tempo_change():
+    import librosa
+
+    from korshmer.audio_processing.tempo_estimation import (
+        HOP_LENGTH,
+        local_tempos,
+    )
+
+    intro, _ = make_drum_loop(109.1, bars=12)
+    body, _ = make_drum_loop(118.0, bars=24)
+    envelope = librosa.onset.onset_strength(
+        y=np.concatenate([intro, body]).astype(np.float32),
+        sr=SAMPLE_RATE,
+        hop_length=HOP_LENGTH,
+    )
+    found = local_tempos(envelope, SAMPLE_RATE, 118.0)
+    assert found[0][1] == pytest.approx(109.1, abs=0.5)
+    assert found[-1][1] == pytest.approx(118.0, abs=0.5)

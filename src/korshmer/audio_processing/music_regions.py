@@ -58,6 +58,18 @@ LOAD_BLOCK_S = 60
 LOAD_OVERLAP_S = 1
 BLOCK_FRAMES = 1 << 18
 
+PROFILE_BANDS = 16
+PROFILE_STARTS = np.unique(
+    np.geomspace(1, BIN_HIGH - BIN_LOW, PROFILE_BANDS + 1).astype(int)[:-1] - 1
+)
+PROFILE_SIZES = np.diff(np.append(PROFILE_STARTS, BIN_HIGH - BIN_LOW))
+SILENT_SCORE = 0.0
+BREAK_SEARCH_S = 3.5
+BREAK_REFERENCE_S = 5.0
+BREAK_CONTRAST_DB = 3.0
+BREAK_GUARD_S = 0.1
+FAINT_PIECE_DB = 20.0
+
 MAJOR_PROFILE = np.array(
     [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
 )
@@ -88,6 +100,7 @@ class MusicRegionOptions:
     gap_music_mean: float = 0.15
     gap_music_share: float = 0.25
     gap_key_match: float = 0.80
+    break_min_s: float = 2.5
     align_beats: bool = True
     smooth_windows: int = 5
     fade_s: float = 0.05
@@ -114,6 +127,7 @@ class MusicRegionOptions:
         validate_effect_number(self.gap_music_mean, "Gap music mean", 0, 1)
         validate_effect_number(self.gap_music_share, "Gap music share", 0, 1)
         validate_effect_number(self.gap_key_match, "Gap key match", -1, 1)
+        validate_effect_number(self.break_min_s, "Break minimum", 0, 600)
         validate_effect_integer(self.smooth_windows, "Smoothing windows", 1, 51)
         validate_effect_number(self.fade_s, "Fade length", 0, 5)
         for name, value in (
@@ -246,6 +260,8 @@ def _chunk_features(chunk, db_floor, tuning):
         "bass": librosa.onset.onset_strength(
             S=level_db[:BASS_BINS], sr=SAMPLE_RATE, hop_length=HOP_LENGTH
         ),
+        "profile": np.add.reduceat(level_db, PROFILE_STARTS, axis=0)
+        / PROFILE_SIZES[:, None],
     }
 
 
@@ -314,12 +330,21 @@ def _ramp(value, start, full):
     return np.clip((value - start) / (full - start), 0.0, 1.0)
 
 
+@dataclass(frozen=True)
+class _Analysis:
+    times: np.ndarray
+    scores: np.ndarray
+    chroma: np.ndarray | None = None
+    level: np.ndarray | None = None
+    profile: np.ndarray | None = None
+
+
 def _score_curve(audio, sample_rate, on_chunk=None):
-    times, scores, _ = _score_curve_and_chroma(audio, sample_rate, on_chunk)
-    return times, scores
+    analysis = _analyse(audio, sample_rate, on_chunk)
+    return analysis.times, analysis.scores
 
 
-def _score_curve_and_chroma(audio, sample_rate, on_chunk=None):
+def _analyse(audio, sample_rate, on_chunk=None):
     import librosa
 
     validate_effect_number(sample_rate, "Sample rate", 1000, 768000)
@@ -327,7 +352,7 @@ def _score_curve_and_chroma(audio, sample_rate, on_chunk=None):
     if sample_rate != SAMPLE_RATE:
         y = librosa.resample(y, orig_sr=sample_rate, target_sr=SAMPLE_RATE)
     if len(y) // HOP_LENGTH < int(WINDOW_S * FRAMES_PER_SECOND):
-        return np.zeros(0), np.zeros(0), None
+        return _Analysis(np.zeros(0), np.zeros(0))
     frames = _frame_features(y, on_chunk)
     features = _window_features(frames)
     logit = BIAS + sum(
@@ -343,9 +368,15 @@ def _score_curve_and_chroma(audio, sample_rate, on_chunk=None):
         _ramp(features["bass"], BASS_START, BASS_FULL),
     )
     scores = np.where(
-        quiet, 0.0, np.maximum(expit(logit), RHYTHM_SCORE * rhythm)
+        quiet, SILENT_SCORE, np.maximum(expit(logit), RHYTHM_SCORE * rhythm)
     )
-    return features["start"] + WINDOW_S / 2, scores, frames["chroma"]
+    return _Analysis(
+        features["start"] + WINDOW_S / 2,
+        scores,
+        frames["chroma"],
+        level,
+        frames["profile"],
+    )
 
 
 def music_score_curve(
@@ -621,9 +652,13 @@ def _chroma_profile(chroma, begin, end):
 
 
 def _gap_belongs_to_piece(times, scores, chroma, left, right, options):
-    gap_from, gap_to = left[1], right[0]
-    if gap_to - gap_from < options.gap_min_cut_s:
+    if right[0] - left[1] < options.gap_min_cut_s:
         return True
+    return _gap_resembles_piece(times, scores, chroma, left, right, options)
+
+
+def _gap_resembles_piece(times, scores, chroma, left, right, options):
+    gap_from, gap_to = left[1], right[0]
     inside = (times >= gap_from) & (times <= gap_to)
     if not inside.any():
         return True
@@ -636,12 +671,16 @@ def _gap_belongs_to_piece(times, scores, chroma, left, right, options):
         return False
     gap = _chroma_profile(chroma, gap_from, gap_to)
     around = [
-        _chroma_profile(chroma, *left),
-        _chroma_profile(chroma, *right),
+        profile
+        for profile in (
+            _chroma_profile(chroma, *left),
+            _chroma_profile(chroma, *right),
+        )
+        if profile is not None
     ]
-    if gap is None or any(p is None for p in around):
+    if gap is None or not around:
         return False
-    music = around[0] + around[1]
+    music = np.sum(around, axis=0)
     music = music / (np.linalg.norm(music) + 1e-9)
     return float(gap @ music) >= options.gap_key_match
 
@@ -658,6 +697,127 @@ def _merge_piece_gaps(regions, times, scores, chroma, options):
     return merged
 
 
+def _spoken_breaks(analysis, smooth, region, options):
+    times, scores = analysis.times, analysis.scores
+    low = np.flatnonzero(
+        (times >= region[0]) & (times <= region[1]) & (smooth < options.exit)
+    )
+    breaks = []
+    for run in np.split(low, np.flatnonzero(np.diff(low) > 1) + 1):
+        sounding = np.count_nonzero(scores[run] > SILENT_SCORE)
+        if not sounding or sounding * STEP_S < options.break_min_s:
+            continue
+        gap = (float(times[run[0]]), float(times[run[-1]]))
+        if not _gap_resembles_piece(
+            times,
+            scores,
+            analysis.chroma,
+            (region[0], gap[0]),
+            (gap[1], region[1]),
+            options,
+        ):
+            breaks.append(gap)
+    return breaks
+
+
+def _loud_pieces(analysis, region, breaks, options):
+    bounds = [region[0], *(edge for gap in breaks for edge in gap), region[1]]
+    pieces = [
+        (begin, end)
+        for begin, end in zip(bounds[::2], bounds[1::2], strict=True)
+        if end - begin >= options.min_music_s
+    ]
+    levels = [
+        analysis.level[(analysis.times >= begin) & (analysis.times <= end)]
+        for begin, end in pieces
+    ]
+    if not pieces:
+        return []
+    usual = np.median(np.concatenate(levels))
+    return [
+        piece
+        for piece, level in zip(pieces, levels, strict=True)
+        if usual - np.median(level) <= FAINT_PIECE_DB
+    ]
+
+
+def _typical_profile(profile, begin, end):
+    first = max(0, int(begin * FRAMES_PER_SECOND))
+    last = min(profile.shape[1], int(end * FRAMES_PER_SECOND))
+    if last - first < FRAMES_PER_SECOND:
+        return None
+    return np.median(profile[:, first:last], axis=1)
+
+
+def _change_point(profile, music, gap, search, music_first):
+    music_like = _typical_profile(profile, *music)
+    gap_like = _typical_profile(profile, *gap)
+    if music_like is None or gap_like is None:
+        return None
+    if np.abs(music_like - gap_like).mean() < BREAK_CONTRAST_DB:
+        return None
+    first = max(0, int(search[0] * FRAMES_PER_SECOND))
+    last = min(profile.shape[1], int(search[1] * FRAMES_PER_SECOND))
+    if last <= first:
+        return None
+    frames = profile[:, first:last]
+    excess = np.abs(frames - music_like[:, None]).mean(0)
+    excess = excess - np.abs(frames - gap_like[:, None]).mean(0)
+    cost = np.concatenate([[0.0], np.cumsum(excess)])
+    step = np.argmin(cost) if music_first else np.argmax(cost)
+    return (first + int(step)) / FRAMES_PER_SECOND
+
+
+def _music_start(profile, piece, floor):
+    begin, end = piece
+    edge = _change_point(
+        profile,
+        (begin + WINDOW_S / 2, min(end, begin + BREAK_REFERENCE_S)),
+        (max(floor, begin - BREAK_REFERENCE_S), begin),
+        (max(floor, begin - BREAK_SEARCH_S), min(end, begin + BREAK_SEARCH_S)),
+        False,
+    )
+    return begin if edge is None else max(floor, edge - BREAK_GUARD_S)
+
+
+def _music_end(profile, piece, ceiling):
+    begin, end = piece
+    edge = _change_point(
+        profile,
+        (max(begin, end - BREAK_REFERENCE_S), end - WINDOW_S / 2),
+        (end, min(ceiling, end + BREAK_REFERENCE_S)),
+        (max(begin, end - BREAK_SEARCH_S), min(ceiling, end + BREAK_SEARCH_S)),
+        True,
+    )
+    return end if edge is None else min(ceiling, edge + BREAK_GUARD_S)
+
+
+def _cut_spoken_breaks(regions, analysis, options):
+    if not regions:
+        return regions
+    smooth = median_filter(
+        analysis.scores, size=options.smooth_windows, mode="nearest"
+    )
+    kept = []
+    for region in regions:
+        breaks = _spoken_breaks(analysis, smooth, region, options)
+        if not breaks:
+            kept.append(region)
+            continue
+        pieces = _loud_pieces(analysis, region, breaks, options)
+        floor = region[0]
+        for index, (begin, end) in enumerate(pieces):
+            last = index + 1 == len(pieces)
+            ceiling = region[1] if last else pieces[index + 1][0]
+            if begin > region[0]:
+                begin = _music_start(analysis.profile, (begin, end), floor)
+            if end < region[1]:
+                end = _music_end(analysis.profile, (begin, end), ceiling)
+            kept.append((float(begin), float(end)))
+            floor = end
+    return kept
+
+
 def _find_regions(audio, sample_rate, options, on_chunk=None):
     audio = _mono(audio)
     duration = len(audio) / sample_rate
@@ -670,11 +830,13 @@ def _find_regions(audio, sample_rate, options, on_chunk=None):
             duration, f"shorter than {options.min_duration_s:g} s, left whole"
         )
     audio = _analysis_audio(audio, sample_rate)
-    times, scores, chroma = _score_curve_and_chroma(
-        audio, SAMPLE_RATE, on_chunk
-    )
+    analysis = _analyse(audio, SAMPLE_RATE, on_chunk)
+    times, scores = analysis.times, analysis.scores
     regions = segment_music(times, scores, duration, options)
-    regions = _merge_piece_gaps(regions, times, scores, chroma, options)
+    regions = _merge_piece_gaps(
+        regions, times, scores, analysis.chroma, options
+    )
+    regions = _cut_spoken_breaks(regions, analysis, options)
     kept = sum(end - start for start, end in regions)
     if not regions:
         return _result([], duration, False, "no music found", times, scores)

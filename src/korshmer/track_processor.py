@@ -546,7 +546,9 @@ def process_track(
                         )
                         flux = level_flux(level)
                         for inst in m_dat.instruments:
-                            merge_unattacked_splits(inst, flux, level_fps)
+                            merge_unattacked_splits(
+                                inst, flux, level_fps, level=level
+                            )
                             merge_sustained_splits(
                                 inst, level, level_fps, flux=flux
                             )

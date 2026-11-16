@@ -58,9 +58,21 @@ def configure_module_log_levels(environ=None):
     return levels
 
 
+def _is_implicit_handler(handler):
+    formatter = handler.formatter
+    return (
+        type(handler) is logging.StreamHandler
+        and formatter is not None
+        and formatter._fmt == logging.BASIC_FORMAT
+    )
+
+
 def setup_logging():
     try:
         logger = logging.getLogger()
+        for handler in list(logger.handlers):
+            if _is_implicit_handler(handler):
+                logger.removeHandler(handler)
         if logger.hasHandlers():
             return
         logger.setLevel(logging.DEBUG)

@@ -1,4 +1,7 @@
 import os
+import shutil
+import subprocess
+import tempfile
 
 import librosa
 import numpy as np
@@ -25,6 +28,36 @@ _FORMAT_FROM_EXT = {
 }
 
 
+FFMPEG_DECODE_TIMEOUT_S = 600
+
+
+def _load_with_ffmpeg(path, sr, mono):
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise RuntimeError("ffmpeg is needed to decode this format")
+    with tempfile.TemporaryDirectory() as folder:
+        decoded = os.path.join(folder, "decoded.wav")
+        subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                "file:" + os.path.abspath(path),
+                "-vn",
+                "-c:a",
+                "pcm_f32le",
+                decoded,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=FFMPEG_DECODE_TIMEOUT_S,
+        )
+        return librosa.load(decoded, sr=sr, mono=mono)
+
+
 class AudioFile:
     __slots__ = ("_y", "_sr", "_bits", "_path")
 
@@ -47,7 +80,12 @@ class AudioFile:
         try:
             y, loaded_sr = librosa.load(path, sr=sr, mono=mono)
         except Exception as e:
-            raise ValueError(f"Failed to load audio file: {e}") from e
+            try:
+                y, loaded_sr = _load_with_ffmpeg(path, sr, mono)
+            except Exception as fallback:
+                raise ValueError(
+                    f"Failed to load audio file: {e} ({fallback})"
+                ) from e
         if y is None or len(y) == 0:
             raise ValueError("Loaded audio data is empty")
         return cls(y=y, sr=loaded_sr, bits=bits, path=path)

@@ -509,3 +509,48 @@ def test_too_few_reference_notes_changes_nothing():
     ]
     assert merge_unattacked_splits(inst, flux, fps) == 0
     assert len(inst.notes) == 2
+
+
+def _swell_stem(sr=22050):
+    plucks = [(i * 1.0, i * 1.0 + 0.9, 45 + (i % 5) * 2) for i in range(8)]
+    audio, _ = _tone_stem(plucks + [(9.0, 11.0, 52)], sr)
+    t = np.arange(int(1.0 * sr)) / sr
+    swell = np.minimum(1.0, t / 0.08) * np.sin(2 * np.pi * 164.81 * t)
+    first = int(10.0 * sr)
+    audio[first : first + len(t)] += (0.8 * swell).astype(np.float32)
+    inst = pretty_midi.Instrument(33)
+    for start, end, pitch in plucks:
+        inst.notes.append(pretty_midi.Note(80, pitch, start, end))
+    inst.notes += [
+        pretty_midi.Note(80, 52, 9.0, 10.0),
+        pretty_midi.Note(70, 52, 10.0, 11.0),
+    ]
+    return audio, sr, inst
+
+
+def test_a_soft_repeat_that_gets_louder_is_kept_when_the_level_is_given():
+    from korshmer.midi.transcription_cleanup import (
+        level_flux,
+        merge_unattacked_splits,
+        pitch_band_level,
+    )
+
+    audio, sr, inst = _swell_stem()
+    level, fps = pitch_band_level(audio, sr)
+    assert (
+        merge_unattacked_splits(inst, level_flux(level), fps, level=level) == 0
+    )
+    spans = sorted((n.start, n.end) for n in inst.notes if n.pitch == 52)
+    assert spans == [(9.0, 10.0), (10.0, 11.0)]
+
+
+def test_without_the_level_a_soft_repeat_is_still_joined():
+    from korshmer.midi.transcription_cleanup import (
+        level_flux,
+        merge_unattacked_splits,
+        pitch_band_level,
+    )
+
+    audio, sr, inst = _swell_stem()
+    level, fps = pitch_band_level(audio, sr)
+    assert merge_unattacked_splits(inst, level_flux(level), fps) == 1

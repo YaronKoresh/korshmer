@@ -35,6 +35,8 @@ def _has_audio_signature(header: bytes) -> bool:
         return True
     if header[0:3] == b"ID3":
         return True
+    if header[0:4] == b".snd":
+        return True
 
     if len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0:
         return True
@@ -48,8 +50,8 @@ def check_audio_file_type(path):
         raise AudioFormatError(
             f"File content is not a recognized audio format: {path}",
             recovery_hint=(
-                "Make sure the file is a real WAV, MP3, FLAC, OGG, AIFF or "
-                "MP4/M4A audio file, not just renamed to an audio extension."
+                "Make sure the file is a real WAV, MP3, FLAC, OGG, AIFF, AU "
+                "or MP4/M4A audio file, not just renamed to an audio extension."
             ),
         )
     return True

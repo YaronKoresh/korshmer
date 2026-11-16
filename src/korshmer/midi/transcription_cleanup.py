@@ -680,7 +680,7 @@ PITCH_FLUX_HOP = 256
 PITCH_FLUX_LOWEST = 24
 PITCH_FLUX_BINS = 96
 PITCH_FLUX_PARTIALS = (0, 12, 19)
-REATTACK_MIN_RISE_DB = 3.0
+REATTACK_MIN_RISE_DB = 2.0
 REATTACK_BEFORE_S = (0.1, 0.02)
 REATTACK_AFTER_S = 0.08
 
@@ -802,7 +802,15 @@ def _attack_threshold(notes, flux, frames_per_second, gap, ratio):
     return ratio * float(np.median(separate))
 
 
-def merge_unattacked_splits(inst, flux, frames_per_second, gap=0.05, ratio=0.5):
+def merge_unattacked_splits(
+    inst,
+    flux,
+    frames_per_second,
+    gap=0.05,
+    ratio=0.5,
+    level=None,
+    min_rise_db=REATTACK_MIN_RISE_DB,
+):
     if inst.is_drum or len(inst.notes) < 2:
         return 0
     notes = sorted(inst.notes, key=lambda n: (n.pitch, n.start))
@@ -815,7 +823,13 @@ def merge_unattacked_splits(inst, flux, frames_per_second, gap=0.05, ratio=0.5):
         last = kept[-1]
         if note.pitch == last.pitch and -gap <= note.start - last.end <= gap:
             attack = _attack_at(flux, frames_per_second, note.pitch, note.start)
-            if attack is not None and attack < threshold:
+            rise = None
+            if level is not None:
+                rise = _rise_at(
+                    level, frames_per_second, note.pitch, note.start
+                )
+            rising = rise is not None and rise >= min_rise_db
+            if attack is not None and attack < threshold and not rising:
                 last.end = max(last.end, note.end)
                 last.velocity = max(last.velocity, note.velocity)
                 joins += 1

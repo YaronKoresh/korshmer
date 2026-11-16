@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import shutil
+import struct
 import subprocess
 import threading
 from collections import deque
@@ -55,9 +56,90 @@ def validate_preset_bit_depth(config: dict[str, Any]) -> None:
         raise ValueError(f"Invalid 'bit_depth': {e}") from e
 
 
+ENCODER_RANGES: dict[str, tuple[float, float]] = {
+    "bitrate": (64, 320),
+    "compression": (0, 8),
+}
+QUALITY_RANGES: dict[str, tuple[float, float]] = {
+    "ogg": (-1, 10),
+    "mp3": (0, 9),
+}
+AAC_FORMATS = ("m4a", "aac")
+RIFF_INFO_TAGS = {
+    "title": b"INAM",
+    "artist": b"IART",
+    "album": b"IPRD",
+    "genre": b"IGNR",
+    "date": b"ICRD",
+    "comment": b"ICMT",
+}
+MP4_TAGS = {
+    "title": "\xa9nam",
+    "artist": "\xa9ART",
+    "album": "\xa9alb",
+    "genre": "\xa9gen",
+    "date": "\xa9day",
+    "comment": "\xa9cmt",
+}
+
+
+def _require_range(name: str, value: Any, low: float, high: float) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not low <= value <= high
+    ):
+        raise ValueError(
+            f"Invalid '{name}': must be a number from {low} to {high}, "
+            f"got {value!r}"
+        )
+
+
+def validate_preset_encoder(config: dict[str, Any]) -> None:
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"Export preset must be a mapping of settings, got {config!r}"
+        )
+    for name, (low, high) in ENCODER_RANGES.items():
+        if name in config:
+            _require_range(name, config[name], low, high)
+    quality_range = QUALITY_RANGES.get(config.get("format", "wav"))
+    if "quality" in config and quality_range is not None:
+        _require_range("quality", config["quality"], *quality_range)
+
+
+def write_riff_info(path: Path, metadata: dict[str, str]) -> bool:
+    entries = b""
+    for key, tag in RIFF_INFO_TAGS.items():
+        value = metadata.get(key)
+        if not value:
+            continue
+        text = str(value).encode("utf-8") + b"\0"
+        entries += tag + struct.pack("<I", len(text)) + text
+        entries += b"\0" * (len(text) % 2)
+    if not entries:
+        return False
+    chunk = b"LIST" + struct.pack("<I", len(entries) + 4) + b"INFO" + entries
+    with open(path, "r+b") as handle:
+        header = handle.read(12)
+        if header[0:4] != b"RIFF" or header[8:12] != b"WAVE":
+            return False
+        size = handle.seek(0, os.SEEK_END)
+        if size % 2:
+            handle.write(b"\0")
+            size += 1
+        if size + len(chunk) - 8 > 0xFFFFFFFF:
+            return False
+        handle.write(chunk)
+        handle.seek(4)
+        handle.write(struct.pack("<I", size + len(chunk) - 8))
+    return True
+
+
 def validate_export_preset(config: dict[str, Any]) -> None:
     validate_preset_normalize_target(config)
     validate_preset_bit_depth(config)
+    validate_preset_encoder(config)
 
 
 class ExportManager:
@@ -378,15 +460,25 @@ class ExportManager:
             write_kwargs = {"subtype": subtype}
             if output_format in fmt_map:
                 write_kwargs["format"] = fmt_map[output_format]
+            if output_format == "flac" and "compression" in preset_config:
+                write_kwargs["compression_level"] = (
+                    preset_config["compression"] / 8
+                )
             sf.write(str(output), audio_data, target_sr, **write_kwargs)
 
         elif output_format == "ogg":
+            ogg_kwargs = {}
+            if "quality" in preset_config:
+                ogg_kwargs["compression_level"] = (
+                    10 - preset_config["quality"]
+                ) / 11
             sf.write(
                 str(output),
                 audio_data,
                 target_sr,
                 format="OGG",
                 subtype="VORBIS",
+                **ogg_kwargs,
             )
 
         elif output_format == "mp3":
@@ -395,7 +487,27 @@ class ExportManager:
                 sf.write(str(temp_wav), audio_data, target_sr, subtype="PCM_16")
 
                 bitrate = preset_config.get("bitrate", 320)
-                self._convert_to_mp3(temp_wav, output, bitrate, metadata)
+                if preset_config.get("vbr", False):
+                    self._convert_to_mp3(
+                        temp_wav,
+                        output,
+                        bitrate,
+                        metadata,
+                        vbr_quality=preset_config.get("quality", 2),
+                    )
+                else:
+                    self._convert_to_mp3(temp_wav, output, bitrate, metadata)
+            finally:
+                if temp_wav.exists():
+                    temp_wav.unlink()
+
+        elif output_format in AAC_FORMATS:
+            temp_wav = output.with_suffix(".temp.wav")
+            try:
+                sf.write(str(temp_wav), audio_data, target_sr, subtype="PCM_16")
+                self._convert_to_aac(
+                    temp_wav, output, preset_config.get("bitrate", 256)
+                )
             finally:
                 if temp_wav.exists():
                     temp_wav.unlink()
@@ -479,9 +591,14 @@ class ExportManager:
         output_mp3: Path,
         bitrate: int,
         metadata: dict[str, str],
+        vbr_quality: int | None = None,
     ):
         try:
-            cmd = ["ffmpeg", "-i", str(input_wav), "-b:a", f"{bitrate}k"]
+            cmd = ["ffmpeg", "-i", str(input_wav)]
+            if vbr_quality is None:
+                cmd.extend(["-b:a", f"{bitrate}k"])
+            else:
+                cmd.extend(["-q:a", str(int(vbr_quality))])
 
             if metadata:
                 for key, value in metadata.items():
@@ -493,11 +610,39 @@ class ExportManager:
         except Exception as e:
             logging.warning(f"MP3 conversion requires ffmpeg: {e}")
 
+    def _convert_to_aac(self, input_wav: Path, output: Path, bitrate: int):
+        try:
+            cmd = ["ffmpeg", "-i", str(input_wav), "-c:a", "aac"]
+            cmd.extend(["-b:a", f"{bitrate}k", "-y", str(output)])
+            subprocess.run(cmd, check=True, capture_output=True)
+        except Exception as e:
+            logging.warning(f"AAC conversion requires ffmpeg: {e}")
+
     def _embed_metadata(self, file_path: Path, metadata: dict[str, str]):
         try:
             suffix = file_path.suffix.lower()
 
-            if suffix == ".flac":
+            if suffix == ".wav":
+                write_riff_info(file_path, metadata)
+
+            elif suffix == ".ogg":
+                from mutagen.oggvorbis import OggVorbis
+
+                comments = OggVorbis(str(file_path))
+                for key, value in metadata.items():
+                    comments[key.upper()] = value
+                comments.save()
+
+            elif suffix in (".m4a", ".mp4"):
+                from mutagen.mp4 import MP4
+
+                atoms = MP4(str(file_path))
+                for key, value in metadata.items():
+                    if key in MP4_TAGS:
+                        atoms[MP4_TAGS[key]] = [str(value)]
+                atoms.save()
+
+            elif suffix == ".flac":
                 from mutagen.flac import FLAC
 
                 audio = FLAC(str(file_path))

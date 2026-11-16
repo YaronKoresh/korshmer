@@ -651,3 +651,62 @@ def test_a_low_scoring_gap_in_the_same_key_is_kept():
         [(0.0, 20.0), (40.0, 60.0)], times, scores, chroma, MusicRegionOptions()
     )
     assert regions == [(0.0, 60.0)]
+
+
+BREAK_AT_S = 24.0
+BREAK_S = 5.0
+BREAK_EDGE_S = 0.75
+
+
+def _music_with_a_spoken_break():
+    parts = [
+        music_body(BREAK_AT_S),
+        speech_like(BREAK_S, 9),
+        music_body(24.0, seed=4),
+    ]
+    return np.concatenate(parts).astype(np.float32)
+
+
+def test_a_short_spoken_break_inside_the_music_is_cut():
+    found = find_music_regions(_music_with_a_spoken_break(), SR)
+    assert found.applied
+    assert len(found.regions) == 2
+    (start, stop), (resume, end) = found.regions
+    assert start == 0.0
+    assert end == pytest.approx(found.duration)
+    assert abs(stop - BREAK_AT_S) <= BREAK_EDGE_S
+    assert abs(resume - (BREAK_AT_S + BREAK_S)) <= BREAK_EDGE_S
+    assert not found.contains(BREAK_AT_S + BREAK_S / 2)
+    position = found.cut_timeline()[1][2]
+    assert stop <= position < stop + 1.5
+
+
+def test_a_faint_bed_before_a_spoken_intro_is_not_kept_as_music():
+    bed_s, talk_s = 8.0, 7.0
+    bed = 0.002 * sum(
+        _harmonic_tone(freq, int(bed_s * SR), 6, 1.2)
+        for freq in (220.0, 277.18, 329.63)
+    )
+    parts = [bed, speech_like(talk_s, 1), music_body(30.0)]
+    found = find_music_regions(np.concatenate(parts).astype(np.float32), SR)
+    assert found.applied
+    assert len(found.regions) == 1
+    start, end = found.regions[0]
+    assert abs(start - (bed_s + talk_s)) <= BREAK_EDGE_S
+    assert end == pytest.approx(found.duration)
+
+
+def test_a_silent_pause_inside_the_music_is_kept():
+    parts = [music_body(20.0), np.zeros(4 * SR), music_body(20.0, seed=4)]
+    found = find_music_regions(np.concatenate(parts).astype(np.float32), SR)
+    assert not found.applied
+    assert found.is_identity()
+
+
+def test_the_break_minimum_option_controls_break_cutting():
+    audio = _music_with_a_spoken_break()
+    whole = find_music_regions(audio, SR, MusicRegionOptions(break_min_s=600))
+    assert not whole.applied
+    assert whole.is_identity()
+    with pytest.raises(ValueError, match="Break minimum"):
+        MusicRegionOptions(break_min_s=-1)

@@ -10,14 +10,19 @@ import numpy as np
 from korshmer.audio_processing.transcription_prep import (
     ModelOptions,
     PrepOptions,
+    onset_times,
     prepare_for_transcription,
     variants_for_stem,
 )
 from korshmer.midi.transcription_cleanup import (
     CleanupOptions,
     clean_transcription,
+    level_flux,
     merge_note_variants,
+    merge_sustained_splits,
+    merge_unattacked_splits,
     options_for_cleanup,
+    pitch_band_level,
 )
 from tests.fixtures.transcription_fixtures import (
     FIXTURE_DIR,
@@ -120,13 +125,36 @@ def mir_scores(reference, estimated, with_offset=False):
     return precision, recall, f1
 
 
+def stem_onsets(name):
+    prep = variants_for_stem(name, None)[0]
+    source = str(FIXTURE_DIR / f"{name}.wav")
+    with tempfile.TemporaryDirectory() as tmp:
+        return onset_times(prepare_for_transcription(source, tmp, prep))
+
+
+def join_split_notes(name, midi):
+    import librosa
+
+    audio, rate = librosa.load(
+        str(FIXTURE_DIR / f"{name}.wav"), sr=22050, mono=True
+    )
+    level, frames_per_second = pitch_band_level(audio, rate)
+    flux = level_flux(level)
+    for inst in midi.instruments:
+        merge_unattacked_splits(inst, flux, frames_per_second, level=level)
+        merge_sustained_splits(inst, level, frames_per_second, flux=flux)
+
+
 def post_process(name, notes, cleanup):
     if cleanup is None or not cleanup.enabled:
         return list(notes)
     midi = to_pretty_midi(notes)
     cleaned, _ = clean_transcription(
-        midi, options=options_for_cleanup(name, cleanup)
+        midi,
+        options=options_for_cleanup(name, cleanup),
+        onsets=stem_onsets(name),
     )
+    join_split_notes(name, cleaned)
     return [
         (n.pitch, n.start, n.end, n.velocity)
         for inst in cleaned.instruments

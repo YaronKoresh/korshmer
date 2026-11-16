@@ -12,6 +12,13 @@ MIN_ALIGNMENT = 0.3
 MIN_BPM_ESTIMATE = 20.0
 MAX_BPM_ESTIMATE = 300.0
 DECIMALS = 2
+LOCAL_WINDOW_S = 16.0
+LOCAL_STEP_S = 8.0
+LOCAL_BEATS = 4
+LOCAL_SEARCH = 0.12
+LOCAL_MIN_CORRELATION = 0.1
+LOCAL_MIN_WINDOWS = 3
+LOCAL_AGREEMENT = 0.015
 
 
 def _beat_line_tempo(envelope, sr, candidate):
@@ -32,6 +39,56 @@ def _beat_line_tempo(envelope, sr, candidate):
     if abs(fitted - candidate) / candidate > MAX_FIT_DEVIATION:
         return None
     return fitted
+
+
+def _window_tempo(window, frames_per_second, candidate):
+    centred = window - window.mean()
+    spectrum = np.fft.rfft(centred, 2 * len(centred))
+    auto = np.fft.irfft(spectrum * np.conj(spectrum))[: len(centred)]
+    if auto[0] <= 0:
+        return None
+    auto = auto / auto[0]
+    lag = LOCAL_BEATS * 60.0 / candidate * frames_per_second
+    first = int(lag * (1 - LOCAL_SEARCH))
+    last = int(np.ceil(lag * (1 + LOCAL_SEARCH))) + 1
+    if first < 1 or last >= len(auto) // 2:
+        return None
+    lags = np.arange(first, last)
+    support = auto[lags] + auto[lags // 2] + auto[lags // LOCAL_BEATS]
+    near = first + int(np.argmax(support))
+    low, high = max(first, near - 2), min(last, near + 3)
+    peak = low + int(np.argmax(auto[low:high]))
+    if peak in (first, last - 1) or auto[peak] < LOCAL_MIN_CORRELATION:
+        return None
+    before, here, after = auto[peak - 1 : peak + 2]
+    bend = before - 2 * here + after
+    shift = 0.5 * (before - after) / bend if bend < 0 else 0.0
+    return LOCAL_BEATS * 60.0 * frames_per_second / (peak + shift)
+
+
+def local_tempos(envelope, sr, candidate):
+    frames_per_second = sr / HOP_LENGTH
+    size = int(LOCAL_WINDOW_S * frames_per_second)
+    step = int(LOCAL_STEP_S * frames_per_second)
+    found = []
+    for first in range(0, len(envelope) - size + 1, max(1, step)):
+        tempo = _window_tempo(
+            envelope[first : first + size], frames_per_second, candidate
+        )
+        if tempo is not None:
+            found.append((first / frames_per_second, float(tempo)))
+    return found
+
+
+def _dominant_tempo(envelope, sr, candidate):
+    tempos = np.array([t for _, t in local_tempos(envelope, sr, candidate)])
+    if len(tempos) < LOCAL_MIN_WINDOWS:
+        return None
+    middle = float(np.median(tempos))
+    agreeing = tempos[np.abs(tempos - middle) <= LOCAL_AGREEMENT * middle]
+    if len(agreeing) < LOCAL_MIN_WINDOWS or len(agreeing) == len(tempos):
+        return None
+    return float(agreeing.mean())
 
 
 def _refine_by_alignment(onset_times, tempo):
@@ -71,7 +128,11 @@ def estimate_tempo(y, sr):
         MIN_BPM_ESTIMATE <= candidate <= MAX_BPM_ESTIMATE
     ):
         return None
-    tempo = _beat_line_tempo(envelope, sr, candidate) or candidate
+    tempo = (
+        _dominant_tempo(envelope, sr, candidate)
+        or _beat_line_tempo(envelope, sr, candidate)
+        or candidate
+    )
     onsets = librosa.onset.onset_detect(
         onset_envelope=envelope, sr=sr, hop_length=HOP_LENGTH, units="time"
     )

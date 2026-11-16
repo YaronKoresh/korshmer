@@ -173,6 +173,8 @@ def test_the_same_seed_gives_the_same_instruments():
 def test_the_bundled_soundfont_has_every_program_and_kit_used():
     from korshmer.audio_processors import resolve_drum_kit
 
+    if not SF3.exists():
+        pytest.skip("bundled soundfont missing")
     presets = _soundfont_presets()
     available_kits = {prog for bank, prog in presets if bank == 128}
     for profile in GENRES.values():
