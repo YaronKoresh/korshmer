@@ -466,3 +466,37 @@ def test_choosing_a_version_by_its_description_restores_it(tmp_path):
     with mock.patch.object(song_actions.QInputDialog, "getItem", pick):
         studio.restore_snapshot_action()
     assert len(studio.arranger.model.notes) == 2
+
+
+def test_each_level_number_sits_right_after_its_own_label():
+    from korshmer.ui.widgets.audio.live_meters import PAIR_GAP, LiveMeters
+
+    meters = LiveMeters()
+    meters.resize(256, 40)
+    meters.show()
+    QApplication.processEvents()
+    spots = {}
+    for name, value in meters.values.items():
+        title = meters.titles[name]
+        assert title.parent() is value.parent()
+        assert value.x() - (title.x() + title.width()) == PAIR_GAP
+        cell = value.parent().geometry()
+        spots[name] = (cell.x(), cell.x() + value.x() + value.width())
+    row = sorted(
+        spots[n] for n in ("momentary_lufs", "short_term_lufs", "rms_db")
+    )
+    for (_, value_end), (next_start, _) in zip(row, row[1:], strict=False):
+        assert next_start - value_end > PAIR_GAP
+    meters.close()
+
+
+def test_the_tutorial_opens_the_tab_each_step_needs():
+    from korshmer.ui.managers.tutorial import _intro_steps
+
+    tabs = {step.title: step.tab for step in _intro_steps()}
+    assert tabs["The editor"] == "EDITOR"
+    assert tabs["Set the tempo"] == "THEORY"
+    assert tabs["Find any tool"] == "EFFECTS"
+    targets = {step.title: step.target_widget_name for step in _intro_steps()}
+    assert targets["Tempo and key"] == "tabs.tabBar"
+    assert targets["Effects and tools"] == "tabs.tabBar"

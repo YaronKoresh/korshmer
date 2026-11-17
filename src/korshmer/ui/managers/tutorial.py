@@ -61,7 +61,9 @@ class TutorialStep:
         task: str = "",
         begin=None,
         check=None,
+        tab: str = "",
     ):
+        self.tab = tab
         self.title = title
         self.description = description
         self.target_widget_name = target_widget_name
@@ -183,26 +185,42 @@ class TutorialOverlay(QWidget):
             height = layout.sizeHint().height()
         self.info_panel.setFixedHeight(height)
         self._position_info_panel()
+        self._update_mask()
+
+    def _panel_spots(self):
+        area, panel = self.rect(), self.info_panel
+        centre = (area.width() - panel.width()) // 2
+        middle = (area.height() - panel.height()) // 2
+        right = area.width() - panel.width() - PANEL_MARGIN
+        bottom = area.height() - panel.height() - PANEL_MARGIN
+        return [
+            QPoint(x, y)
+            for y in (bottom, PANEL_MARGIN, middle)
+            for x in (centre, PANEL_MARGIN, right)
+        ]
 
     def _position_info_panel(self):
-        area = self.rect()
         panel = self.info_panel
-        x = (area.width() - panel.width()) // 2
-        y = area.height() - panel.height() - PANEL_MARGIN
         hole = self.highlight_rect
-        if hole is not None and hole.intersects(
-            QRect(x, y, panel.width(), panel.height())
-        ):
-            y = PANEL_MARGIN
-            if hole.intersects(QRect(x, y, panel.width(), panel.height())):
-                y = max(PANEL_MARGIN, hole.top() - panel.height() - 12)
-        panel.move(max(0, x), max(0, y))
+        spots = self._panel_spots()
+        best = spots[0]
+        if hole is not None:
+
+            def covered(spot):
+                shared = hole.intersected(QRect(spot, panel.size()))
+                return shared.width() * shared.height()
+
+            best = min(spots, key=covered)
+        panel.move(max(0, best.x()), max(0, best.y()))
 
     def _update_mask(self):
         if self.highlight_rect is None:
             self.clearMask()
             return
-        self.setMask(QRegion(self.rect()) - QRegion(self.highlight_rect))
+        hole = QRegion(self.highlight_rect) - QRegion(
+            self.info_panel.geometry()
+        )
+        self.setMask(QRegion(self.rect()) - hole)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -222,13 +240,14 @@ class TutorialOverlay(QWidget):
             )
 
 
-def _tab_index(window, attribute):
-    return window.tabs.indexOf(getattr(window, attribute))
+def _tab_index(window, text):
+    tabs = window.tabs
+    return next((i for i in range(tabs.count()) if tabs.tabText(i) == text), -1)
 
 
-def _on_tab(attribute):
+def _on_tab(text):
     return lambda window, _memo: (
-        window.tabs.currentIndex() == _tab_index(window, attribute)
+        window.tabs.currentIndex() == _tab_index(window, text)
     )
 
 
@@ -251,6 +270,7 @@ def _intro_steps():
             "Notes and audio clips live in the editor. Snap keeps what you "
             "move on the grid.",
             target_widget_name="arranger.btn_snap",
+            tab="EDITOR",
             task="click Snap to turn it off or on.",
             begin=lambda window: window.arranger.btn_snap.isChecked(),
             check=lambda window, was: (
@@ -261,17 +281,17 @@ def _intro_steps():
             "Tempo and key",
             "The THEORY tab holds the tempo, the key and the groove of the "
             "song.",
-            target_widget_name="tabs",
+            target_widget_name="tabs.tabBar",
+            tab="EDITOR",
             task="open the THEORY tab.",
-            check=lambda window, _memo: (
-                window.tabs.tabText(window.tabs.currentIndex()) == "THEORY"
-            ),
+            check=_on_tab("THEORY"),
         ),
         TutorialStep(
             "Set the tempo",
             "The tempo box sets the speed of the whole song. You can type "
             "a number or use the arrows.",
             target_widget_name="spin_bpm",
+            tab="THEORY",
             task="change the tempo to any other value.",
             begin=lambda window: window.spin_bpm.value(),
             check=lambda window, was: window.spin_bpm.value() != was,
@@ -279,9 +299,10 @@ def _intro_steps():
         TutorialStep(
             "Effects and tools",
             "Every tool for notes and audio is in the EFFECTS tab.",
-            target_widget_name="tabs",
+            target_widget_name="tabs.tabBar",
+            tab="EDITOR",
             task="open the EFFECTS tab.",
-            check=_on_tab("page_tools"),
+            check=_on_tab("EFFECTS"),
         ),
         TutorialStep(
             "Find any tool",
@@ -289,6 +310,7 @@ def _intro_steps():
             "want to do, for example 'louder', 'swing' or 'echo'. "
             "Ctrl+K jumps here from anywhere.",
             target_widget_name="edit_tool_search",
+            tab="EFFECTS",
             task="type at least three letters in the search box.",
             check=lambda window, _memo: (
                 len(window.edit_tool_search.text().strip()) >= 3
@@ -325,6 +347,8 @@ class TutorialManager:
         target = self.parent_window
         for part in (name or "").split("."):
             target = getattr(target, part, None)
+            if callable(target) and not isinstance(target, QWidget):
+                target = target()
             if target is None:
                 return None
         return target if name else None
@@ -368,6 +392,9 @@ class TutorialManager:
         step = self.current_step()
         if step is None:
             return
+        index = _tab_index(self.parent_window, step.tab) if step.tab else -1
+        if index >= 0:
+            self.parent_window.tabs.setCurrentIndex(index)
         step.start(self.parent_window)
         step.highlight_rect = self._target_rect(step)
         self.overlay.set_step(

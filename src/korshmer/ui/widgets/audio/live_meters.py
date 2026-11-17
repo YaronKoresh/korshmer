@@ -1,5 +1,11 @@
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QGridLayout, QLabel, QProgressBar, QWidget
+from PySide6.QtWidgets import (
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QWidget,
+)
 
 from korshmer.audio_processing.live_levels import (
     SILENCE_DB,
@@ -23,8 +29,12 @@ READOUTS = (
     ),
 )
 VALUE_STYLE = (
-    "font-family: 'Consolas', monospace; font-size: 11px; color: #202124;"
+    "font-family: 'Consolas', monospace; font-size: 11px; "
+    "font-weight: bold; color: #202124;"
 )
+READOUT_COLUMNS = 3
+READOUT_GAP = 12
+PAIR_GAP = 3
 NAME_STYLE = "font-size: 10px; color: #5F6368;"
 BAR_STYLE = """
     QProgressBar { border: 1px solid #DADCE0; border-radius: 3px;
@@ -49,28 +59,36 @@ class LiveMeters(QWidget):
         self.engine = None
         self.levels = Levels()
         self.values = {}
+        self.titles = {}
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setHorizontalSpacing(4)
         layout.setVerticalSpacing(1)
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
         self.bar.setTextVisible(False)
         self.bar.setFixedHeight(6)
         self.bar.setStyleSheet(BAR_STYLE % BAR_OK)
-        layout.addWidget(self.bar, 0, 0, 1, 6)
+        layout.addWidget(self.bar, 0, 0, 1, READOUT_COLUMNS)
+        layout.setHorizontalSpacing(READOUT_GAP)
         for index, (name, label, tip) in enumerate(READOUTS):
-            row, column = 1 + index // 3, 2 * (index % 3)
+            cell = QWidget()
+            cell.setToolTip(tip)
+            pair = QHBoxLayout(cell)
+            pair.setContentsMargins(0, 0, 0, 0)
+            pair.setSpacing(PAIR_GAP)
             title = QLabel(label)
             title.setStyleSheet(NAME_STYLE)
-            title.setToolTip(tip)
             value = QLabel()
             value.setStyleSheet(VALUE_STYLE)
-            value.setToolTip(tip)
-            value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            layout.addWidget(title, row, column)
-            layout.addWidget(value, row, column + 1)
+            value.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            pair.addWidget(title)
+            pair.addWidget(value)
+            pair.addStretch()
+            layout.addWidget(
+                cell, 1 + index // READOUT_COLUMNS, index % READOUT_COLUMNS
+            )
             self.values[name] = value
+            self.titles[name] = title
         self.show_levels(self.levels)
         self.timer = QTimer(self)
         self.timer.setInterval(REFRESH_MS)
