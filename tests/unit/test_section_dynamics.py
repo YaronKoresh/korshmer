@@ -124,7 +124,22 @@ def test_stem_that_is_soft_all_song_long_stays_soft():
     apply_section_dynamics(alone, backing, SR)
     apply_section_dynamics(in_song, backing, SR, reference_db=song)
     assert _section_means(alone, 10.0, 1)[0] == pytest.approx(100, abs=2)
-    assert _section_means(in_song, 10.0, 1)[0] == pytest.approx(50, abs=4)
+    assert _section_means(in_song, 10.0, 1)[0] == pytest.approx(71, abs=4)
+    unlimited = _midi(10.0, 1)
+    apply_section_dynamics(
+        unlimited, backing, SR, reference_db=song, max_stem_drop_db=60
+    )
+    assert _section_means(unlimited, 10.0, 1)[0] == pytest.approx(50, abs=4)
+
+
+def test_a_soft_stem_keeps_its_own_loud_and_quiet_sections():
+    lead, backing = _song([-6, -6]), _song([-30, -18])
+    song = song_loud_level([backing, lead], SR)
+    midi = _midi(10.0, 2)
+    apply_section_dynamics(midi, backing, SR, reference_db=song)
+    quiet, loud = _section_means(midi, 10.0, 2)
+    assert loud > quiet + 15
+    assert loud >= 60
 
 
 def test_song_level_skips_silence_and_matches_files(tmp_path):

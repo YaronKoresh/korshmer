@@ -19,7 +19,6 @@ from korshmer.constants import HELP_TEXTS
 from korshmer.ui.viewmodels.editor_vm import (
     MAX_CLIP_GAIN,
     MAX_TRACK_GAIN,
-    rhythm_boost,
 )
 from korshmer.ui.widgets.material import (
     MAT_ERROR,

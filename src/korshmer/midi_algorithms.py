@@ -1630,6 +1630,9 @@ def simplify_chord_density(midi_data, max_voices=3):
 
 
 OUTLIER_MIN_NOTES = 20
+SHORT_NOTE_S = 0.5
+SLOW_ATTACK_PROGRAMS = frozenset({49, *range(88, 104)})
+QUICK_PROGRAMS = (4, 0, 5)
 OUTLIER_PERCENT = 3
 
 
@@ -1702,6 +1705,15 @@ def smart_instrument_selector(stem_name, midi_data, preferred_programs=()):
     for cat in search_categories:
         if cat in INSTRUMENT_DB:
             candidates.extend(INSTRUMENT_DB[cat])
+    lengths = [n.end - n.start for n in all_notes]
+    if float(np.median(lengths)) < SHORT_NOTE_S:
+        quick = [e for e in preferred if e[3] not in SLOW_ATTACK_PROGRAMS]
+        if preferred and not quick:
+            quick = [by_program[p] for p in QUICK_PROGRAMS if p in by_program]
+        preferred = quick
+        candidates = [
+            e for e in candidates if e[3] not in SLOW_ATTACK_PROGRAMS
+        ] or candidates
 
     best = _best_fit(preferred, stem_min, stem_max, stem_range)
     if best is None:

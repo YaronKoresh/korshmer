@@ -16,9 +16,6 @@ from korshmer.ui.viewmodels.editor_vm import (
     EditorModel,
     rhythm_boost,
 )
-from korshmer.ui.widgets.arranger.track_panel import (
-    TrackPanel,
-)
 
 SR = 22050
 

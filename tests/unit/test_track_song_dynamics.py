@@ -6,6 +6,10 @@ import pytest
 import soundfile as sf
 
 from korshmer import track_processor
+from korshmer.midi.section_dynamics import (
+    DB_PER_VELOCITY_DECADE,
+    MAX_STEM_DROP_DB,
+)
 
 SR = 22050
 SECONDS = 12.0
@@ -14,6 +18,9 @@ STEMS = {
     "other": (-18.0, 220.0, 57),
     "piano": (-70.0, 330.0, 69),
 }
+
+
+SOFT_STEM = 10 ** (-MAX_STEM_DROP_DB / DB_PER_VELOCITY_DECADE)
 
 
 def _tone(level_db, frequency):
@@ -89,7 +96,7 @@ def test_backing_stem_is_exported_softer_than_the_dominant_stem(
 ):
     means = _convert(tmp_path, monkeypatch)
     assert means["bass"] > 75
-    assert means["other"] == pytest.approx(means["bass"] / 2, rel=0.15)
+    assert means["other"] == pytest.approx(means["bass"] * SOFT_STEM, rel=0.15)
 
 
 def test_fixed_velocity_mode_still_exports_one_level(tmp_path, monkeypatch):
@@ -130,7 +137,7 @@ def test_vocals_use_the_vocal_voice_and_follow_the_song_level(
         track_processor, "DATA_DIR", str(tmp_path / "data"), raising=True
     )
     means = _convert(tmp_path, monkeypatch)
-    assert means["vocals"] == pytest.approx(means["bass"] / 2, rel=0.15)
+    assert means["vocals"] == pytest.approx(means["bass"] * SOFT_STEM, rel=0.15)
     folder = next((tmp_path / "data" / "song").iterdir()) / "MIDI"
     voice = pretty_midi.PrettyMIDI(str(folder / "vocals.mid")).instruments
     assert [(i.name, i.program) for i in voice] == [

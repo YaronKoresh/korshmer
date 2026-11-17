@@ -108,3 +108,37 @@ def test_the_main_line_keeps_its_pitches_with_strays_present():
 
     main = {n.pitch for n in result.instruments[0].notes if n.start < 50}
     assert main == {36, 40, 43, 45}
+
+
+def _stem_of(length, count=40):
+    import pretty_midi
+
+    midi = pretty_midi.PrettyMIDI()
+    inst = pretty_midi.Instrument(0)
+    inst.notes = [
+        pretty_midi.Note(80, 55 + i % 12, i * 0.5, i * 0.5 + length)
+        for i in range(count)
+    ]
+    midi.instruments.append(inst)
+    return midi
+
+
+def test_short_notes_never_get_a_slow_pad_sound():
+    from korshmer.audio_processing.timbre import SOFT_SUSTAINED
+    from korshmer.midi_algorithms import (
+        SLOW_ATTACK_PROGRAMS,
+        smart_instrument_selector,
+    )
+
+    short = smart_instrument_selector(
+        "other", _stem_of(0.2), preferred_programs=SOFT_SUSTAINED
+    )
+    assert short.instruments[0].program not in SLOW_ATTACK_PROGRAMS
+    held = smart_instrument_selector(
+        "other", _stem_of(2.0), preferred_programs=SOFT_SUSTAINED
+    )
+    assert held.instruments[0].program == SOFT_SUSTAINED[0]
+    only_pads = smart_instrument_selector(
+        "other", _stem_of(0.2), preferred_programs=(89, 90)
+    )
+    assert only_pads.instruments[0].program == 4

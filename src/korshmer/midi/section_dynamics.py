@@ -11,6 +11,7 @@ LOUD_PERCENTILE = 95
 
 
 DB_PER_VELOCITY_DECADE = 40.0
+MAX_STEM_DROP_DB = 6.0
 SILENT_BELOW_SONG_DB = 30.0
 NOTE_LEVEL_WINDOW_S = 0.1
 NOTE_LEVEL_SPAN_S = 0.5
@@ -112,8 +113,10 @@ def apply_section_dynamics(
     window_s=3.0,
     min_velocity=1,
     reference_db=None,
+    max_stem_drop_db=MAX_STEM_DROP_DB,
 ):
     validate_effect_number(amount, "Dynamics amount", 0, 2)
+    validate_effect_number(max_stem_drop_db, "Stem drop", 0, 60)
     validate_effect_number(max_drop_db, "Dynamics range", 0, 60)
     if reference_db is not None:
         validate_effect_number(reference_db, "Dynamics reference", -200, 200)
@@ -129,11 +132,15 @@ def apply_section_dynamics(
     if len(level) == 0:
         return 0
     loud = loud_level(level) if reference_db is None else float(reference_db)
-    changed = 0
+    offsets = []
     for note in notes:
         middle = 0.5 * (note.start + min(note.end, note.start + 0.5))
         at = float(np.interp(middle, times, level))
-        offset = np.clip(at - loud, -max_drop_db, 0.0) * amount
+        offsets.append(float(np.clip(at - loud, -max_drop_db, 0.0)))
+    lift = max(0.0, -max_stem_drop_db - float(np.median(offsets)))
+    changed = 0
+    for note, offset in zip(notes, offsets, strict=True):
+        offset = min(0.0, offset + lift) * amount
         velocity = note.velocity * 10 ** (offset / DB_PER_VELOCITY_DECADE)
         velocity = int(np.clip(round(velocity), min_velocity, 127))
         if velocity != note.velocity:
