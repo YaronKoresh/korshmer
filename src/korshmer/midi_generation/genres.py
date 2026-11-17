@@ -253,6 +253,38 @@ GENRES = {
         },
         (KIT_ELECTRONIC, KIT_808),
     ),
+    "Phonk": _p(
+        "Phonk",
+        {
+            "melody": (113, 114, 112, 84),
+            "chords": (4, 5, 19),
+            "bass": (38, 39),
+            "pad": (91, 89, 94, 99),
+            "arp": (112, 9, 113),
+            "pluck": (113, 115, 112),
+            "counter": (53, 54, 84),
+        },
+        KIT_808,
+        {
+            "Space Voice": 91,
+            "Warm Pad": 89,
+            "Halo Pad": 94,
+            "Atmosphere": 99,
+            "Choir Aahs": 52,
+            "Voice Oohs": 53,
+            "Church Organ": 19,
+        },
+        {
+            "Agogo": 113,
+            "Steel Drums": 114,
+            "Tinkle Bell": 112,
+            "Woodblock": 115,
+            "Glockenspiel": 9,
+            "Electric Piano": 4,
+            "Charang Lead": 84,
+        },
+        (KIT_ELECTRONIC, KIT_DANCE),
+    ),
 }
 
 

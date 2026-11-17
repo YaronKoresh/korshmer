@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
 
 from korshmer.constants import HELP_TEXTS
 from korshmer.midi_generation import composer
-from korshmer.midi_generation.engine import SONG_STYLES
 from korshmer.midi_generation.korshmer_schema import (
     DEFAULT_MINUTES,
     MAX_MINUTES,
@@ -78,7 +77,7 @@ class GeneratorPageMixin:
         self.spin_gen_minutes.setValue(DEFAULT_MINUTES)
         self.spin_gen_minutes.setSuffix(" min")
         self.combo_gen_style = QComboBox()
-        self.combo_gen_style.addItems(list(SONG_STYLES))
+        self.combo_gen_style.addItems(list(composer.STYLE_CHOICES))
         self.combo_gen_mood = QComboBox()
         self.combo_gen_mood.addItems(list(composer.MOODS))
         self.spin_gen_seed = QSpinBox()

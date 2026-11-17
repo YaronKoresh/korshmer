@@ -65,6 +65,7 @@ _STYLES = {
     "Lo-Fi": ("Jazz (ii-V-I)", "HipHop", "sparse", (4, 33, 88, 80)),
     "Rock": ("Blues (I-IV-V)", "Rock", "eighths", (29, 34, 88, 80)),
     "Jazz": ("Jazz (ii-V-I)", "Rock", "walking", (0, 32, 89, 65)),
+    "Phonk": ("Sad (vi-IV-I-V)", "Trap", "808", (113, 38, 91, 80)),
 }
 SONG_STYLES = list(_STYLES)
 
