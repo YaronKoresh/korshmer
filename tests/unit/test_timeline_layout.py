@@ -38,14 +38,15 @@ def test_toolbar_buttons_keep_room_for_their_text(width):
         arranger.close()
 
 
-def test_file_actions_sit_on_their_own_row():
+def test_file_actions_follow_the_recording_buttons_in_one_bar():
     arranger = _shown(850)
     try:
-        record_y = arranger.btn_rec.y()
-        assert arranger.btn_clear.y() > record_y
-        assert {getattr(arranger, n).y() for n in ACTION_BUTTONS} == {
-            arranger.btn_clear.y()
-        }
+        record = arranger.btn_rec.geometry()
+        for name in ACTION_BUTTONS:
+            spot = getattr(arranger, name).geometry()
+            assert (spot.y(), spot.x()) > (record.y(), record.x())
+            assert not spot.intersects(record)
+            assert spot.right() <= arranger.width()
     finally:
         arranger.close()
 

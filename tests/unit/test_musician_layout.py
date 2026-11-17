@@ -1,8 +1,10 @@
 import os
+import struct
 import sys
 from unittest import mock
 
 import numpy as np
+import pytest
 import soundfile as sf
 from PySide6.QtWidgets import (
     QApplication,
@@ -260,3 +262,161 @@ def test_editor_buttons_wrap_instead_of_overlapping():
             if first.parent() is second.parent():
                 assert not first.geometry().intersects(second.geometry())
     arranger.close()
+
+
+def _toolbar_rows(arranger):
+    names = [name for name in vars(arranger) if name.startswith("btn_")]
+    tops = {
+        getattr(arranger, name).geometry().top()
+        for name in names
+        if getattr(arranger, name).isVisible()
+    }
+    return len(tops)
+
+
+def test_editor_buttons_share_rows_without_dead_space():
+    arranger = ArrangerTimeline()
+    arranger.resize(1000, 600)
+    arranger.show()
+    QApplication.processEvents()
+    assert _toolbar_rows(arranger) <= 2
+    arranger.resize(520, 600)
+    QApplication.processEvents()
+    assert _toolbar_rows(arranger) <= 4
+    arranger.close()
+
+
+def test_a_level_box_always_shows_its_percentage():
+    from PySide6.QtWidgets import QAbstractSpinBox
+
+    from korshmer.ui.widgets.arranger.track_panel import make_level_box
+
+    box = make_level_box(85, 200, lambda _value: None)
+    assert box.buttonSymbols() == QAbstractSpinBox.NoButtons
+    assert box.text() == "85%"
+    needed = box.fontMetrics().horizontalAdvance("200%")
+    assert box.width() >= needed + 12
+
+
+RANGES = {0: (12, 108), 33: (0, 84)}
+
+
+@pytest.fixture
+def instrument_ranges(monkeypatch):
+    from korshmer.ui.widgets.arranger import track_panel
+    from korshmer.ui.widgets.midi import piano_roll
+
+    def fake(program, is_drum=False, path=None):
+        return (27, 87) if is_drum else RANGES.get(program, (0, 127))
+
+    monkeypatch.setattr(piano_roll, "playable_range", fake)
+    monkeypatch.setattr(track_panel, "playable_range", fake)
+    return fake
+
+
+def test_the_editor_opens_in_the_middle_of_the_keyboard():
+    arranger = ArrangerTimeline()
+    arranger.resize(900, 600)
+    arranger.show()
+    QApplication.processEvents()
+    roll = arranger.piano_roll
+    centre = roll.mapToScene(roll.viewport().rect().center())
+    assert 48 <= roll.vm.pitch_from_y(centre.y()) <= 84
+    arranger.close()
+
+
+def test_the_shaded_rows_follow_the_instrument_of_the_track(instrument_ranges):
+    arranger = ArrangerTimeline()
+    roll = arranger.piano_roll
+    piano = arranger.model.add_track("Lead", program=0)
+    bass = arranger.model.add_track("Bass", program=33)
+    roll.current_track_id = piano.id
+    (_, top_to), (low_from, _) = roll.silent_row_spans()
+    assert roll.vm.pitch_from_y(top_to - 1) == 109
+    assert roll.vm.pitch_from_y(low_from) == 11
+    roll.current_track_id = bass.id
+    (_, top_to), (low_from, _) = roll.silent_row_spans()
+    assert roll.vm.pitch_from_y(top_to - 1) == 85
+    assert low_from == 128 * roll.vm.grid_size
+
+
+def test_a_note_the_instrument_cannot_play_says_so(instrument_ranges):
+    from PySide6.QtCore import QPointF
+
+    arranger = ArrangerTimeline()
+    roll = arranger.piano_roll
+    bass = arranger.model.add_track("Bass", program=33)
+    roll.current_track_id = bass.id
+    heard = []
+    roll.range_warning.connect(heard.append)
+    roll._create_note_at(QPointF(100.0, roll.vm.y_from_pitch(60) + 1))
+    assert heard == []
+    roll._create_note_at(QPointF(200.0, roll.vm.y_from_pitch(96) + 1))
+    assert len(heard) == 1
+    assert "C-1 to C6" in heard[0] and "silent" in heard[0]
+
+
+def test_silent_notes_are_listed_per_track_with_its_range(instrument_ranges):
+    arranger = ArrangerTimeline()
+    model = arranger.model
+    lead = model.add_track("Lead", program=0)
+    bass = model.add_track("Bass", program=33)
+    drums = model.add_track("Drums", is_drum=True)
+    model.add_note(lead.id, 100, 0.0, 0.5)
+    model.add_note(lead.id, 118, 1.0, 0.5)
+    model.add_note(bass.id, 100, 2.0, 0.5)
+    model.add_note(drums.id, 40, 0.0, 0.5)
+    assert model.silent_notes(instrument_ranges) == {lead.id: 1, bass.id: 1}
+    arranger.track_panel.update_status()
+    shown = arranger.track_panel.lbl_status.text()
+    assert "1 notes on Lead" in shown and "(C0 to C8)" in shown
+    assert "1 notes on Bass" in shown and "(C-1 to C6)" in shown
+    model.clear()
+    arranger.track_panel.update_status()
+    assert "outside" not in arranger.track_panel.lbl_status.text()
+
+
+def _chunk(name, data):
+    return name + struct.pack("<I", len(data)) + data + b"\0" * (len(data) & 1)
+
+
+def _tiny_soundfont(path):
+    def gens(*items):
+        return b"".join(struct.pack("<HBB", *item) for item in items)
+
+    name = b"x".ljust(20, b"\0")
+    phdr = name + struct.pack("<HHHIII", 5, 0, 0, 0, 0, 0)
+    phdr += name + struct.pack("<HHHIII", 0, 0, 1, 0, 0, 0)
+    pbag = struct.pack("<HH", 0, 0) + struct.pack("<HH", 1, 0)
+    pgen = gens((41, 0, 0), (0, 0, 0))
+    inst = name + struct.pack("<H", 0) + name + struct.pack("<H", 2)
+    ibag = b"".join(struct.pack("<HH", n, 0) for n in (0, 2, 4))
+    igen = gens((43, 40, 59), (53, 0, 0), (43, 60, 96), (53, 1, 0), (0, 0, 0))
+    hydra = b"pdta" + b"".join(
+        _chunk(tag, data)
+        for tag, data in (
+            (b"phdr", phdr),
+            (b"pbag", pbag),
+            (b"pgen", pgen),
+            (b"inst", inst),
+            (b"ibag", ibag),
+            (b"igen", igen),
+        )
+    )
+    body = b"sfbk" + _chunk(b"LIST", hydra)
+    path.write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+
+
+def test_each_instrument_range_is_read_from_the_soundfont(tmp_path):
+    from korshmer.utils.soundfont_ranges import (
+        FULL_RANGE,
+        playable_range,
+        range_text,
+    )
+
+    font = tmp_path / "tiny.sf2"
+    _tiny_soundfont(font)
+    assert playable_range(5, path=font) == (40, 96)
+    assert playable_range(6, path=font) == FULL_RANGE
+    assert playable_range(5, path=tmp_path / "missing.sf2") == FULL_RANGE
+    assert range_text((40, 96)) == "E2 to C7"

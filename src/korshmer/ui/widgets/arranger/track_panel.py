@@ -1,5 +1,6 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -24,6 +25,11 @@ from korshmer.ui.widgets.material import (
     HelpButton,
     MaterialButton,
     MaterialToggleButton,
+)
+from korshmer.utils.soundfont_ranges import (
+    instrument_label,
+    playable_range,
+    range_text,
 )
 from korshmer.utils.text_input import limit_line_edit
 from korshmer.utils.track_layout import DRUMS_NAME, PROGRAM_NAMES
@@ -63,8 +69,14 @@ def make_small_button(text, tooltip):
     return button
 
 
+SILENT_NOTES_NOTICE = (
+    "{count} notes on {track} are outside what {instrument} can play "
+    "({keys}) and stay silent"
+)
+SILENT_NOTICE_LINES = 3
+SILENT_NOTES_STYLE = "color: #C5221F; font-size: 11px; font-weight: bold;"
 LEVEL_STEP = 5
-LEVEL_BOX_WIDTH = 64
+LEVEL_BOX_WIDTH = 50
 LEVEL_HELP = (
     "Level in percent. Type a number and press Enter, or use the Up and "
     "Down arrow keys to move in steps of 5."
@@ -78,6 +90,8 @@ def make_level_box(percent, maximum, on_change):
     box.setSuffix("%")
     box.setValue(int(round(percent)))
     box.setFixedWidth(LEVEL_BOX_WIDTH)
+    box.setButtonSymbols(QAbstractSpinBox.NoButtons)
+    box.setAlignment(Qt.AlignCenter)
     box.setKeyboardTracking(False)
     box.setToolTip(LEVEL_HELP)
     box.valueChanged.connect(on_change)
@@ -302,7 +316,8 @@ class TrackPanel(QWidget):
         self.scroll.setWidget(self.container)
 
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet(f"color: {MAT_TEXT}; font-size: 11px;")
+        self._status_style = f"color: {MAT_TEXT}; font-size: 11px;"
+        self.lbl_status.setStyleSheet(self._status_style)
         self.lbl_status.setWordWrap(True)
 
         layout.addLayout(header)
@@ -380,9 +395,23 @@ class TrackPanel(QWidget):
 
     def update_status(self):
         text = self.model.summary_text()
+        silent = self.model.silent_notes(playable_range)
+        for track_id, count in list(silent.items())[:SILENT_NOTICE_LINES]:
+            track = self.model.tracks[track_id]
+            keys = playable_range(track.program, track.is_drum)
+            notice = SILENT_NOTES_NOTICE.format(
+                count=count,
+                track=track.name,
+                instrument=instrument_label(track),
+                keys=range_text(keys),
+            )
+            text = f"{text}\n{notice}"
         if text != self._status_text:
             self._status_text = text
             self.lbl_status.setText(text)
+            self.lbl_status.setStyleSheet(
+                SILENT_NOTES_STYLE if silent else self._status_style
+            )
 
     def _highlight_active(self):
         if self.active_track_id not in self.model.tracks:

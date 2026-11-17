@@ -339,6 +339,7 @@ class ArrangerTimeline(QWidget):
         self._place_placeholder()
 
         self.piano_roll.notes_changed.connect(self.check_placeholder)
+        self.piano_roll.notes_changed.connect(self.track_panel.update_status)
         self.piano_roll.model_changed.connect(self._on_model_changed)
         self.piano_roll.audio_dropped.connect(self._on_audio_dropped)
         self.track_panel.tracks_changed.connect(self._on_tracks_edited)
@@ -354,7 +355,7 @@ class ArrangerTimeline(QWidget):
 
     def _build_transport_toolbar(self, layout):
         toolbar = FlowLayout(spacing=TOOLBAR_SPACING)
-        actions = FlowLayout(spacing=TOOLBAR_SPACING)
+        self._toolbar = toolbar
 
         self.btn_rec = QPushButton("● REC")
         self.btn_rec.setCheckable(True)
@@ -438,8 +439,10 @@ class ArrangerTimeline(QWidget):
         toolbar.addWidget(self.btn_layer_undo)
         toolbar.addWidget(self.btn_loop_clear)
         self.live_waveform = LiveWaveformStrip()
-        toolbar.addWidget(self.live_waveform)
         for button in (
+            self.btn_layer,
+            self.btn_layer_undo,
+            self.btn_loop_clear,
             self.btn_clear,
             self.btn_merge,
             self.btn_sync_play,
@@ -447,19 +450,20 @@ class ArrangerTimeline(QWidget):
             self.btn_export_mix,
             self.btn_export_clip,
         ):
-            actions.addWidget(button)
-        for button in (
-            self.btn_layer,
-            self.btn_layer_undo,
-            self.btn_loop_clear,
-            *(actions.itemAt(i).widget() for i in range(actions.count())),
-        ):
             button.setMinimumWidth(button.sizeHint().width())
+        for button in (
+            self.btn_sync_play,
+            self.btn_merge,
+            self.btn_clear,
+            self.btn_export_midi,
+            self.btn_export_mix,
+            self.btn_export_clip,
+        ):
+            toolbar.addWidget(button)
         layout.addLayout(toolbar)
-        layout.addLayout(actions)
 
-    def _build_edit_toolbar(self, layout):
-        toolbar = FlowLayout(spacing=TOOLBAR_SPACING)
+    def _build_edit_toolbar(self, _layout):
+        toolbar = self._toolbar
 
         self.btn_undo = MaterialButton("↶ Undo", "default")
         self.btn_undo.setToolTip("Undo (Ctrl+Z)")
@@ -516,7 +520,7 @@ class ArrangerTimeline(QWidget):
         toolbar.addWidget(self.combo_grid)
         toolbar.addWidget(self.btn_zoom_out)
         toolbar.addWidget(self.btn_zoom_in)
-        layout.addLayout(toolbar)
+        toolbar.addWidget(self.live_waveform)
 
     def eventFilter(self, obj, event):
         if obj is self.piano_roll and event.type() == QEvent.Resize:
@@ -570,6 +574,7 @@ class ArrangerTimeline(QWidget):
         self.model.snapshot()
         self.model.clear()
         self.piano_roll.load_model()
+        self.piano_roll.focus_notes()
         self._on_model_changed()
 
     def import_merge_midi(self):
@@ -608,6 +613,7 @@ class ArrangerTimeline(QWidget):
         self, pm, replace=True, name_prefix=None, merge_instruments=False
     ):
         self.piano_roll.sync_model_from_scene()
+        was_empty = not self.model.notes
         self.model.snapshot()
         created = self.model.load_midi(
             pm,
@@ -623,6 +629,8 @@ class ArrangerTimeline(QWidget):
         if replace:
             self.piano_roll.detect_grid_offset(pm)
         self.piano_roll.load_model()
+        if replace or was_empty:
+            self.piano_roll.focus_notes()
         self._on_model_changed()
         self._tempo_problem = None
         self.apply_even_bpm()
@@ -909,6 +917,7 @@ class ArrangerTimeline(QWidget):
         )
         self.track_panel.active_track_id = self.piano_roll.current_track_id
         self.piano_roll.load_model()
+        self.piano_roll.focus_notes()
         self._pending_waveform_ids = set()
         for clip in self.model.clips:
             if os.path.exists(clip.path):

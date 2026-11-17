@@ -1056,6 +1056,17 @@ class EditorModel:
                 latest = clip.end
         return latest
 
+    def silent_notes(self, range_for):
+        counts = {}
+        for note in self.notes:
+            track = self.tracks.get(note.track_id)
+            if track is None:
+                continue
+            low, high = range_for(track.program, track.is_drum)
+            if not low <= note.pitch <= high:
+                counts[track.id] = counts.get(track.id, 0) + 1
+        return counts
+
     def summary_text(self):
         return (
             f"{len(self.tracks)} tracks · {self.note_count()} notes · "

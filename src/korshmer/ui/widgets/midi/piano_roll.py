@@ -1,8 +1,8 @@
 import math
 import time
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsItem,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QGraphicsRectItem,
     QGraphicsScene,
     QGraphicsView,
+    QToolTip,
 )
 
 from korshmer.constants import GRID_RESOLUTIONS
@@ -35,6 +36,12 @@ from korshmer.ui.widgets.midi.piano_roll_renderer import (
     NoteRenderer,
 )
 from korshmer.utils.filesystem import sanitize_path
+from korshmer.utils.soundfont_ranges import (
+    FULL_RANGE,
+    instrument_label,
+    playable_range,
+    range_text,
+)
 from korshmer.utils.tempo import validate_bpm
 
 AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a")
@@ -48,6 +55,12 @@ VELOCITY_WHEEL_GROUP_SECONDS = 0.8
 
 
 MIN_ZOOM = 0.1
+HOME_PITCH = 66
+SILENT_ROWS_COLOR = QColor(0, 0, 0, 28)
+OUT_OF_RANGE_MESSAGE = (
+    "{instrument} can only play {keys}. This note is outside that range, "
+    "so it will be silent. Place it inside the white area."
+)
 MAX_ZOOM = 100.0
 
 
@@ -282,10 +295,12 @@ class InteractivePianoRoll(QGraphicsView):
     model_changed = Signal()
     context_menu_requested = Signal(QPoint)
     viewport_changed = Signal()
+    range_warning = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.vm = PianoRollViewModel()
+        self._focused_once = False
         self.model = EditorModel(tempo=self.vm.tempo)
         self._pending_zoom_x = 1.0
         self._pending_zoom_y = 1.0
@@ -408,6 +423,7 @@ class InteractivePianoRoll(QGraphicsView):
     @current_track_id.setter
     def current_track_id(self, value):
         self._current_track_id = value
+        self.viewport().update()
 
     def set_scale_view(self, root_name, scale_name):
         self.vm.set_scale(root_name, scale_name)
@@ -698,8 +714,39 @@ class InteractivePianoRoll(QGraphicsView):
         if applied_x != 1.0 or applied_y != 1.0:
             self.scale(applied_x, applied_y)
 
+    def playable_keys(self):
+        track = self.model.tracks.get(self.current_track_id)
+        if track is None:
+            return FULL_RANGE
+        return playable_range(track.program, track.is_drum)
+
+    def silent_row_spans(self):
+        size = self.vm.grid_size
+        low, high = self.playable_keys()
+        return (
+            (0.0, (127 - high) * size),
+            ((128 - low) * size, 128 * size),
+        )
+
+    def focus_notes(self):
+        pitches = sorted(note.pitch for note in self.model.notes)
+        pitch = pitches[len(pitches) // 2] if pitches else HOME_PITCH
+        view = self.mapToScene(self.viewport().rect()).boundingRect()
+        self.centerOn(view.center().x(), self.vm.y_from_pitch(pitch))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._focused_once:
+            self._focused_once = True
+            self.focus_notes()
+
     def drawBackground(self, painter, rect):
         painter.fillRect(rect, self.backgroundBrush())
+        for top, bottom in self.silent_row_spans():
+            painter.fillRect(
+                QRectF(rect.left(), top, rect.width(), bottom - top),
+                SILENT_ROWS_COLOR,
+            )
         GridPainter.draw_background(
             painter,
             rect,
@@ -812,6 +859,14 @@ class InteractivePianoRoll(QGraphicsView):
         item.setSelected(True)
         self._update_scene_rect()
         self.model_changed.emit()
+        low, high = playable_range(track.program, track.is_drum)
+        if not low <= pitch <= high:
+            message = OUT_OF_RANGE_MESSAGE.format(
+                instrument=instrument_label(track),
+                keys=range_text((low, high)),
+            )
+            self.range_warning.emit(message)
+            QToolTip.showText(QCursor.pos(), message, self)
         return note
 
     def _make_note_item(self, note, track):
