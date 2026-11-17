@@ -102,7 +102,7 @@ def test_an_evened_clip_is_saved_beside_a_stem(tmp_path, monkeypatch):
 
 def _model():
     model = EditorModel(tempo=120.0)
-    track = model.add_track("Bass", program=33)
+    track = model.add_track("Keys", program=4)
     model.add_note(track.id, 40, 0.0, 0.5, 80)
     model.add_note(track.id, 43, 0.5, 0.5, 100)
     return model, track

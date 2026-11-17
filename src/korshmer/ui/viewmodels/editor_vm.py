@@ -177,6 +177,12 @@ def compute_clip_waveform(path, points=WAVEFORM_POINTS):
 
 
 MAX_TRACK_GAIN = 2.0
+RHYTHM_BOOST = 1.25
+BASS_PROGRAMS = range(32, 40)
+
+
+def rhythm_boost(program, is_drum):
+    return RHYTHM_BOOST if is_drum or int(program) in BASS_PROGRAMS else 1.0
 
 
 def clamp_track_gain(gain):
@@ -946,12 +952,13 @@ class EditorModel:
             inst = pretty_midi.Instrument(
                 program=track.program, is_drum=track.is_drum, name=track.name
             )
+            level = track.gain * rhythm_boost(track.program, track.is_drum)
             for note in sorted(notes, key=lambda n: (n.start, n.pitch)):
                 end = max(note.start + MIN_NOTE_DURATION, note.end)
                 inst.notes.append(
                     pretty_midi.Note(
                         velocity=clamp_velocity(
-                            max(1, round(note.velocity * track.gain))
+                            max(1, round(note.velocity * level))
                         ),
                         pitch=note.pitch,
                         start=note.start,
