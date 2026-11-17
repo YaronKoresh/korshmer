@@ -7,7 +7,10 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from korshmer import __version__
 from korshmer.event_bus import Event, publish
-from korshmer.project_management.project_manager import is_valid_new_name
+from korshmer.project_management.project_manager import (
+    SONG_SUFFIX,
+    is_valid_new_name,
+)
 from korshmer.project_management.validators.project_validator import (
     INVALID_NAME_MESSAGE,
 )
@@ -18,15 +21,114 @@ SAVED_DATA_ONLY_MESSAGE = (
 )
 
 
+SONG_FILTER = "KORSHMER Project (*.kproj)"
+NEW_SONG_QUESTION = (
+    "Start a new song?\n\n"
+    "The editor will be emptied. Save the current song first if you want "
+    "to keep it."
+)
+SAVED_EDITS_QUESTION = (
+    "This song has saved edits.\n\n"
+    "Yes opens your saved song. No loads the fresh conversion instead."
+)
+
+
+def saved_song_in(folder):
+    folder = Path(str(folder))
+    if not folder.is_dir():
+        return None
+    songs = sorted(
+        folder.glob(f"*{SONG_SUFFIX}"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    return songs[0] if songs else None
+
+
+def with_found_clips(editor, folder):
+    folder = Path(str(folder))
+    editor = dict(editor)
+    clips = []
+    for clip in editor.get("clips") or []:
+        clip = dict(clip)
+        path = str(clip.get("path", ""))
+        if path and not os.path.isfile(path):
+            matches = sorted(folder.rglob(os.path.basename(path)))
+            if matches:
+                clip["path"] = str(matches[0])
+        clips.append(clip)
+    editor["clips"] = clips
+    return editor
+
+
 class ProjectManagementActionsMixin:
+    def _song_home(self):
+        session = getattr(self, "current_session", None)
+        folder = str(getattr(session, "output_dir", "") or "")
+        if not folder or not os.path.isdir(folder):
+            return None
+        if not self.project_manager.is_path_within_saved_data(folder):
+            return None
+        existing = saved_song_in(folder)
+        if existing is not None:
+            return existing
+        name = Path(str(getattr(session, "source_path", ""))).stem
+        if not is_valid_new_name(name):
+            name = "song"
+        return Path(folder) / f"{name}{SONG_SUFFIX}"
+
+    def _editor_has_content(self):
+        model = getattr(getattr(self, "arranger", None), "model", None)
+        return bool(model is not None and (model.notes or model.clips))
+
+    def _capture_song(self, song_path):
+        data = self.project_manager.current_project_data
+        data.setdefault("name", Path(song_path).stem)
+        arranger = getattr(self, "arranger", None)
+        if arranger is not None and hasattr(arranger, "to_project_dict"):
+            data["editor"] = arranger.to_project_dict()
+        session = getattr(self, "current_session", None)
+        folder = str(getattr(session, "output_dir", "") or "")
+        data["session_dir"] = (
+            os.path.relpath(folder, Path(song_path).parent) if folder else ""
+        )
+
+    def _apply_song(self, data, song_path):
+        from korshmer.audio_processing.stem_session import StemSession
+
+        folder = Path(song_path).parent
+        session_dir = folder / str((data or {}).get("session_dir") or "")
+        self.current_session = (
+            StemSession.find(session_dir)
+            if self.project_manager.is_path_within_saved_data(session_dir)
+            else None
+        )
+        editor = (data or {}).get("editor")
+        arranger = getattr(self, "arranger", None)
+        if arranger is None or not isinstance(editor, dict):
+            return False
+        arranger.load_project_dict(with_found_clips(editor, folder))
+        if hasattr(self, "_show_editor_tab"):
+            self._show_editor_tab()
+        return True
+
     def new_project_action(self):
-        name, ok = get_limited_text(self, "New Project", "Project Name:")
+        name, ok = get_limited_text(self, "New Song", "Song name:")
         if ok and name:
-            if not is_valid_new_name(name):
+            if self.project_manager.song_path_for(name) is None:
                 QMessageBox.warning(
-                    self, "Invalid Project Name", INVALID_NAME_MESSAGE
+                    self, "Invalid Song Name", INVALID_NAME_MESSAGE
                 )
                 return
+            if self._editor_has_content():
+                answer = QMessageBox.question(
+                    self,
+                    "New Song",
+                    NEW_SONG_QUESTION,
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if answer != QMessageBox.Yes:
+                    return
             templates = self.project_manager.list_templates()
             template = None
             if templates:
@@ -41,95 +143,109 @@ class ProjectManagementActionsMixin:
                 if not ok:
                     return
 
-            project = self.project_manager.create_project(name, template)
+            project = self.project_manager.start_song(name, template)
             if project is None:
                 QMessageBox.warning(
-                    self, "Invalid Project Name", INVALID_NAME_MESSAGE
+                    self, "Invalid Song Name", INVALID_NAME_MESSAGE
                 )
                 return
-            publish(Event.STATUS_UPDATE, text=f"Created new project: {name}")
+            self.current_session = None
+            arranger = getattr(self, "arranger", None)
+            if arranger is not None and hasattr(arranger, "clear_editor"):
+                arranger.clear_editor()
+            publish(
+                Event.STATUS_UPDATE,
+                text=f"New song: {name}. It is kept in the folder {name}.",
+            )
+
+    def _save_song_to(self, song_path):
+        song_path = Path(song_path).with_suffix(SONG_SUFFIX)
+        if not self.project_manager.is_path_within_saved_data(song_path):
+            QMessageBox.warning(self, "Safety Error", SAVED_DATA_ONLY_MESSAGE)
+            return False
+        self._capture_song(song_path)
+        if not self.project_manager.save_project(song_path):
+            QMessageBox.warning(self, "Save Failed", "Failed to save project")
+            return False
+        publish(
+            Event.STATUS_UPDATE,
+            text=f"Song saved: {song_path.name} in {song_path.parent.name}",
+        )
+        if hasattr(self, "refresh_lists"):
+            self.refresh_lists()
+        return True
 
     def save_project_action(self):
-        if self.project_manager.current_project_path:
-            if not self.project_manager.is_path_within_saved_data(
-                self.project_manager.current_project_path
-            ):
-                QMessageBox.warning(
-                    self, "Safety Error", SAVED_DATA_ONLY_MESSAGE
-                )
-                return
-            success = self.project_manager.save_project()
-            if success:
-                publish(Event.STATUS_UPDATE, text="Project saved successfully")
-            else:
-                QMessageBox.warning(
-                    self, "Save Failed", "Failed to save project"
-                )
-        else:
-            self.save_project_as_action()
+        song_path = (
+            self.project_manager.current_project_path or self._song_home()
+        )
+        if song_path is None:
+            return self.save_project_as_action()
+        return self._save_song_to(song_path)
 
     def save_project_as_action(self):
-        name = self.project_manager.current_project_data.get("name", "Untitled")
-        default_path = self.project_manager.projects_dir / f"{name}.kproj"
+        default_path = self._song_home()
+        if default_path is None:
+            name = self.project_manager.current_project_data.get(
+                "name", "Untitled"
+            )
+            default_path = (
+                self.project_manager.song_path_for(name)
+                or self.project_manager.saved_data_dir / f"{name}{SONG_SUFFIX}"
+            )
 
         save_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Project As",
             str(default_path),
-            "KORSHMER Project (*.kproj)",
+            SONG_FILTER,
         )
 
-        if save_path:
-            if not self.project_manager.is_path_within_saved_data(
-                Path(save_path).with_suffix(".kproj")
-            ):
-                QMessageBox.warning(
-                    self, "Safety Error", SAVED_DATA_ONLY_MESSAGE
-                )
-                return
-            success = self.project_manager.save_project(Path(save_path))
-            if success:
-                publish(
-                    Event.STATUS_UPDATE,
-                    text=f"Project saved: {Path(save_path).name}",
-                )
-            else:
-                QMessageBox.warning(
-                    self, "Save Failed", "Failed to save project"
-                )
+        if not save_path:
+            return False
+        return self._save_song_to(save_path)
+
+    def open_song_file(self, song_path):
+        song_path = Path(song_path)
+        project_data = self.project_manager.load_project_with_fallback(
+            song_path
+        )
+        if not project_data:
+            QMessageBox.warning(self, "Load Failed", "Failed to load project")
+            return False
+        backup = self.project_manager.last_load_backup
+        if backup is not None:
+            text = (
+                f"Loaded backup {backup.name} "
+                f"(original {song_path.name} failed to load)"
+            )
+        elif self._apply_song(project_data, song_path):
+            text = f"Opened song: {song_path.stem}"
+        else:
+            text = f"Loaded project: {song_path.name}"
+        publish(Event.STATUS_UPDATE, text=text)
+        return True
 
     def load_project_action(self):
         project_path, _ = QFileDialog.getOpenFileName(
             self,
             "Load Project",
-            str(self.project_manager.projects_dir),
+            str(self.project_manager.saved_data_dir),
             "KORSHMER Project (*.kproj *.json)",
         )
 
         if project_path:
-            project_data = self.project_manager.load_project_with_fallback(
-                Path(project_path)
-            )
-            if project_data:
-                backup = self.project_manager.last_load_backup
-                if backup is not None:
-                    text = (
-                        f"Loaded backup {backup.name} "
-                        f"(original {Path(project_path).name} failed to load)"
-                    )
-                else:
-                    text = f"Loaded project: {Path(project_path).name}"
-                publish(Event.STATUS_UPDATE, text=text)
-            else:
-                QMessageBox.warning(
-                    self, "Load Failed", "Failed to load project"
-                )
+            self.open_song_file(project_path)
 
     def create_snapshot_action(self):
+        if not self.project_manager.current_project_path:
+            if not self.save_project_action():
+                return
         description, ok = get_limited_text(
             self, "Save a Version", "What changed? (optional):"
         )
         if ok:
+            self._capture_song(self.project_manager.current_project_path)
             success = self.project_manager.create_snapshot(description)
             if success:
                 publish(Event.STATUS_UPDATE, text="Version saved")
@@ -230,7 +346,10 @@ class ProjectManagementActionsMixin:
         QMessageBox.information(self, "Asset Manager", msg)
 
     def restore_snapshot_action(self):
-        snapshots = self.project_manager.list_snapshots()
+        song_path = self.project_manager.current_project_path
+        snapshots = self.project_manager.list_snapshots(
+            Path(song_path).stem if song_path else None
+        )
         if not snapshots:
             QMessageBox.information(
                 self,
@@ -251,8 +370,14 @@ class ProjectManagementActionsMixin:
 
         if ok and snapshot_name:
             snapshot_path = self.project_manager.snapshots_dir / snapshot_name
+            song_path = self.project_manager.current_project_path
             success = self.project_manager.restore_snapshot(snapshot_path)
             if success:
+                self.project_manager.current_project_path = song_path
+                if song_path is not None:
+                    self._apply_song(
+                        self.project_manager.current_project_data, song_path
+                    )
                 publish(
                     Event.STATUS_UPDATE,
                     text=f"Went back to version: {snapshot_name}",

@@ -67,14 +67,15 @@ def test_mode_labels_and_current_mode():
     assert card.current_mode().label == "Alpha"
 
 
-def test_a_single_mode_hides_the_combo_box():
+def test_a_single_mode_hides_the_mode_buttons():
     card, *_ = _card([], single=True)
-    assert card.combo_mode.isHidden()
+    assert card.mode_bar.isHidden()
 
 
-def test_several_modes_show_the_combo_box():
+def test_several_modes_show_a_button_for_each_mode():
     card, *_ = _card([])
-    assert not card.combo_mode.isHidden()
+    assert not card.mode_bar.isHidden()
+    assert card.mode_bar.labels() == ["Alpha", "Beta", "Gamma"]
 
 
 def test_a_card_needs_modes_with_unique_labels():

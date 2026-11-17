@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 
 from korshmer.ui.widgets.material.button import HelpButton, MaterialButton
 from korshmer.ui.widgets.material.card import MaterialCard
+from korshmer.ui.widgets.material.choice import ChoiceBar
 
 HIGHLIGHT_MS = 1500
 HIGHLIGHT_STYLE = "color: #1A73E8; font-size: 15px;"
@@ -55,11 +56,13 @@ class ModeToolCard(MaterialCard):
         self.help_button = HelpButton(help_text)
         header.addWidget(self.help_button, alignment=Qt.AlignLeft)
         header.addStretch()
-        self.combo_mode = QComboBox()
-        self.combo_mode.addItems(labels)
-        self.combo_mode.setVisible(len(modes) > 1)
-        header.addWidget(self.combo_mode, 1)
         layout.addLayout(header)
+        self.combo_mode = QComboBox(self)
+        self.combo_mode.addItems(labels)
+        self.combo_mode.hide()
+        self.mode_bar = ChoiceBar(self.combo_mode)
+        self.mode_bar.setVisible(len(modes) > 1)
+        layout.addWidget(self.mode_bar)
 
         self._params = QWidget()
         self._params_layout = QHBoxLayout(self._params)

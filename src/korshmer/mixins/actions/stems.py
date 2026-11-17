@@ -5,6 +5,10 @@ import os
 from PySide6.QtWidgets import QMessageBox
 
 from korshmer.event_bus import Event, publish
+from korshmer.mixins.actions.project_management import (
+    SAVED_EDITS_QUESTION,
+    saved_song_in,
+)
 from korshmer.utils.filesystem import is_safe_path
 from korshmer.utils.tempo import BPM_DECIMALS, validate_bpm
 
@@ -269,4 +273,14 @@ class StemsActionsMixin:
                 text="No stems session found in this folder.",
             )
             return False
+        saved = saved_song_in(session.output_dir)
+        if saved is not None and hasattr(self, "open_song_file"):
+            answer = QMessageBox.question(
+                self,
+                "Open Song",
+                SAVED_EDITS_QUESTION,
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer == QMessageBox.Yes:
+                return self.open_song_file(saved)
         return self.load_session_into_editor(session)

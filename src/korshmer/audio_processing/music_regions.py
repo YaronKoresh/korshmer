@@ -69,6 +69,7 @@ BREAK_REFERENCE_S = 5.0
 BREAK_CONTRAST_DB = 3.0
 BREAK_GUARD_S = 0.1
 FAINT_PIECE_DB = 20.0
+SONG_VOICE_DB = 4.5
 
 MAJOR_PROFILE = np.array(
     [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
@@ -697,6 +698,27 @@ def _merge_piece_gaps(regions, times, scores, chroma, options):
     return merged
 
 
+def _window_levels(analysis, begin, end):
+    inside = (analysis.times >= begin) & (analysis.times <= end)
+    return analysis.level[inside]
+
+
+def _join_song_voices(analysis, pieces):
+    if len(pieces) < 2:
+        return pieces
+    song = np.median(
+        np.concatenate([_window_levels(analysis, *piece) for piece in pieces])
+    )
+    joined = [pieces[0]]
+    for piece in pieces[1:]:
+        spoken = _window_levels(analysis, joined[-1][1], piece[0])
+        if len(spoken) and np.median(spoken) >= song - SONG_VOICE_DB:
+            joined[-1] = (joined[-1][0], piece[1])
+        else:
+            joined.append(piece)
+    return joined
+
+
 def _spoken_breaks(analysis, smooth, region, options):
     times, scores = analysis.times, analysis.scores
     low = np.flatnonzero(
@@ -805,6 +827,7 @@ def _cut_spoken_breaks(regions, analysis, options):
             kept.append(region)
             continue
         pieces = _loud_pieces(analysis, region, breaks, options)
+        pieces = _join_song_voices(analysis, pieces)
         floor = region[0]
         for index, (begin, end) in enumerate(pieces):
             last = index + 1 == len(pieces)

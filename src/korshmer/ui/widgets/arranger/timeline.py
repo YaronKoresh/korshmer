@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -39,6 +38,7 @@ from korshmer.ui.viewmodels.editor_vm import (
 )
 from korshmer.ui.widgets.arranger.track_panel import TrackPanel
 from korshmer.ui.widgets.material import MAT_ERROR, MAT_PRIMARY, MAT_TEXT
+from korshmer.ui.widgets.material.adaptive import FlowLayout
 from korshmer.ui.widgets.material.button import (
     MaterialButton,
     MaterialToggleButton,
@@ -56,6 +56,7 @@ from korshmer.utils.tempo import midi_file_tempo, validate_bpm
 
 DEFAULT_GRID_LABEL = "1/16"
 ZOOM_STEP = 1.25
+TOOLBAR_SPACING = 6
 EVEN_BPM_HELP = (
     "Even BPM: when a song changes tempo, move every note and audio clip "
     "onto one average tempo so the whole song sits on a single grid. "
@@ -352,8 +353,8 @@ class ArrangerTimeline(QWidget):
         self._update_history_buttons()
 
     def _build_transport_toolbar(self, layout):
-        toolbar = QHBoxLayout()
-        actions = QHBoxLayout()
+        toolbar = FlowLayout(spacing=TOOLBAR_SPACING)
+        actions = FlowLayout(spacing=TOOLBAR_SPACING)
 
         self.btn_rec = QPushButton("● REC")
         self.btn_rec.setCheckable(True)
@@ -438,7 +439,6 @@ class ArrangerTimeline(QWidget):
         toolbar.addWidget(self.btn_loop_clear)
         self.live_waveform = LiveWaveformStrip()
         toolbar.addWidget(self.live_waveform)
-        toolbar.addStretch()
         for button in (
             self.btn_clear,
             self.btn_merge,
@@ -455,12 +455,11 @@ class ArrangerTimeline(QWidget):
             *(actions.itemAt(i).widget() for i in range(actions.count())),
         ):
             button.setMinimumWidth(button.sizeHint().width())
-        actions.addStretch()
         layout.addLayout(toolbar)
         layout.addLayout(actions)
 
     def _build_edit_toolbar(self, layout):
-        toolbar = QHBoxLayout()
+        toolbar = FlowLayout(spacing=TOOLBAR_SPACING)
 
         self.btn_undo = MaterialButton("↶ Undo", "default")
         self.btn_undo.setToolTip("Undo (Ctrl+Z)")
@@ -470,6 +469,7 @@ class ArrangerTimeline(QWidget):
         self.btn_redo.clicked.connect(self.redo)
         for button in (self.btn_undo, self.btn_redo):
             button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            button.setMinimumWidth(button.sizeHint().width())
 
         self.btn_snap = MaterialToggleButton("Snap", MAT_PRIMARY)
         self.btn_snap.setFixedSize(60, 30)
@@ -487,6 +487,7 @@ class ArrangerTimeline(QWidget):
 
         lbl_grid = QLabel("Grid")
         lbl_grid.setStyleSheet(f"color: {MAT_TEXT};")
+        lbl_grid.setFixedHeight(30)
         self.combo_grid = QComboBox()
         self.combo_grid.addItems(list(GRID_RESOLUTIONS.keys()))
         self.combo_grid.setCurrentText(DEFAULT_GRID_LABEL)
@@ -509,15 +510,12 @@ class ArrangerTimeline(QWidget):
 
         toolbar.addWidget(self.btn_undo)
         toolbar.addWidget(self.btn_redo)
-        toolbar.addSpacing(12)
         toolbar.addWidget(self.btn_snap)
         toolbar.addWidget(self.btn_even_bpm)
         toolbar.addWidget(lbl_grid)
         toolbar.addWidget(self.combo_grid)
-        toolbar.addSpacing(12)
         toolbar.addWidget(self.btn_zoom_out)
         toolbar.addWidget(self.btn_zoom_in)
-        toolbar.addStretch()
         layout.addLayout(toolbar)
 
     def eventFilter(self, obj, event):

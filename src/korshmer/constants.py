@@ -343,7 +343,7 @@ HELP_TEXTS = {
     "mirror": "Inverts pitches around a center axis.",
     "mono_mix": "Mixes stereo audio to mono.",
     "mono": "Forces polyphonic track to monophonic melody.",
-    "music_only": "Detects speech, jingles and effects (for example a music-video intro or a spoken break) and cuts them out before separation, so they never become MIDI notes and leave no gap: the music after a cut moves earlier, kept in step with the beat. The stems, the MIDI and the A/B source copy all use the shortened timeline.",
+    "music_only": "Detects speech, jingles and effects (for example a music-video intro or a spoken break) and cuts them out before separation, so they never become MIDI notes and leave no gap: the music after a cut moves earlier, kept in step with the beat. Rap, speech and talking stay in when music or a beat plays under them, or when the voice is mixed as loud as the song itself. The stems, the MIDI and the A/B source copy all use the shortened timeline.",
     "nogap": "Removes empty bars (silence) from MIDI.",
     "norm": "Maximizes audio volume to 0dB.",
     "octave": "Global pitch transposition by full octaves.",

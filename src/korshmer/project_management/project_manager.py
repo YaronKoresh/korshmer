@@ -43,6 +43,22 @@ from korshmer.project_management.validators.project_validator import (
 )
 from korshmer.utils.filesystem import is_safe_path
 
+SONG_SUFFIX = ".kproj"
+RESERVED_FOLDERS = frozenset(
+    {
+        "analytics",
+        "assets",
+        "backups",
+        "exports",
+        "imports",
+        "logs",
+        "plugins",
+        "projects",
+        "snapshots",
+        "templates",
+    }
+)
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -166,17 +182,7 @@ class ProjectManager:
             logging.error(f"Rejected unsafe template name: {template_name!r}")
         return template_path
 
-    @_write_locked
-    def create_project(
-        self, name: str, template: str | None = None
-    ) -> dict[str, Any] | None:
-        if not is_valid_new_name(name):
-            logging.error(f"Rejected invalid project name: {name!r}")
-            return None
-        project_dir = self._project_dir_for(name)
-        if project_dir is None:
-            return None
-
+    def _blank_project(self, name, template=None) -> dict[str, Any]:
         project_data = {
             "name": name,
             "version": __version__,
@@ -203,7 +209,20 @@ class ProjectManager:
                 project_data.update(template_data)
                 project_data["name"] = name
                 project_data["created"] = datetime.now().isoformat()
+        return project_data
 
+    @_write_locked
+    def create_project(
+        self, name: str, template: str | None = None
+    ) -> dict[str, Any] | None:
+        if not is_valid_new_name(name):
+            logging.error(f"Rejected invalid project name: {name!r}")
+            return None
+        project_dir = self._project_dir_for(name)
+        if project_dir is None:
+            return None
+
+        project_data = self._blank_project(name, template)
         self.current_project_data = project_data
 
         try:
@@ -211,6 +230,32 @@ class ProjectManager:
         except OSError as e:
             logging.error(f"Failed to create project directory: {e}")
             return None
+        return project_data
+
+    def song_path_for(self, name) -> Path | None:
+        if not is_valid_new_name(name) or name.lower() in RESERVED_FOLDERS:
+            return None
+        folder = resolve_inside(self.saved_data_dir, self.saved_data_dir / name)
+        if folder is None or folder == self.saved_data_dir.resolve():
+            return None
+        return folder / f"{name}{SONG_SUFFIX}"
+
+    @_write_locked
+    def start_song(
+        self, name: str, template: str | None = None
+    ) -> dict[str, Any] | None:
+        song_path = self.song_path_for(name)
+        if song_path is None:
+            logging.error(f"Rejected invalid song name: {name!r}")
+            return None
+        project_data = self._blank_project(name, template)
+        try:
+            song_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logging.error(f"Failed to create song folder: {e}")
+            return None
+        self.current_project_data = project_data
+        self.current_project_path = song_path
         return project_data
 
     @_write_locked

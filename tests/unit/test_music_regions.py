@@ -710,3 +710,37 @@ def test_the_break_minimum_option_controls_break_cutting():
     assert whole.is_identity()
     with pytest.raises(ValueError, match="Break minimum"):
         MusicRegionOptions(break_min_s=-1)
+
+
+def _rms(audio):
+    return float(np.sqrt(np.mean(np.square(audio))))
+
+
+def _music_with_a_voice_break(level_db):
+    before, after = music_body(BREAK_AT_S), music_body(24.0, seed=4)
+    voice = speech_like(BREAK_S, 9)
+    voice = voice * (_rms(before) / _rms(voice)) * 10 ** (level_db / 20)
+    return np.concatenate([before, voice, after]).astype(np.float32)
+
+
+def test_a_spoken_part_mixed_as_loud_as_the_song_is_kept():
+    found = find_music_regions(_music_with_a_voice_break(0.0), SR)
+    assert not found.applied
+    assert found.is_identity()
+
+
+def test_a_spoken_part_far_quieter_than_the_song_is_still_cut():
+    found = find_music_regions(_music_with_a_voice_break(-12.0), SR)
+    assert found.applied
+    assert len(found.regions) == 2
+    assert not found.contains(BREAK_AT_S + BREAK_S / 2)
+
+
+def test_a_loud_spoken_intro_before_the_song_is_still_cut():
+    talk = speech_like(9.0, 1)
+    body = music_body(30.0)
+    talk = talk * (_rms(body) / _rms(talk))
+    found = find_music_regions(np.concatenate([talk, body]), SR)
+    assert found.applied
+    assert len(found.regions) == 1
+    assert abs(found.regions[0][0] - 9.0) <= EDGE_TOLERANCE_S
