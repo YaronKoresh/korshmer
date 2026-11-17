@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from korshmer import __version__
 from korshmer.event_bus import Event, publish
+from korshmer.project_management.project_backup import snapshot_choices
 from korshmer.project_management.project_manager import (
     SONG_SUFFIX,
     is_valid_new_name,
@@ -358,18 +359,18 @@ class ProjectManagementActionsMixin:
             )
             return
 
-        snapshot_names = [s.name for s in snapshots]
+        choices = snapshot_choices(snapshots)
         snapshot_name, ok = QInputDialog.getItem(
             self,
             "Versions",
             "Go back to this version:",
-            snapshot_names,
+            list(choices),
             0,
             False,
         )
 
-        if ok and snapshot_name:
-            snapshot_path = self.project_manager.snapshots_dir / snapshot_name
+        if ok and snapshot_name in choices:
+            snapshot_path = choices[snapshot_name]
             song_path = self.project_manager.current_project_path
             success = self.project_manager.restore_snapshot(snapshot_path)
             if success:

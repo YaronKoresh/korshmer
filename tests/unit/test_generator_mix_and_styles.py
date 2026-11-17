@@ -152,8 +152,9 @@ def test_a_layer_follows_the_loudness_of_the_song_below():
 
 def test_song_gains_are_relative_and_bounded():
     gains = song_bar_gains(_song(bars=8, quiet=20, loud=120), BAR, 10)
-    assert gains[:4] == [0.7] * 4
-    assert all(1.0 <= g <= 1.3 for g in gains[4:8])
+    low, high = composer.SONG_GAIN_RANGE
+    assert gains[:4] == [low] * 4
+    assert all(1.0 <= g <= high for g in gains[4:8])
     assert gains[8:] == [composer.SONG_QUIET_GAIN] * 2
     empty = pretty_midi.PrettyMIDI()
     assert song_bar_gains(empty, BAR, 3) == [1.0, 1.0, 1.0]

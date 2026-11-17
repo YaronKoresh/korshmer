@@ -1,6 +1,7 @@
 import os
 import struct
 import sys
+import time
 from unittest import mock
 
 import numpy as np
@@ -420,3 +421,48 @@ def test_each_instrument_range_is_read_from_the_soundfont(tmp_path):
     assert playable_range(6, path=font) == FULL_RANGE
     assert playable_range(5, path=tmp_path / "missing.sf2") == FULL_RANGE
     assert range_text((40, 96)) == "E2 to C7"
+
+
+def test_versions_are_listed_by_what_changed_not_by_file_name(tmp_path):
+    studio = _Studio(tmp_path)
+    studio.current_session = _converted_song(tmp_path)
+    _write_two_notes(studio)
+    studio.save_project_action()
+    for words in ("Louder chorus drums", "", "Louder chorus drums"):
+        with mock.patch.object(
+            song_actions, "get_limited_text", return_value=(words, True)
+        ):
+            studio.create_snapshot_action()
+        time.sleep(1.1)
+    with mock.patch.object(
+        song_actions.QInputDialog, "getItem", return_value=("", False)
+    ) as dialog:
+        studio.restore_snapshot_action()
+    shown = dialog.call_args.args[3]
+    assert len(shown) == len(set(shown)) == 3
+    assert (
+        sum(label.startswith("Louder chorus drums — ") for label in shown) == 2
+    )
+    assert sum(label.startswith("Version saved — ") for label in shown) == 1
+    assert not any(
+        ".kproj" in label or "_snapshot_" in label for label in shown
+    )
+
+
+def test_choosing_a_version_by_its_description_restores_it(tmp_path):
+    studio = _Studio(tmp_path)
+    studio.current_session = _converted_song(tmp_path)
+    _write_two_notes(studio)
+    studio.save_project_action()
+    with mock.patch.object(
+        song_actions, "get_limited_text", return_value=("Two notes", True)
+    ):
+        studio.create_snapshot_action()
+    studio.arranger.clear_editor()
+
+    def pick(_parent, _title, _label, items, *_rest):
+        return items[0], True
+
+    with mock.patch.object(song_actions.QInputDialog, "getItem", pick):
+        studio.restore_snapshot_action()
+    assert len(studio.arranger.model.notes) == 2

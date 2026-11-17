@@ -105,9 +105,21 @@ RHYTHM_ROLES = ("drums", "bass")
 LEAD_ROLES = ("melody", "counter")
 RHYTHM_LEAD = 6
 MAX_VELOCITY = 127
-SONG_GAIN_RANGE = (0.7, 1.3)
-SONG_QUIET_GAIN = 0.85
+MAX_PITCH = 127
+SONG_GAIN_RANGE = (0.8, 1.25)
+AUDIBLE_VELOCITY = 24
+SONG_GAIN_DEADBAND = 0.15
+SONG_QUIET_GAIN = 1.0
 LAYER_ENERGY_FLOOR = 0.35
+PHRASE_BARS = 4
+PHRASE_TURNS = (0, 1, 0, 2)
+PHRASE_RESTS = {"arp": 1, "pluck": 2}
+PICKUP_LENGTH = 0.125
+PICKUP_GAP = 0.03125
+PICKUP_TOP = 55
+PICKUP_SOFTER = 8
+PATTERN_ATTEMPTS = 8
+LAYER_FILLS = ("snare", "toms", "hats", "roll")
 DEFAULT_STRUCTURE = "Verse / Chorus"
 STYLE_STRUCTURES = {
     "EDM": "Build & Drop",
@@ -297,7 +309,21 @@ def _scale_velocity(note, gain):
     note.velocity = int(max(1, min(MAX_VELOCITY, round(note.velocity * gain))))
 
 
-def song_bar_gains(existing, bar, total_bars):
+def keep_audible(voices):
+    for _role, inst in voices:
+        for note in inst.notes:
+            note.velocity = max(AUDIBLE_VELOCITY, note.velocity)
+
+
+def _steady_gain(ratio):
+    low, high = SONG_GAIN_RANGE
+    if abs(ratio - 1.0) <= SONG_GAIN_DEADBAND:
+        return 1.0
+    edge = 1.0 + math.copysign(SONG_GAIN_DEADBAND, ratio - 1.0)
+    return min(high, max(low, ratio / edge))
+
+
+def song_bar_gains(existing, bar, total_bars, sections=()):
     sums = [0.0] * total_bars
     counts = [0] * total_bars
     for inst in existing.instruments:
@@ -310,11 +336,17 @@ def song_bar_gains(existing, bar, total_bars):
     if not heard:
         return [1.0] * total_bars
     middle = heard[len(heard) // 2]
-    low, high = SONG_GAIN_RANGE
-    return [
-        min(high, max(low, (s / c) / middle)) if c else SONG_QUIET_GAIN
-        for s, c in zip(sums, counts, strict=True)
+    spans = [(s.start_bar, s.start_bar + s.bars) for s in sections] or [
+        (index, index + 1) for index in range(total_bars)
     ]
+    gains = [SONG_QUIET_GAIN] * total_bars
+    for first, last in spans:
+        last = min(last, total_bars)
+        count = sum(counts[first:last])
+        if count:
+            level = sum(sums[first:last]) / count
+            gains[first:last] = [_steady_gain(level / middle)] * (last - first)
+    return gains
 
 
 def follow_song_dynamics(voices, gains, bar):
@@ -719,11 +751,11 @@ def _lead_notes(existing):
     return max(leads, key=lambda i: len(i.notes)).notes
 
 
-def _section_drums(existing, layer_prog, bar, section):
+def _section_drums(existing, layer_prog, bar, first_bar, bars):
     if layer_prog is None or existing is None:
         return None
-    lo = section.start_bar * bar
-    hi = lo + section.bars * bar
+    lo = first_bar * bar
+    hi = lo + bars * bar
     hits = [
         n
         for inst in existing.instruments
@@ -736,6 +768,75 @@ def _section_drums(existing, layer_prog, bar, section):
     drums = pretty_midi.Instrument(program=0, is_drum=True)
     drums.notes = hits
     return drums
+
+
+def _phrases(bars, split):
+    if not split:
+        return [(0, bars)]
+    return [
+        (offset, min(PHRASE_BARS, bars - offset))
+        for offset in range(0, bars, PHRASE_BARS)
+    ]
+
+
+def _revoice(notes, turn):
+    chords = {}
+    for note in notes:
+        chords.setdefault(round(note.start, 4), []).append(note)
+    for chord in chords.values():
+        chord.sort(key=lambda n: n.pitch)
+        if len(chord) < 2:
+            continue
+        if turn == 1 and chord[0].pitch + 12 <= MAX_PITCH:
+            chord[0].pitch += 12
+        elif turn == 2 and chord[-1].pitch - 12 >= 0:
+            chord[-1].pitch -= 12
+
+
+def _bass_pickup(notes, end, bar):
+    if not notes:
+        return
+    start = end - bar * PICKUP_LENGTH
+    last = max(notes, key=lambda n: n.start)
+    for note in notes:
+        if note.start < start < note.end:
+            note.end = start
+    if last.start >= start:
+        return
+    pitch = last.pitch + 12 if last.pitch + 12 <= PICKUP_TOP else last.pitch
+    notes.append(
+        pretty_midi.Note(
+            max(AUDIBLE_VELOCITY, last.velocity - PICKUP_SOFTER),
+            pitch,
+            start,
+            end - bar * PICKUP_GAP,
+        )
+    )
+
+
+def vary_phrase(inst, role, turn, end, bar):
+    if not turn:
+        return
+    if role in ("chords", "pad"):
+        _revoice(inst.notes, turn)
+    elif role == "bass":
+        _bass_pickup(inst.notes, end, bar)
+
+
+def _turn(phrase_count, layering):
+    return PHRASE_TURNS[phrase_count % len(PHRASE_TURNS)] if layering else 0
+
+
+def _layer_pattern(rng, style, made, key):
+    if key not in made:
+        seen = [sorted(p.items()) for p in made.values()]
+        pattern = make_drum_pattern(rng, style)
+        for _attempt in range(PATTERN_ATTEMPTS):
+            if sorted(pattern.items()) not in seen:
+                break
+            pattern = make_drum_pattern(rng, style)
+        made[key] = pattern
+    return made[key]
 
 
 def _heard_energy(energy, first, bars, name):
@@ -794,7 +895,6 @@ def compose(options, existing=None):
             existing, bpm, root_idx, SCALES[harm_scale]
         )
         total_bars = analysis.bars
-        song_gains = song_bar_gains(existing, bar, total_bars)
         layer_prog = song_match.progression_for(analysis, options.match)
         song_has_drums = any(
             i.is_drum and i.notes for i in existing.instruments
@@ -812,6 +912,7 @@ def compose(options, existing=None):
             )
             for name, first, bars in analysis.sections
         ]
+        song_gains = song_bar_gains(existing, bar, total_bars, sections)
     else:
         structure = options.structure
         if structure == AUTO_STRUCTURE:
@@ -852,6 +953,8 @@ def compose(options, existing=None):
     bass_rhythm = {}
     used_bass = []
     used_hits = []
+    layer_patterns = {}
+    phrase_count = 0
     chord_hits = {}
     melody_seed = {}
     acts = {
@@ -947,12 +1050,6 @@ def compose(options, existing=None):
             bar_chords[section.start_bar + b] = {
                 p % 12 for p in ctx.triad(chord, 4)
             }
-        bass_rhythm.setdefault(
-            (kind, act, variant),
-            _fresh(rng, feel.bass, used_bass)
-            if layering
-            else rng.choice(feel.bass),
-        )
         riff = hook.notes if feel.riff and kind == "chorus" else None
         stab = feel.stab and kind == "chorus"
         hits_pool = (
@@ -960,118 +1057,170 @@ def compose(options, existing=None):
             if kind not in ("break", "intro")
             else _CHORD_HITS[kind]
         )
+        hits_variant = variant or occurrence % 2
+        opening = _turn(phrase_count, layering)
+        bass_rhythm.setdefault(
+            (kind, act, variant, opening),
+            _fresh(rng, feel.bass, used_bass)
+            if layering
+            else rng.choice(feel.bass),
+        )
         chord_hits.setdefault(
-            (kind, act, variant or occurrence % 2),
+            (kind, act, hits_variant, opening),
             _fresh(rng, hits_pool, used_hits)
             if layering
             else rng.choice(hits_pool),
         )
         melody_seed.setdefault((kind, act), rng.randrange(1 << 30))
         sect_seed = rng.randrange(1 << 30)
-        kw = {
-            "seed": sect_seed,
-            "bars": section.bars,
-            "start_bar": start_bar + section.start_bar,
-            "energy": section.energy,
-        }
-        for role in section.roles:
-            if role == "drums":
-                inst = engine.generate_drums(
-                    ctx,
-                    engine._STYLES[style][1],
-                    bars=section.bars,
-                    seed=sect_seed,
-                    energy=section.energy,
-                    start_bar=start_bar + section.start_bar,
-                    pattern=state["pattern"],
-                    fill_bars=state["fill"] if variant % 2 == 0 else 4,
-                    velocity_scale=feel.drum_vel,
-                    variation=ACT_DRUM_VARIATION if act or variant else 0.0,
-                    ghosts=feel.ghosts,
-                    fill=feel.fill,
-                    crash=feel.crash and kind == "chorus",
-                )
-            elif role == "bass":
-                inst = engine.generate_bass(
-                    ctx,
-                    style,
-                    _section_drums(existing, layer_prog, bar, section),
-                    rhythm=(
-                        "riff" if riff else bass_rhythm[(kind, act, variant)]
-                    ),
-                    riff=riff,
-                    **kw,
-                )
-            elif role == "chords":
-                inst = engine.generate_chords(
-                    ctx,
-                    style,
-                    hits=(
-                        hooks.stab_hits(hook)
-                        if stab
-                        else chord_hits[(kind, act, variant or occurrence % 2)]
-                    ),
-                    seventh=state["seventh"] and kind != "break",
-                    power=feel.power_chords,
-                    octave=ACT_CHORD_OCTAVES[
-                        (act + variant) % len(ACT_CHORD_OCTAVES)
-                    ],
-                    **kw,
-                )
-            elif role == "pad":
-                inst = engine.generate_pad(
-                    ctx,
-                    octave=ACT_PAD_OCTAVES[
-                        (act + variant) % len(ACT_PAD_OCTAVES)
-                    ],
-                    **kw,
-                )
-            elif role == "arp":
-                inst = engine.generate_arp(
-                    ctx,
-                    feel.arp_rates[(act + variant) % len(feel.arp_rates)],
-                    shape=ACT_ARP_SHAPES[(act + variant) % len(ACT_ARP_SHAPES)],
-                    **kw,
-                )
-                inst.program = 46
-            elif role == "pluck":
-                inst = engine.generate_arp(
-                    ctx,
-                    feel.arp_rates[(act + variant + 1) % len(feel.arp_rates)],
-                    shape=ACT_ARP_SHAPES[
-                        (act + variant + 1) % len(ACT_ARP_SHAPES)
-                    ],
-                    **kw,
-                )
-                inst.program = 80
-            elif role == "melody":
-                if lead_existing:
+        for index, (offset, length) in enumerate(
+            _phrases(section.bars, layering)
+        ):
+            turn = _turn(phrase_count, layering)
+            phrase_bar = section.start_bar + offset
+            bass_key = (kind, act, variant, turn)
+            if bass_key not in bass_rhythm:
+                bass_rhythm[bass_key] = _fresh(rng, feel.bass, used_bass)
+            hits_key = (kind, act, hits_variant, turn)
+            if hits_key not in chord_hits:
+                chord_hits[hits_key] = _fresh(rng, hits_pool, used_hits)
+            look = act + variant + turn
+            kw = {
+                "seed": sect_seed + index,
+                "bars": length,
+                "start_bar": start_bar + phrase_bar,
+                "energy": section.energy,
+            }
+            rested = layering and kind != "chorus"
+            for role in section.roles:
+                if rested and PHRASE_RESTS.get(role) == turn:
                     continue
-                if layer_lead:
-                    lo = section.start_bar * bar
-                    hi = lo + section.bars * bar
-                    heard = [n for n in layer_lead if lo <= n.start < hi]
-                    harmony = _harmonize(rng, heard, bar, bar_chords, scale_pcs)
-                    program = chapter.programs.get(role, role_programs[role])
-                    _voice(out, role, program).notes.extend(harmony)
+                if role == "drums":
+                    pattern = state["pattern"]
+                    fill_bars = state["fill"] if variant % 2 == 0 else 4
+                    fill = feel.fill
+                    if layering:
+                        pattern = _layer_pattern(
+                            rng, style, layer_patterns, (act, kind, turn)
+                        )
+                        fill_bars = length
+                        fill = LAYER_FILLS[phrase_count % len(LAYER_FILLS)]
+                    inst = engine.generate_drums(
+                        ctx,
+                        engine._STYLES[style][1],
+                        bars=length,
+                        seed=sect_seed + index,
+                        energy=section.energy,
+                        start_bar=start_bar + phrase_bar,
+                        pattern=pattern,
+                        fill_bars=fill_bars,
+                        velocity_scale=feel.drum_vel,
+                        variation=(
+                            ACT_DRUM_VARIATION
+                            if act or variant or layering
+                            else 0.0
+                        ),
+                        ghosts=feel.ghosts,
+                        fill=fill,
+                        crash=feel.crash and kind == "chorus" and not index,
+                    )
+                elif role == "bass":
+                    inst = engine.generate_bass(
+                        ctx,
+                        style,
+                        _section_drums(
+                            existing, layer_prog, bar, phrase_bar, length
+                        ),
+                        rhythm="riff" if riff else bass_rhythm[bass_key],
+                        riff=riff,
+                        **kw,
+                    )
+                elif role == "chords":
+                    inst = engine.generate_chords(
+                        ctx,
+                        style,
+                        hits=(
+                            hooks.stab_hits(hook)
+                            if stab
+                            else chord_hits[hits_key]
+                        ),
+                        seventh=state["seventh"] and kind != "break",
+                        power=feel.power_chords,
+                        octave=ACT_CHORD_OCTAVES[
+                            (act + variant) % len(ACT_CHORD_OCTAVES)
+                        ],
+                        **kw,
+                    )
+                elif role == "pad":
+                    inst = engine.generate_pad(
+                        ctx,
+                        octave=ACT_PAD_OCTAVES[
+                            (act + variant) % len(ACT_PAD_OCTAVES)
+                        ],
+                        **kw,
+                    )
+                elif role == "arp":
+                    inst = engine.generate_arp(
+                        ctx,
+                        feel.arp_rates[
+                            (act + variant + turn // 2) % len(feel.arp_rates)
+                        ],
+                        shape=ACT_ARP_SHAPES[look % len(ACT_ARP_SHAPES)],
+                        **kw,
+                    )
+                    inst.program = 46
+                elif role == "pluck":
+                    inst = engine.generate_arp(
+                        ctx,
+                        feel.arp_rates[
+                            (act + variant + 1 + turn // 2)
+                            % len(feel.arp_rates)
+                        ],
+                        shape=ACT_ARP_SHAPES[(look + 1) % len(ACT_ARP_SHAPES)],
+                        **kw,
+                    )
+                    inst.program = 80
+                elif role == "melody":
+                    if lead_existing or index:
+                        continue
+                    if layer_lead:
+                        lo = section.start_bar * bar
+                        hi = lo + section.bars * bar
+                        heard = [n for n in layer_lead if lo <= n.start < hi]
+                        harmony = _harmonize(
+                            rng, heard, bar, bar_chords, scale_pcs
+                        )
+                        program = chapter.programs.get(
+                            role, role_programs[role]
+                        )
+                        _voice(out, role, program).notes.extend(harmony)
+                        continue
+                    inst = engine.generate_melody(
+                        ctx,
+                        mood=state["mood"],
+                        lift=ARC_CLIMAX_LIFT if chapter.kind == "Climax" else 0,
+                        hook=hook,
+                        kind="chorus" if section.name == "Loop" else kind,
+                        final=closing,
+                        **{**kw, "seed": melody_seed[(kind, act)]},
+                    )
+                else:
                     continue
-                inst = engine.generate_melody(
-                    ctx,
-                    mood=state["mood"],
-                    lift=ARC_CLIMAX_LIFT if chapter.kind == "Climax" else 0,
-                    hook=hook,
-                    kind="chorus" if section.name == "Loop" else kind,
-                    final=closing,
-                    **{**kw, "seed": melody_seed[(kind, act)]},
+                if layering:
+                    vary_phrase(
+                        inst,
+                        role,
+                        turn,
+                        (start_bar + phrase_bar + length) * bar,
+                        bar,
+                    )
+                program = (
+                    chapter.kit
+                    if role == "drums"
+                    else chapter.programs.get(role, role_programs[role])
                 )
-            else:
-                continue
-            program = (
-                chapter.kit
-                if role == "drums"
-                else chapter.programs.get(role, role_programs[role])
-            )
-            _voice(out, role, program).notes.extend(inst.notes)
+                _voice(out, role, program).notes.extend(inst.notes)
+            phrase_count += 1
         if "counter" in section.roles and "melody" in out:
             seg = pretty_midi.Instrument(program=0)
             lo = (start_bar + section.start_bar) * bar
@@ -1151,6 +1300,7 @@ def compose(options, existing=None):
     if song_gains is not None:
         match_song_level(voices, existing)
         follow_song_dynamics(voices, song_gains, bar)
+        keep_audible(voices)
     lift_rhythm_section(voices, layer_lead)
     instruments = [inst for _role, inst in voices if inst.notes]
     if texture_on:
