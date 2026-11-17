@@ -63,6 +63,7 @@ EVEN_BPM_HELP = (
     "follows them."
 )
 ALIGNED_CLIPS_DIR = "tempo_aligned"
+STEMS_FOLDER = "Stems"
 SNAP_HELP = (
     "Snaps note edits to the current grid. Hold Alt while dragging to bypass."
 )
@@ -632,13 +633,27 @@ class ArrangerTimeline(QWidget):
     def _aligned_clip(self, clip, tempo_map, bpm):
         from korshmer.audio_processing.tempo_align import align_clip_to_tempo
 
+        folder = os.path.dirname(os.path.abspath(clip.path))
+        if os.path.basename(folder) != STEMS_FOLDER:
+            folder = os.path.join(str(DATA_DIR), ALIGNED_CLIPS_DIR)
         return align_clip_to_tempo(
-            clip.path,
-            clip.start,
-            tempo_map,
-            bpm,
+            clip.path, clip.start, tempo_map, bpm, folder
+        )
+
+    def aligned_song_audio(self, path):
+        state = self.model.normalized
+        if state is None:
+            return path
+        from korshmer.audio_processing.tempo_align import align_clip_to_tempo
+
+        aligned, _duration = align_clip_to_tempo(
+            path,
+            0.0,
+            state["map"],
+            state["bpm"],
             os.path.join(str(DATA_DIR), ALIGNED_CLIPS_DIR),
         )
+        return aligned
 
     def _after_tempo_switch(self):
         self.piano_roll.tempo = self.model.tempo

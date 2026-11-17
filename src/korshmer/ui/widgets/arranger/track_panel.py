@@ -9,12 +9,13 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from korshmer.constants import HELP_TEXTS
-from korshmer.ui.viewmodels.editor_vm import MAX_CLIP_GAIN
+from korshmer.ui.viewmodels.editor_vm import MAX_CLIP_GAIN, MAX_TRACK_GAIN
 from korshmer.ui.widgets.material import (
     MAT_ERROR,
     MAT_PRIMARY,
@@ -60,6 +61,27 @@ def make_small_button(text, tooltip):
     button.setToolTip(tooltip)
     button.setCursor(Qt.PointingHandCursor)
     return button
+
+
+LEVEL_STEP = 5
+LEVEL_BOX_WIDTH = 64
+LEVEL_HELP = (
+    "Level in percent. Type a number and press Enter, or use the Up and "
+    "Down arrow keys to move in steps of 5."
+)
+
+
+def make_level_box(percent, maximum, on_change):
+    box = QSpinBox()
+    box.setRange(0, int(maximum))
+    box.setSingleStep(LEVEL_STEP)
+    box.setSuffix("%")
+    box.setValue(int(round(percent)))
+    box.setFixedWidth(LEVEL_BOX_WIDTH)
+    box.setKeyboardTracking(False)
+    box.setToolTip(LEVEL_HELP)
+    box.valueChanged.connect(on_change)
+    return box
 
 
 class TrackRow(QFrame):
@@ -132,9 +154,18 @@ class TrackRow(QFrame):
             lambda: self.panel.delete_track(self.track_id)
         )
 
+        self.level_box = make_level_box(
+            track.gain * 100,
+            MAX_TRACK_GAIN * 100,
+            lambda value: self.panel.set_track_gain(
+                self.track_id, value / 100.0
+            ),
+        )
+
         layout.addWidget(self.swatch)
         layout.addWidget(self.name_edit, 1)
         layout.addWidget(self.instrument_combo)
+        layout.addWidget(self.level_box)
         layout.addWidget(self.btn_mute)
         layout.addWidget(self.btn_solo)
         layout.addWidget(self.btn_visible)
@@ -200,6 +231,11 @@ class ClipRow(QFrame):
         self.gain_slider.setFixedWidth(80)
         self.gain_slider.setToolTip(f"Clip gain {self.gain_slider.value()}%")
         self.gain_slider.valueChanged.connect(self._gain_changed)
+        self.level_box = make_level_box(
+            self.gain_slider.value(),
+            MAX_CLIP_GAIN * 100,
+            self.gain_slider.setValue,
+        )
 
         self.btn_remove = make_small_button("✕", "Remove clip")
         self.btn_remove.clicked.connect(
@@ -211,10 +247,14 @@ class ClipRow(QFrame):
         layout.addWidget(self.btn_mute)
         layout.addWidget(self.btn_solo)
         layout.addWidget(self.gain_slider)
+        layout.addWidget(self.level_box)
         layout.addWidget(self.btn_remove)
 
     def _gain_changed(self, value):
         self.gain_slider.setToolTip(f"Clip gain {value}%")
+        self.level_box.blockSignals(True)
+        self.level_box.setValue(value)
+        self.level_box.blockSignals(False)
         self.panel.set_clip_gain(self.clip_id, value / 100.0)
 
 
@@ -287,6 +327,7 @@ class TrackPanel(QWidget):
                 t.muted,
                 t.solo,
                 t.visible,
+                round(t.gain, 3),
             )
             for t in self.model.tracks.values()
         )
@@ -435,6 +476,11 @@ class TrackPanel(QWidget):
         if track_id in self.model.tracks:
             self.set_active_track(track_id)
             self.select_track_notes_requested.emit(track_id)
+
+    def set_track_gain(self, track_id, gain):
+        self.model.set_track_gain(track_id, gain)
+        self.update_status()
+        self.tracks_changed.emit()
 
     def set_clip_gain(self, clip_id, gain):
         self.model.set_clip_gain(clip_id, gain)

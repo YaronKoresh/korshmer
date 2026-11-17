@@ -1,6 +1,7 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from korshmer.ui.theming.color_utils import MAT_PRIMARY
 from korshmer.ui.tool_index import collect_tools, search_tools
 
 from .toolbox import ToolboxMixin
@@ -23,6 +25,54 @@ TOOL_SEARCH_HELP = (
 )
 NO_TOOL_FOUND = "No tool matches. Try another word."
 TOOL_COLUMN_WIDTH = 240
+INK = "#202124"
+SOFT_INK = "#5F6368"
+HAIRLINE = "#DADCE0"
+RESULT_HEIGHT = 46
+SEARCH_STYLE = f"""
+    QLineEdit {{
+        border: 1px solid {HAIRLINE};
+        border-radius: 16px;
+        padding: 6px 12px;
+        font-size: 13px;
+        background: white;
+        color: {INK};
+    }}
+    QLineEdit:focus {{
+        border: 2px solid {MAT_PRIMARY};
+        padding: 5px 11px;
+    }}
+"""
+RESULTS_STYLE = f"""
+    QListWidget {{
+        border: 1px solid {HAIRLINE};
+        border-radius: 8px;
+        background: white;
+        outline: none;
+    }}
+    QListWidget::item {{
+        border-bottom: 1px solid {HAIRLINE};
+        padding: 0px;
+    }}
+    QListWidget::item:hover, QListWidget::item:selected {{
+        background: #E8F0FE;
+    }}
+"""
+RESULT_TEXT = (
+    "<div style='font-size:13px; font-weight:600; color:{text};'>{name}</div>"
+    "<div style='font-size:11px; color:{soft};'>{place}</div>"
+)
+
+
+def _result_label(name, place):
+    label = QLabel(
+        RESULT_TEXT.format(text=INK, soft=SOFT_INK, name=name, place=place)
+    )
+    label.setTextFormat(Qt.RichText)
+    label.setContentsMargins(12, 4, 8, 4)
+    label.setAttribute(Qt.WA_TransparentForMouseEvents)
+    label.setStyleSheet("background: transparent;")
+    return label
 
 
 class ToolsPageMixin(ToolboxMixin):
@@ -35,7 +85,10 @@ class ToolsPageMixin(ToolboxMixin):
         self.edit_tool_search.setPlaceholderText(TOOL_SEARCH_HINT)
         self.edit_tool_search.setToolTip(TOOL_SEARCH_HELP)
         self.edit_tool_search.setClearButtonEnabled(True)
+        self.edit_tool_search.setMinimumHeight(34)
+        self.edit_tool_search.setStyleSheet(SEARCH_STYLE)
         self.list_tool_results = QListWidget()
+        self.list_tool_results.setStyleSheet(RESULTS_STYLE)
         self.list_tool_results.setVisible(False)
         self.list_categories = QListWidget()
         self.list_categories.setFocusPolicy(Qt.NoFocus)
@@ -79,10 +132,20 @@ class ToolsPageMixin(ToolboxMixin):
         searching = bool(str(text).strip())
         self.list_tool_results.clear()
         for entry in found:
-            item = QListWidgetItem(f"{entry.label}\n{entry.place}")
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, self.tool_entries.index(entry))
+            item.setData(Qt.AccessibleTextRole, entry.name)
             item.setToolTip(entry.help)
+            item.setSizeHint(QSize(TOOL_COLUMN_WIDTH - 24, RESULT_HEIGHT))
             self.list_tool_results.addItem(item)
+            place = entry.category
+            if entry.group not in (entry.name, entry.category):
+                place = f"{entry.category}  ›  {entry.group}"
+            self.list_tool_results.setItemWidget(
+                item, _result_label(entry.name, place)
+            )
+        if found:
+            self.list_tool_results.setCurrentRow(0)
         if searching and not found:
             item = QListWidgetItem(NO_TOOL_FOUND)
             item.setFlags(Qt.NoItemFlags)

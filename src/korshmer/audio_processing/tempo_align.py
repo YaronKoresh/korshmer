@@ -82,7 +82,7 @@ def _aligned_name(path, start, tempo_map, bpm):
         ]
     )
     stem = os.path.splitext(os.path.basename(path))[0]
-    return f"{stem}_{hashlib.sha1(key.encode()).hexdigest()[:16]}.wav"
+    return f"{stem}_even_{hashlib.sha1(key.encode()).hexdigest()[:8]}.wav"
 
 
 def align_clip_to_tempo(path, start, tempo_map, bpm, out_dir):

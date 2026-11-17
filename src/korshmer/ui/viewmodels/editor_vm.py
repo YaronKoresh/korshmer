@@ -176,6 +176,19 @@ def compute_clip_waveform(path, points=WAVEFORM_POINTS):
         return [], 0.0
 
 
+MAX_TRACK_GAIN = 2.0
+
+
+def clamp_track_gain(gain):
+    try:
+        value = float(gain)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(value):
+        return 1.0
+    return max(0.0, min(MAX_TRACK_GAIN, value))
+
+
 class TrackModel:
     __slots__ = (
         "id",
@@ -186,6 +199,7 @@ class TrackModel:
         "muted",
         "solo",
         "visible",
+        "gain",
     )
 
     def __init__(
@@ -198,6 +212,7 @@ class TrackModel:
         muted=False,
         solo=False,
         visible=True,
+        gain=1.0,
     ):
         self.id = int(track_id)
         self.name = str(name)
@@ -207,6 +222,7 @@ class TrackModel:
         self.muted = bool(muted)
         self.solo = bool(solo)
         self.visible = bool(visible)
+        self.gain = clamp_track_gain(gain)
 
     def instrument_label(self):
         return instrument_name(self.program, self.is_drum)
@@ -221,11 +237,13 @@ class TrackModel:
             self.muted,
             self.solo,
             self.visible,
+            self.gain,
         )
 
     def to_dict(self):
         return {
             "id": self.id,
+            "gain": self.gain,
             "name": self.name,
             "program": self.program,
             "is_drum": self.is_drum,
@@ -246,6 +264,7 @@ class TrackModel:
             data.get("muted", False),
             data.get("solo", False),
             data.get("visible", True),
+            data.get("gain", 1.0),
         )
 
 
@@ -799,6 +818,11 @@ class EditorModel:
     def remove_clip(self, clip_id):
         self.clips = [c for c in self.clips if c.id != clip_id]
 
+    def set_track_gain(self, track_id, gain):
+        track = self.tracks.get(track_id)
+        if track is not None:
+            track.gain = clamp_track_gain(gain)
+
     def set_clip_mute(self, clip_id, muted):
         clip = self.clip_by_id(clip_id)
         if clip is not None:
@@ -926,7 +950,9 @@ class EditorModel:
                 end = max(note.start + MIN_NOTE_DURATION, note.end)
                 inst.notes.append(
                     pretty_midi.Note(
-                        velocity=note.velocity,
+                        velocity=clamp_velocity(
+                            max(1, round(note.velocity * track.gain))
+                        ),
                         pitch=note.pitch,
                         start=note.start,
                         end=end,

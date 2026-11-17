@@ -16,7 +16,8 @@ from korshmer.utils.scale_names import sanitize_scale_name
 
 logger = logging.getLogger(__name__)
 
-CLEAN_VOCALS_DIR = "Editor"
+CLEAN_VOCALS_DIR = "Stems"
+OLD_CLEAN_VOCALS_DIR = "Editor"
 CLEAN_VOCALS_NAME = "vocals_clean.wav"
 
 STEM_ORDER = ["vocals", "drums", "bass", "guitar", "piano", "other"]
@@ -562,6 +563,20 @@ def separate_stems(
             shutil.rmtree(job_dir, ignore_errors=True)
 
 
+def _adopt_old_clean_vocals(session, target):
+    folder = os.path.join(str(session.output_dir), OLD_CLEAN_VOCALS_DIR)
+    old = os.path.join(folder, CLEAN_VOCALS_NAME)
+    if not os.path.isfile(old):
+        return
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    if os.path.isfile(target):
+        os.remove(old)
+    else:
+        os.replace(old, target)
+    if not os.listdir(folder):
+        os.rmdir(folder)
+
+
 def cleaned_vocals_path(session):
     source = session.vocals_path()
     if not source:
@@ -570,6 +585,7 @@ def cleaned_vocals_path(session):
         str(session.output_dir), CLEAN_VOCALS_DIR, CLEAN_VOCALS_NAME
     )
     try:
+        _adopt_old_clean_vocals(session, target)
         if os.path.isfile(target) and os.path.getmtime(
             target
         ) >= os.path.getmtime(source):

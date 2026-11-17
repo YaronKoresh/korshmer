@@ -145,4 +145,6 @@ def search_tools(entries, query, limit=DEFAULT_LIMIT) -> list[ToolEntry]:
         if rank is not None:
             ranked.append((rank, order, entry))
     ranked.sort(key=lambda item: item[:2])
+    if ranked and ranked[0][0] < HELP_PART:
+        ranked = [item for item in ranked if item[0] < HELP_PART]
     return [entry for _, _, entry in ranked[: max(1, int(limit))]]

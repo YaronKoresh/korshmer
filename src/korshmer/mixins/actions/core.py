@@ -6,7 +6,13 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
-from korshmer.constants import DATA_DIR, FLUID_DIR, INSTRUMENT_DB, SF3_PATH
+from korshmer.constants import (
+    DATA_DIR,
+    FLUID_DIR,
+    INSTRUMENT_DB,
+    SF3_PATH,
+    TEMP_DIR,
+)
 from korshmer.event_bus import Event, publish
 from korshmer.midi.utils import generate_piano_roll_image
 from korshmer.mixins.path_guard import reject_unsafe_path
@@ -57,6 +63,14 @@ def _build_instrument_report(path):
     for n, c in inst_counts.items():
         report.append(f"• {html.escape(str(n))}: {c}")
     return "<br>".join(report)
+
+
+AB_NO_SOURCE = (
+    "A/B needs a song to compare with. Convert a song and load it into "
+    "the editor, or select one of its MIDI files in My music, then press "
+    "A/B again."
+)
+AB_NO_RESULT = "A/B: press Play Editor once so there is a version to return to."
 
 
 class CoreActionsMixin:
@@ -223,66 +237,85 @@ class CoreActionsMixin:
                     "No audio files found in the selected folder.",
                 )
 
-    def toggle_ab_compare(self):
+    def _selected_midi(self):
         item = self.output_list.currentItem()
-        if not item:
-            self.control_bar.btn_ab.setChecked(False)
-            return
+        path = item.data(Qt.UserRole) if item else None
+        return path if path and is_midi_path(path) else None
 
-        midi_path = item.data(Qt.UserRole)
-        if not is_midi_path(midi_path):
-            self.control_bar.btn_ab.setChecked(False)
-            return
-
-        pos = self.control_bar.player.position()
-        playing = self.control_bar.player.playbackState() == 1
-
-        base_name = os.path.basename(midi_path)
-
-        if self.control_bar.btn_ab.isChecked():
-            source_path = FileManagementService.find_source_for_comparison(
+    def _ab_source(self):
+        midi_path = self._selected_midi()
+        if midi_path:
+            found = FileManagementService.find_source_for_comparison(
                 midi_path, self.file_list_paths
             )
+            if found and os.path.exists(found):
+                return found
+        session = getattr(self, "current_session", None)
+        if session is None:
+            return None
+        for path in (session.cut_source_path(), session.source_path):
+            if path and os.path.exists(path):
+                return path
+        return None
 
-            if source_path and os.path.exists(source_path):
-                publish(
-                    Event.AUDIO_LOAD_REQUESTED,
-                    path=source_path,
-                    analyze=True,
-                    load_player=True,
-                )
-                self.control_bar.player.setPosition(pos)
-                if playing:
-                    self.control_bar.player.play()
-                publish(
-                    Event.STATUS_UPDATE,
-                    text=f"Playing Source: {os.path.basename(source_path)}",
-                )
-            else:
-                self.control_bar.btn_ab.setChecked(False)
-                QMessageBox.warning(
-                    self,
-                    "A/B Error",
-                    "Could not find original source file for comparison.",
-                )
-        else:
-            wav_preview = os.path.join(
+    def _ab_result(self):
+        midi_path = self._selected_midi()
+        if midi_path:
+            preview = os.path.join(
                 os.path.dirname(midi_path), "temp_preview.wav"
             )
-            target_file = (
-                wav_preview if os.path.exists(wav_preview) else midi_path
-            )
+            return preview if os.path.exists(preview) else midi_path
+        preview = os.path.join(str(TEMP_DIR), "editor_preview.wav")
+        return preview if os.path.exists(preview) else None
 
-            publish(
-                Event.AUDIO_LOAD_REQUESTED,
-                path=target_file,
-                analyze=True,
-                load_player=True,
+    def _ab_play(self, path, text):
+        player = self.control_bar.player
+        pos = player.position()
+        playing = player.playbackState() == 1
+        publish(
+            Event.AUDIO_LOAD_REQUESTED,
+            path=path,
+            analyze=True,
+            load_player=True,
+        )
+        player.setPosition(pos)
+        if playing:
+            player.play()
+        publish(Event.STATUS_UPDATE, text=text)
+
+    def _ab_refuse(self, text):
+        self.control_bar.btn_ab.blockSignals(True)
+        self.control_bar.btn_ab.setChecked(False)
+        self.control_bar.btn_ab.blockSignals(False)
+        publish(Event.STATUS_UPDATE, text=text)
+        QMessageBox.information(self, "A/B", text)
+
+    def toggle_ab_compare(self):
+        if self.control_bar.btn_ab.isChecked():
+            source = self._ab_source()
+            if source is None:
+                self._ab_refuse(AB_NO_SOURCE)
+                return
+            arranger = getattr(self, "arranger", None)
+            if self._selected_midi() is None and hasattr(
+                arranger, "aligned_song_audio"
+            ):
+                try:
+                    source = arranger.aligned_song_audio(source)
+                except Exception as exc:
+                    publish(
+                        Event.STATUS_UPDATE,
+                        text=f"A/B plays the original timing: {exc}",
+                    )
+            self._ab_play(
+                source, f"A/B: original song ({os.path.basename(source)})"
             )
-            self.control_bar.player.setPosition(pos)
-            if playing:
-                self.control_bar.player.play()
-            publish(Event.STATUS_UPDATE, text=f"Playing MIDI: {base_name}")
+            return
+        result = self._ab_result()
+        if result is None:
+            publish(Event.STATUS_UPDATE, text=AB_NO_RESULT)
+            return
+        self._ab_play(result, f"A/B: your version ({os.path.basename(result)})")
 
     def panic_action(self):
         self.control_bar.player.stop()

@@ -74,7 +74,10 @@ class _Host(QWidget, ToolsPageMixin):
 
 def _results(host):
     rows = host.list_tool_results
-    return [rows.item(i).text().split("\n")[0] for i in range(rows.count())]
+    return [
+        rows.item(i).data(Qt.AccessibleTextRole) or rows.item(i).text()
+        for i in range(rows.count())
+    ]
 
 
 def test_every_tool_mode_is_indexed_with_its_place():
@@ -132,7 +135,7 @@ def test_typing_shows_results_and_opening_one_goes_to_the_tool():
     host = _Host()
     assert host.list_tool_results.isHidden()
     host.edit_tool_search.setText("swing")
-    assert _results(host) == ["Groove  ·  Timing"]
+    assert _results(host) == ["Groove"]
     assert not host.list_tool_results.isHidden()
     assert host.list_categories.isHidden()
 

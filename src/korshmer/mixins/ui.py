@@ -30,6 +30,7 @@ from korshmer.ui.widgets.audio.file_drop_list import (
     FileDropList,
     OutputFileList,
 )
+from korshmer.ui.widgets.audio.live_meters import LiveMeters
 from korshmer.ui.widgets.audio.spectrogram import SpectrogramWidget
 from korshmer.ui.widgets.audio.visualizer import AudioVisualizer
 from korshmer.ui.widgets.marquee import MarqueeLabel
@@ -148,6 +149,8 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
         vl.addWidget(self.spectrogram)
         vl.addWidget(QLabel("Waveform"))
         vl.addWidget(self.visualizer)
+        self.live_meters = LiveMeters()
+        vl.addWidget(self.live_meters)
 
         l.addWidget(viz_container)
         self.splitter.addWidget(left_panel)
@@ -184,6 +187,7 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
 
     def _setup_control_bar(self):
         self.control_bar = ControlBar()
+        self.live_meters.set_engine(self.control_bar.player)
         self.main_layout.addWidget(self.control_bar)
 
         self.arranger.looper = self.control_bar.player.looper

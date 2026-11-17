@@ -176,6 +176,7 @@ class StemsActionsMixin:
             return False
         if replace and hasattr(arranger, "clear_editor"):
             arranger.clear_editor()
+        self.current_session = session
         self._apply_session_tempo(session)
         loaded = 0
         from korshmer.audio_processing.stem_session import (
