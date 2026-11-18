@@ -458,20 +458,123 @@ def test_aligning_a_late_audio_clip_moves_its_pulse_onto_the_beat(
     assert timeline.model.clip_by_id(clip.id).start == pytest.approx(1.0)
 
 
-def test_aligning_an_audio_clip_without_a_steady_pulse_leaves_it_alone_and_says_so(
-    qapp, tmp_path, edited_clips_folder
-):
+def _aligned(qapp, recording, start):
     timeline = _timeline(qapp)
-    hiss = tmp_path / "hiss.wav"
-    sf.write(str(hiss), np.random.default_rng(1).normal(0, 0.1, RATE * 6), RATE)
-    clip = timeline.add_audio_clip(str(hiss), 1.0)
+    clip = timeline.add_audio_clip(recording, start)
     said = []
     timeline.clip_edit_status.connect(said.append)
+    _choose(timeline, clip, "Align Clip to the Beat")
+    return timeline, timeline.model.clip_by_id(clip.id), said[-1]
+
+
+def _speech_after_a_pause(path, pause_seconds=1.13):
+    rng = np.random.default_rng(11)
+    audio = np.zeros(RATE * 8, dtype=np.float32)
+    position = pause_seconds
+    while position < 7.0:
+        length = float(rng.uniform(0.12, 0.45))
+        time = np.arange(int(length * RATE)) / RATE
+        word = 0.3 * np.sin(2 * np.pi * rng.uniform(140, 260) * time)
+        first = int(position * RATE)
+        audio[first : first + word.shape[0]] += word * np.hanning(word.shape[0])
+        position += length + float(rng.uniform(0.05, 0.6))
+    sf.write(str(path), audio, RATE)
+    return str(path)
+
+
+def _offbeat_rhythm(path, late_seconds):
+    audio = np.zeros(RATE * 12, dtype=np.float32)
+    burst = np.hanning(2000) * np.sin(np.arange(2000) * 0.2) * 0.4
+    for half_beat in range(4, 44, 3):
+        first = int((half_beat * BEAT_SECONDS / 2 + late_seconds) * RATE)
+        audio[first : first + 2000] += burst
+    sf.write(str(path), audio, RATE)
+    return str(path)
+
+
+def test_aligning_speech_without_a_steady_pulse_puts_its_first_sound_on_a_beat(
+    qapp, tmp_path, edited_clips_folder
+):
+    recording = _speech_after_a_pause(tmp_path / "speech.wav")
+
+    timeline, clip, said = _aligned(qapp, recording, 2.0)
+
+    first_sound = clip.start + 1.13
+    assert first_sound / BEAT_SECONDS == pytest.approx(
+        round(first_sound / BEAT_SECONDS), abs=0.06
+    )
+    assert abs(clip.start - 2.0) <= BEAT_SECONDS / 2 + 0.01
+    assert clip.start != pytest.approx(2.0, abs=0.01)
+    assert "first sound" in said
+
+    timeline.undo()
+    assert timeline.model.clip_by_id(clip.id).start == pytest.approx(2.0)
+
+
+def test_aligning_a_rhythm_that_falls_between_the_beats_moves_it_onto_the_half_beats(
+    qapp, tmp_path, edited_clips_folder
+):
+    recording = _offbeat_rhythm(tmp_path / "rhythm.wav", 0.07)
+
+    _timeline_used, clip, said = _aligned(qapp, recording, 1.0)
+
+    assert clip.start == pytest.approx(0.93, abs=0.03)
+    assert "onto the beat" in said
+
+
+def test_aligning_an_audio_clip_that_is_already_in_time_says_so_and_adds_no_undo_step(
+    qapp, tmp_path, edited_clips_folder
+):
+    recording = _clicks(tmp_path / "clicks.wav", 0.0)
+    timeline = _timeline(qapp)
+    clip = timeline.add_audio_clip(recording, 1.0)
+    timeline.wait_for_waveforms()
+    said = []
+    timeline.clip_edit_status.connect(said.append)
+    _choose(timeline, clip, "Align Clip to the Beat")
+    settled = timeline.model.clip_by_id(clip.id).start
 
     _choose(timeline, clip, "Align Clip to the Beat")
+    timeline.undo()
 
+    assert "already on the beat" in said[-1]
+    assert settled != 1.0
     assert timeline.model.clip_by_id(clip.id).start == pytest.approx(1.0)
-    assert "no steady beat" in said[-1]
+
+
+def test_aligning_a_late_audio_clip_at_the_very_start_of_the_song_moves_it_to_the_next_beat(
+    qapp, tmp_path, edited_clips_folder
+):
+    recording = _clicks(tmp_path / "clicks.wav", 0.12)
+
+    _timeline_used, clip, said = _aligned(qapp, recording, 0.0)
+
+    assert clip.start == pytest.approx(0.38, abs=0.03)
+    assert "onto the beat" in said
+
+
+def test_aligning_a_silent_audio_clip_leaves_it_alone_and_says_it_is_silent(
+    qapp, tmp_path, edited_clips_folder
+):
+    silence = tmp_path / "silence.wav"
+    sf.write(str(silence), np.zeros(RATE * 3, dtype=np.float32), RATE)
+
+    _timeline_used, clip, said = _aligned(qapp, str(silence), 1.1)
+
+    assert clip.start == pytest.approx(1.1)
+    assert "silent" in said
+
+
+def test_aligning_steady_noise_starts_it_on_a_beat(
+    qapp, tmp_path, edited_clips_folder
+):
+    hiss = tmp_path / "hiss.wav"
+    sf.write(str(hiss), np.random.default_rng(1).normal(0, 0.1, RATE * 6), RATE)
+
+    _timeline_used, clip, said = _aligned(qapp, str(hiss), 1.1)
+
+    assert clip.start == pytest.approx(1.0, abs=0.02)
+    assert "first sound" in said
 
 
 def test_removing_background_noise_quiets_the_pauses_and_keeps_the_original_file(

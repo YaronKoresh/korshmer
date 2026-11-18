@@ -70,6 +70,7 @@ CLIP_ALIGN_LABEL = "Align Clip to the Beat"
 CLIP_NOISE_LABEL = "Remove Background Noise"
 CLIP_QUALITY_LABEL = "Improve Level and Quality"
 CLIP_ALL_LABEL = "Fix Clip Automatically"
+CLIP_MOVE_TOLERANCE_S = 1e-3
 STEMS_FOLDER = "Stems"
 SNAP_HELP = (
     "Snaps note edits to the current grid. Hold Alt while dragging to bypass."
@@ -862,7 +863,7 @@ class ArrangerTimeline(QWidget):
             if source is not None:
                 result["source"] = polished(source[0])
             if "align" in steps:
-                result["shift"] = clip_polish.file_pulse_shift_beats(
+                result["shift"], result["anchor"] = clip_polish.file_beat_shift(
                     result["path"], beats_at, start, offset, duration
                 )
             return result
@@ -925,14 +926,18 @@ class ArrangerTimeline(QWidget):
         clip = self.model.clip_by_id(clip_id)
         if clip is None:
             return
-        steps = result["steps"]
-        shift = result.get("shift")
+        target = clip.start
+        if result.get("shift"):
+            target = self._shifted_clip_start(clip, result["shift"])
+            if target < 0.0:
+                target = self._shifted_clip_start(clip, result["shift"] + 1.0)
+        moved = abs(target - clip.start) >= CLIP_MOVE_TOLERANCE_S
+        placement = self._clip_placement_text(
+            result, target - clip.start, moved
+        )
         new_path = result["path"]
-        if new_path == clip.path and not shift:
-            self.clip_edit_status.emit(
-                f"{label}: no steady beat was found in '{clip.name}', "
-                "so it stayed where it was"
-            )
+        if new_path == clip.path and not moved:
+            self.clip_edit_status.emit(f"{label}: '{clip.name}' {placement}")
             return
         self.model.snapshot()
         if new_path != clip.path:
@@ -940,21 +945,37 @@ class ArrangerTimeline(QWidget):
             clip.waveform = []
             if clip.source is not None and "source" in result:
                 clip.source = (result["source"], *clip.source[1:])
-            if "quality" in steps:
+            if "quality" in result["steps"]:
                 clip.gain = 1.0
-        moved = ""
-        if shift:
-            before = clip.start
-            clip.start = max(0.0, self._shifted_clip_start(clip, shift))
-            moved = f", moved {clip.start - before:+.3f} s onto the beat"
-        elif "align" in steps:
-            moved = ", no steady beat found so it was not moved"
+        if moved:
+            clip.start = target
         self.piano_roll.load_model(keep_selection=True)
         if not clip.waveform:
             self._queue_waveform(clip)
             self._start_visible_waveforms()
         self._on_model_changed()
-        self.clip_edit_status.emit(f"{label}: '{clip.name}' is ready{moved}")
+        ready = f"{label}: '{clip.name}' is ready"
+        self.clip_edit_status.emit(
+            f"{ready}, it {placement}" if placement else ready
+        )
+
+    @staticmethod
+    def _clip_placement_text(result, seconds, moved):
+        from korshmer.audio_processing import clip_polish
+
+        anchor = result.get("anchor")
+        if anchor is None:
+            return ""
+        if anchor == clip_polish.SILENT:
+            return "is silent, so it stayed where it was"
+        if not moved:
+            return "is already on the beat"
+        if anchor == clip_polish.ON_FIRST_SOUND:
+            return (
+                f"has no steady beat, so its first sound was moved "
+                f"{seconds:+.3f} s onto a beat"
+            )
+        return f"was moved {seconds:+.3f} s onto the beat"
 
     def _on_clip_edit_failed(self, clip_id, label, problem):
         clip = self.model.clip_by_id(clip_id)
