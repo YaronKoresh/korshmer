@@ -172,7 +172,7 @@ class EditorActionsMixin:
             self,
             "Add Audio Clip to Editor",
             str(DATA_DIR),
-            "Audio (*.wav *.mp3 *.flac *.ogg *.aiff *.aif)",
+            "Audio (*.wav *.mp3 *.flac *.ogg *.oga *.opus *.aiff *.aif)",
         )
         if path and hasattr(self, "send_audio_to_editor"):
             self.send_audio_to_editor(path)

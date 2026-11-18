@@ -14,7 +14,16 @@ from korshmer.utils.tempo import BPM_DECIMALS, validate_bpm
 
 logger = logging.getLogger(__name__)
 
-SEPARABLE_AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif")
+SEPARABLE_AUDIO_EXTENSIONS = (
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".oga",
+    ".opus",
+    ".aiff",
+    ".aif",
+)
 EDITOR_TAB_INDEX = 0
 
 

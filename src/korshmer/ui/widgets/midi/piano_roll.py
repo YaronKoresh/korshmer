@@ -44,7 +44,17 @@ from korshmer.utils.soundfont_ranges import (
 )
 from korshmer.utils.tempo import validate_bpm
 
-AUDIO_EXTENSIONS = (".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a")
+AUDIO_EXTENSIONS = (
+    ".wav",
+    ".mp3",
+    ".flac",
+    ".ogg",
+    ".oga",
+    ".opus",
+    ".aiff",
+    ".aif",
+    ".m4a",
+)
 MIDI_EXTENSIONS = (".mid", ".midi")
 CLICK_DRAG_THRESHOLD_PX = 3
 DEFAULT_GRID_DIVISIONS = GRID_RESOLUTIONS["1/16"]
@@ -817,9 +827,11 @@ class InteractivePianoRoll(QGraphicsView):
     def mouseDoubleClickEvent(self, event):
         item = self.itemAt(event.pos())
         if isinstance(item, AudioClipItem):
-            self._toggle_clip_mute(item.clip_id)
-            event.accept()
-            return
+            spot = item.mapFromScene(self.mapToScene(event.pos()))
+            if item.edge_at(spot.x()) is None:
+                self._toggle_clip_mute(item.clip_id)
+                event.accept()
+                return
         super().mouseDoubleClickEvent(event)
 
     def _ensure_current_track(self):
@@ -910,6 +922,7 @@ class InteractivePianoRoll(QGraphicsView):
             height,
             snap_provider=self._clip_snap_x,
             mute_toggle=self._toggle_clip_mute,
+            trim_request=self.trim_clip,
         )
         item.set_lane(top, height, padding)
         self.scene.addItem(item)
@@ -922,6 +935,14 @@ class InteractivePianoRoll(QGraphicsView):
         self.viewport().update()
         return item
 
+    def clip_id_for_menu(self, position=None):
+        if position is not None:
+            item = self.itemAt(position)
+            if isinstance(item, AudioClipItem):
+                return item.clip_id
+        selected = self._selected_clip_ids()
+        return selected[0] if len(selected) == 1 else None
+
     def refresh_clip(self, clip_id):
         item = self._clip_items.get(clip_id)
         if item is None:
@@ -929,6 +950,20 @@ class InteractivePianoRoll(QGraphicsView):
         item.refresh_geometry(self.vm.pixels_per_second)
         self._update_scene_rect()
         self.viewport().update()
+
+    def trim_clip(self, clip_id, start, end):
+        if start is None or end is None:
+            self.model.snapshot()
+            return False
+        changed = self.model.trim_clip(clip_id, start, end)
+        if changed:
+            item = self._clip_items.get(clip_id)
+            if item is not None:
+                item.refresh_geometry()
+            self._update_scene_rect()
+            self.clips_changed.emit()
+            self.model_changed.emit()
+        return changed
 
     def _toggle_clip_mute(self, clip_id):
         clip = self.model.clip_by_id(clip_id)

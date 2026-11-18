@@ -1,7 +1,10 @@
 import math
 import numbers
 import os
+import shutil
+import subprocess
 import threading
+from pathlib import Path
 
 import numpy as np
 import psutil
@@ -9,6 +12,7 @@ import soundfile as sf
 
 from korshmer.audio_processing.validation import validate_channel_count
 from korshmer.constants import (
+    DATA_DIR,
     DECODED_AUDIO_BYTES_PER_SAMPLE,
     MAX_AUDIO_CHANNELS,
     MAX_AUDIO_FILE_SIZE_BYTES,
@@ -18,6 +22,9 @@ from korshmer.constants import (
     STREAMING_AUDIO_THRESHOLD_BYTES,
 )
 from korshmer.exceptions import AudioFileTooLargeError, AudioFormatError
+
+CONVERTED_FOLDER = "imports"
+CONVERT_TIMEOUT_S = 600
 
 
 def _has_audio_signature(header: bytes) -> bool:
@@ -41,6 +48,59 @@ def _has_audio_signature(header: bytes) -> bool:
     if len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0:
         return True
     return False
+
+
+def _decodes_directly(path):
+    try:
+        return sf.info(str(path)).frames > 0
+    except Exception:
+        return False
+
+
+def usable_audio_path(path, folder=None):
+    path = str(path)
+    if _decodes_directly(path):
+        return path
+    source = Path(path)
+    target_dir = Path(folder) if folder else Path(DATA_DIR) / CONVERTED_FOLDER
+    target = target_dir / f"{source.stem}.wav"
+    if target.is_file() and target.stat().st_mtime >= source.stat().st_mtime:
+        return str(target)
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        raise AudioFormatError(
+            f"This audio format needs FFmpeg to be read: {source.name}",
+            recovery_hint="Install FFmpeg, then add the file again.",
+        )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    partial = target.with_name(target.name + ".part")
+    try:
+        subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                "file:" + os.path.abspath(path),
+                "-vn",
+                "-f",
+                "wav",
+                str(partial),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=CONVERT_TIMEOUT_S,
+        )
+        os.replace(partial, target)
+    except (OSError, subprocess.SubprocessError) as exc:
+        partial.unlink(missing_ok=True)
+        raise AudioFormatError(
+            f"This audio file could not be read: {source.name}",
+            recovery_hint="Save it again as WAV, MP3, FLAC or OGG.",
+        ) from exc
+    return str(target)
 
 
 def check_audio_file_type(path):

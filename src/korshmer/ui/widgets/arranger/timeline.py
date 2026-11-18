@@ -22,11 +22,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from korshmer.audio.loader import usable_audio_path
 from korshmer.audio_processing.effect_chain import (
     apply_effect_chain,
     validate_effect_chain_depth,
 )
 from korshmer.constants import DATA_DIR, GRID_RESOLUTIONS, HELP_TEXTS
+from korshmer.exceptions import AudioFormatError
 from korshmer.midi.performance_recorder import (
     PerformanceRecorder,
     open_input_port,
@@ -64,6 +66,10 @@ EVEN_BPM_HELP = (
     "follows them."
 )
 ALIGNED_CLIPS_DIR = "tempo_aligned"
+CLIP_ALIGN_LABEL = "Align Clip to the Beat"
+CLIP_NOISE_LABEL = "Remove Background Noise"
+CLIP_QUALITY_LABEL = "Improve Level and Quality"
+CLIP_ALL_LABEL = "Fix Clip Automatically"
 STEMS_FOLDER = "Stems"
 SNAP_HELP = (
     "Snaps note edits to the current grid. Hold Alt while dragging to bypass."
@@ -294,6 +300,28 @@ class ClipWaveformWorker(QThread):
         self.waveform_ready.emit(self.clip_id, waveform, duration)
 
 
+class ClipEditWorker(QThread):
+    edit_ready = Signal(int, str, object)
+    edit_failed = Signal(int, str, str)
+
+    def __init__(self, clip_id, label, job, parent=None):
+        super().__init__(parent)
+        self.clip_id = clip_id
+        self.label = label
+        self.job = job
+
+    def run(self):
+        try:
+            result = self.job()
+        except Exception as problem:
+            logging.getLogger(__name__).exception(
+                f"{self.label} failed for clip {self.clip_id}"
+            )
+            self.edit_failed.emit(self.clip_id, self.label, str(problem))
+            return
+        self.edit_ready.emit(self.clip_id, self.label, result)
+
+
 class ArrangerTimeline(QWidget):
     recording_saved = Signal(str)
     editor_play_request = Signal(object)
@@ -302,12 +330,14 @@ class ArrangerTimeline(QWidget):
     export_mix_requested = Signal()
     export_clip_requested = Signal()
     tracks_changed = Signal()
+    clip_edit_status = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.vm = ArrangerViewModel()
         self._waveform_workers = []
         self._pending_waveform_ids = set()
+        self._clip_edit_workers = []
         layout = QVBoxLayout(self)
 
         self.piano_roll = InteractivePianoRoll()
@@ -567,7 +597,10 @@ class ArrangerTimeline(QWidget):
         self.piano_roll.current_track_id = track_id
 
     def _on_audio_dropped(self, path):
-        self.add_audio_clip(path)
+        try:
+            self.add_audio_clip(path)
+        except AudioFormatError as e:
+            QMessageBox.warning(self, "Audio Clip", str(e))
 
     def clear_editor(self):
         self.wait_for_waveforms()
@@ -642,8 +675,9 @@ class ArrangerTimeline(QWidget):
         folder = os.path.dirname(os.path.abspath(clip.path))
         if os.path.basename(folder) != STEMS_FOLDER:
             folder = os.path.join(str(DATA_DIR), ALIGNED_CLIPS_DIR)
+        origin = getattr(clip, "origin", clip.start)
         return align_clip_to_tempo(
-            clip.path, clip.start, tempo_map, bpm, folder
+            clip.path, max(0.0, origin), tempo_map, bpm, folder
         )
 
     def aligned_song_audio(self, path):
@@ -774,6 +808,7 @@ class ArrangerTimeline(QWidget):
         self, path, start_sec=0.0, name=None, kind="audio", gain=1.0
     ):
         sanitize_path(path)
+        path = usable_audio_path(path)
         self.piano_roll.sync_model_from_scene()
         self.model.snapshot()
         clip = self.model.add_clip(
@@ -784,6 +819,149 @@ class ArrangerTimeline(QWidget):
         self._start_visible_waveforms()
         self._on_model_changed()
         return clip
+
+    def clip_menu_actions(self, position=None):
+        clip_id = self.piano_roll.clip_id_for_menu(position)
+        if clip_id is None or self.model.clip_by_id(clip_id) is None:
+            return []
+        return [
+            (label, lambda _=False, run=run: run(clip_id))
+            for label, run in (
+                (CLIP_ALIGN_LABEL, self.align_clip_to_beat),
+                (CLIP_NOISE_LABEL, self.remove_clip_noise),
+                (CLIP_QUALITY_LABEL, self.improve_clip_quality),
+                (CLIP_ALL_LABEL, self.fix_clip_automatically),
+            )
+        ]
+
+    def _clip_beats_at(self):
+        tempo_map = self.model.tempo_map
+        if tempo_map is not None:
+            return tempo_map.beats_at
+        tempo = float(self.model.tempo)
+        origin = float(self.model.grid_offset)
+        return lambda seconds: (seconds - origin) * tempo / 60.0
+
+    def _clip_edit_job(self, clip, steps):
+        from korshmer.audio_processing import clip_polish
+
+        path, start = clip.path, clip.start
+        offset, duration = clip.offset, clip.duration
+        source = clip.source
+        beats_at = self._clip_beats_at()
+
+        def polished(target):
+            if "noise" in steps:
+                target = clip_polish.remove_noise_file(target)
+            if "quality" in steps:
+                target = clip_polish.improve_quality_file(target)
+            return target
+
+        def job():
+            result = {"path": polished(path), "steps": steps}
+            if source is not None:
+                result["source"] = polished(source[0])
+            if "align" in steps:
+                result["shift"] = clip_polish.file_pulse_shift_beats(
+                    result["path"], beats_at, start, offset, duration
+                )
+            return result
+
+        return job
+
+    def _start_clip_edit(self, clip_id, label, steps):
+        self.piano_roll.sync_model_from_scene()
+        clip = self.model.clip_by_id(clip_id)
+        if clip is None or self.clip_edit_running(clip_id):
+            return None
+        worker = ClipEditWorker(
+            clip_id, label, self._clip_edit_job(clip, steps), parent=self
+        )
+        worker.edit_ready.connect(self._on_clip_edit_ready)
+        worker.edit_failed.connect(self._on_clip_edit_failed)
+        self._clip_edit_workers.append(worker)
+        self.clip_edit_status.emit(f"{label}: working on '{clip.name}'")
+        worker.start()
+        return worker
+
+    def clip_edit_running(self, clip_id=None):
+        self._clip_edit_workers = [
+            worker
+            for worker in self._clip_edit_workers
+            if worker.isRunning() or not worker.isFinished()
+        ]
+        return any(
+            clip_id is None or worker.clip_id == clip_id
+            for worker in self._clip_edit_workers
+        )
+
+    def wait_for_clip_edits(self, timeout_ms=600000):
+        for worker in list(self._clip_edit_workers):
+            worker.wait(timeout_ms)
+        QApplication.processEvents()
+
+    def align_clip_to_beat(self, clip_id):
+        return self._start_clip_edit(clip_id, CLIP_ALIGN_LABEL, ("align",))
+
+    def remove_clip_noise(self, clip_id):
+        return self._start_clip_edit(clip_id, CLIP_NOISE_LABEL, ("noise",))
+
+    def improve_clip_quality(self, clip_id):
+        return self._start_clip_edit(clip_id, CLIP_QUALITY_LABEL, ("quality",))
+
+    def fix_clip_automatically(self, clip_id):
+        return self._start_clip_edit(
+            clip_id, CLIP_ALL_LABEL, ("noise", "quality", "align")
+        )
+
+    def _shifted_clip_start(self, clip, beats):
+        tempo_map = self.model.tempo_map
+        if tempo_map is not None:
+            return tempo_map.seconds_at(tempo_map.beats_at(clip.start) + beats)
+        return clip.start + beats * 60.0 / float(self.model.tempo)
+
+    def _on_clip_edit_ready(self, clip_id, label, result):
+        self.piano_roll.sync_model_from_scene()
+        clip = self.model.clip_by_id(clip_id)
+        if clip is None:
+            return
+        steps = result["steps"]
+        shift = result.get("shift")
+        new_path = result["path"]
+        if new_path == clip.path and not shift:
+            self.clip_edit_status.emit(
+                f"{label}: no steady beat was found in '{clip.name}', "
+                "so it stayed where it was"
+            )
+            return
+        self.model.snapshot()
+        if new_path != clip.path:
+            clip.path = new_path
+            clip.waveform = []
+            if clip.source is not None and "source" in result:
+                clip.source = (result["source"], *clip.source[1:])
+            if "quality" in steps:
+                clip.gain = 1.0
+        moved = ""
+        if shift:
+            before = clip.start
+            clip.start = max(0.0, self._shifted_clip_start(clip, shift))
+            moved = f", moved {clip.start - before:+.3f} s onto the beat"
+        elif "align" in steps:
+            moved = ", no steady beat found so it was not moved"
+        self.piano_roll.load_model(keep_selection=True)
+        if not clip.waveform:
+            self._queue_waveform(clip)
+            self._start_visible_waveforms()
+        self._on_model_changed()
+        self.clip_edit_status.emit(f"{label}: '{clip.name}' is ready{moved}")
+
+    def _on_clip_edit_failed(self, clip_id, label, problem):
+        clip = self.model.clip_by_id(clip_id)
+        name = clip.name if clip is not None else "the clip"
+        text = f"{label} could not finish for '{name}': {problem}"
+        self.clip_edit_status.emit(text)
+        QMessageBox.warning(self, label, text)
 
     def _queue_waveform(self, clip):
         self._pending_waveform_ids.add(clip.id)

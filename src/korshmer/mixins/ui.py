@@ -294,6 +294,10 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
             self.arranger.export_clip_requested.connect(
                 self.export_music_clip_action
             )
+        if hasattr(self.arranger, "clip_edit_status"):
+            self.arranger.clip_edit_status.connect(
+                lambda text: publish(Event.STATUS_UPDATE, text=text)
+            )
         if hasattr(self.arranger, "midi_exported"):
             self.arranger.midi_exported.connect(
                 lambda p: publish(
@@ -393,7 +397,16 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
                 )
                 l.addWidget(b_merge)
             elif lower_path.endswith(
-                (".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif")
+                (
+                    ".wav",
+                    ".mp3",
+                    ".flac",
+                    ".ogg",
+                    ".oga",
+                    ".opus",
+                    ".aiff",
+                    ".aif",
+                )
             ):
                 b_clip = QPushButton("🎤\ufe0e")
                 b_clip.setToolTip("Send to editor as audio clip")

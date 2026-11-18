@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from korshmer.audio.loader import check_audio_file_type
+from korshmer.audio.loader import check_audio_file_type, usable_audio_path
 from korshmer.constants import DATA_DIR, FLUID_DIR, SF3_PATH
 from korshmer.event_bus import Event, publish
 from korshmer.exceptions import AudioFormatError, InvalidFileError
@@ -239,6 +239,19 @@ class FilesMixin:
                     text=f"Skipped non-audio file: {os.path.basename(path)}",
                 )
                 return False
+            try:
+                usable = usable_audio_path(path)
+            except AudioFormatError as e:
+                logging.warning(f"Skipping unreadable audio {path}: {e}")
+                publish(Event.STATUS_UPDATE, text=str(e))
+                return False
+            if usable != path:
+                publish(
+                    Event.STATUS_UPDATE,
+                    text=f"Converted {os.path.basename(path)} to WAV "
+                    "so it can be played and edited",
+                )
+                path = usable
         if path not in self.file_list_paths:
             self.file_list_paths.append(path)
             item = QListWidgetItem()
@@ -304,7 +317,7 @@ class FilesMixin:
             self,
             "Select Files",
             "",
-            "Audio/MIDI (*.mp3 *.wav *.flac *.ogg *.aiff *.aif *.mid *.midi)",
+            "Audio/MIDI (*.mp3 *.wav *.flac *.ogg *.oga *.opus *.aiff *.aif *.mid *.midi)",
         )
         for f in files:
             self.add_file(f)
@@ -428,7 +441,16 @@ class FilesMixin:
         if is_midi_path(path):
             self.handle_midi_selection(path, load_editor=False)
         elif path.lower().endswith(
-            (".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif")
+            (
+                ".wav",
+                ".mp3",
+                ".flac",
+                ".ogg",
+                ".oga",
+                ".opus",
+                ".aiff",
+                ".aif",
+            )
         ):
             publish(
                 Event.AUDIO_LOAD_REQUESTED,

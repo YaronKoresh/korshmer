@@ -1,3 +1,5 @@
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QBrush,
@@ -12,6 +14,8 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsRectItem
 CLIP_LANE_HEIGHT = 64
 CLIP_LANE_PADDING = 4
 MIN_CLIP_WIDTH = 40.0
+EDGE_GRAB_PIXELS = 8.0
+TRIM_HINT = "Drag the left or right edge to trim the clip."
 CLIP_CORNER_RADIUS = 6
 
 
@@ -24,7 +28,10 @@ class AudioClipItem(QGraphicsRectItem):
         lane_height=CLIP_LANE_HEIGHT,
         snap_provider=None,
         mute_toggle=None,
+        trim_request=None,
     ):
+        self.trim_request = trim_request
+        self._trim_edge = None
         self.clip = clip
         self.clip_id = clip.id
         self.pixels_per_second = float(pixels_per_second)
@@ -81,11 +88,71 @@ class AudioClipItem(QGraphicsRectItem):
 
     def update_tooltip(self):
         state = "muted" if self.clip.muted else f"gain {self.clip.gain:.2f}x"
+        trimmed = ""
+        if self.clip.is_trimmed():
+            trimmed = f" of {self.clip.length:.2f}s"
         self.setToolTip(
             f"{self.clip.name} ({self.clip.kind})\n"
             f"start {self.clip.start:.2f}s · "
-            f"{self.clip.duration:.2f}s · {state}"
+            f"{self.clip.duration:.2f}s{trimmed} · {state}\n{TRIM_HINT}"
         )
+
+    def _edge_reach(self):
+        views = self.scene().views() if self.scene() else []
+        scale = views[0].transform().m11() if views else 1.0
+        reach = EDGE_GRAB_PIXELS / (scale or 1.0)
+        return min(reach, self.rect().width() / 3.0)
+
+    def edge_at(self, x):
+        reach = self._edge_reach()
+        if x <= reach:
+            return "start"
+        if x >= self.rect().width() - reach:
+            return "end"
+        return None
+
+    def hoverMoveEvent(self, event):
+        edge = self.edge_at(event.pos().x()) if self.trim_request else None
+        self.setCursor(Qt.SizeHorCursor if edge else Qt.OpenHandCursor)
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        edge = None
+        if event.button() == Qt.LeftButton and self.trim_request is not None:
+            edge = self.edge_at(event.pos().x())
+        if edge is None:
+            super().mousePressEvent(event)
+            return
+        self._trim_edge = edge
+        self.setSelected(True)
+        self.trim_request(self.clip_id, None, None)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._trim_edge is None:
+            super().mouseMoveEvent(event)
+            return
+        x = max(0.0, event.scenePos().x())
+        if self.snap_provider is not None:
+            x = max(0.0, self.snap_provider(x))
+        self.trim_edge_to(self._trim_edge, x / self.pixels_per_second)
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._trim_edge is None:
+            super().mouseReleaseEvent(event)
+            return
+        self._trim_edge = None
+        event.accept()
+
+    def trim_edge_to(self, edge, seconds):
+        start, end = self.clip.start, self.clip.end
+        if edge == "start":
+            start = seconds
+        else:
+            end = seconds
+        self.trim_request(self.clip_id, start, end)
+        self.refresh_geometry()
 
     def start_seconds(self):
         if self.pixels_per_second <= 0:
@@ -101,6 +168,13 @@ class AudioClipItem(QGraphicsRectItem):
         return super().itemChange(change, value)
 
     def mouseDoubleClickEvent(self, event):
+        on_edge = (
+            self.trim_request is not None
+            and self.edge_at(event.pos().x()) is not None
+        )
+        if event.button() == Qt.LeftButton and on_edge:
+            self.mousePressEvent(event)
+            return
         if event.button() == Qt.LeftButton and self.mute_toggle is not None:
             self.mute_toggle(self.clip_id)
             event.accept()
@@ -128,6 +202,16 @@ class AudioClipItem(QGraphicsRectItem):
 
     def _paint_waveform(self, painter, rect):
         points = self.clip.waveform
+        if points and self.clip.length > 0:
+            first = int(len(points) * self.clip.offset / self.clip.length)
+            last = int(
+                math.ceil(
+                    len(points)
+                    * (self.clip.offset + self.clip.duration)
+                    / self.clip.length
+                )
+            )
+            points = points[first : max(first + 2, last)]
         if not points or rect.width() < 8:
             return
         mid_y = rect.height() / 2.0

@@ -53,7 +53,16 @@ RUN_FOLDER_RE = re.compile(
 
 
 class FileManagementService:
-    VALID_AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".ogg", ".aiff", ".aif")
+    VALID_AUDIO_EXTENSIONS = (
+        ".mp3",
+        ".wav",
+        ".flac",
+        ".ogg",
+        ".oga",
+        ".opus",
+        ".aiff",
+        ".aif",
+    )
     VALID_MIDI_EXTENSIONS = MIDI_EXTENSIONS
     VALID_EXTENSIONS = VALID_AUDIO_EXTENSIONS + VALID_MIDI_EXTENSIONS
 

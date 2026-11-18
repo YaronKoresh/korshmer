@@ -47,6 +47,8 @@ DEFAULT_TRACK_NAME = "Lead"
 MIN_NOTE_DURATION = 0.01
 MAX_UNDO_STEPS = 100
 MAX_CLIP_GAIN = 8.0
+MIN_CLIP_SECONDS = 0.05
+TRIM_TOLERANCE_S = 1e-3
 WAVEFORM_POINTS = 512
 
 
@@ -335,6 +337,8 @@ class ClipModel:
         "color",
         "waveform",
         "source",
+        "offset",
+        "length",
     )
 
     def __init__(
@@ -349,6 +353,8 @@ class ClipModel:
         solo=False,
         kind="audio",
         color=None,
+        offset=0.0,
+        length=None,
     ):
         self.id = int(clip_id)
         self.path = str(path)
@@ -364,10 +370,38 @@ class ClipModel:
         )
         self.waveform = []
         self.source = None
+        self.offset = max(0.0, float(offset))
+        whole = self.offset + self.duration
+        self.length = max(whole, float(length)) if length else whole
 
     @property
     def end(self):
         return self.start + self.duration
+
+    @property
+    def origin(self):
+        return self.start - self.offset
+
+    def is_trimmed(self):
+        return (
+            self.offset > TRIM_TOLERANCE_S
+            or self.offset + self.duration < self.length - TRIM_TOLERANCE_S
+        )
+
+    def trim(self, start, end):
+        earliest = max(0.0, self.origin)
+        latest = self.origin + self.length
+        start = min(max(float(start), earliest), latest - MIN_CLIP_SECONDS)
+        end = max(min(float(end), latest), start + MIN_CLIP_SECONDS)
+        self.offset = max(0.0, start - self.origin)
+        self.start = start
+        self.duration = end - start
+
+    def rescale(self, length):
+        ratio = float(length) / self.length if self.length > 0 else 1.0
+        self.offset *= ratio
+        self.duration *= ratio
+        self.length = max(0.0, float(length))
 
     def copy(self):
         clone = ClipModel(
@@ -381,6 +415,8 @@ class ClipModel:
             self.solo,
             self.kind,
             self.color,
+            self.offset,
+            self.length,
         )
         clone.waveform = self.waveform
         clone.source = self.source
@@ -399,6 +435,8 @@ class ClipModel:
             "kind": self.kind,
             "color": self.color,
             "source": list(self.source) if self.source else None,
+            "offset": self.offset,
+            "length": self.length,
         }
 
     @classmethod
@@ -420,7 +458,15 @@ class ClipModel:
             data.get("solo", False),
             data.get("kind", "audio"),
             data.get("color"),
+            _seconds(data.get("offset")),
+            _seconds(data.get("length")) or None,
         )
+
+
+def _seconds(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value) if math.isfinite(value) and value > 0 else 0.0
 
 
 def _grid_offset_value(value):
@@ -821,6 +867,14 @@ class EditorModel:
         if clip is not None:
             clip.start = max(0.0, float(start))
 
+    def trim_clip(self, clip_id, start, end):
+        clip = self.clip_by_id(clip_id)
+        if clip is None:
+            return False
+        before = (clip.start, clip.duration, clip.offset)
+        clip.trim(start, end)
+        return (clip.start, clip.duration, clip.offset) != before
+
     def remove_clip(self, clip_id):
         self.clips = [c for c in self.clips if c.id != clip_id]
 
@@ -850,7 +904,12 @@ class EditorModel:
             return
         clip.waveform = list(waveform or [])
         if duration is not None and duration > 0:
-            clip.duration = float(duration)
+            whole = float(duration)
+            if clip.is_trimmed():
+                clip.length = whole
+                clip.trim(clip.start, clip.end)
+            else:
+                clip.duration = clip.length = whole
 
     def _any_solo(self):
         return any(t.solo for t in self.tracks.values()) or any(
@@ -1002,11 +1061,7 @@ class EditorModel:
             (clip, *align_clip(clip, tempo_map, bpm)) for clip in self.clips
         ]
         for clip, path, duration in aligned:
-            clip.source = (clip.path, clip.start, clip.duration)
-            clip.path = str(path)
-            clip.start = max(0.0, float(tempo_map.warp(clip.start, bpm)))
-            clip.duration = max(0.0, float(duration))
-            clip.waveform = []
+            self._adopt_aligned(clip, path, duration, tempo_map, bpm)
         self._retime(lambda t: tempo_map.warp(t, bpm))
         self.normalized = {"map": tempo_map, "bpm": bpm, "tempo": self.tempo}
         self.tempo_map = None
@@ -1022,12 +1077,16 @@ class EditorModel:
         if change > MAX_CLIP_TEMPO_CHANGE:
             raise TempoNormalizeError([(clip.name, change)])
         path, duration = align_clip(clip, tempo_map, bpm)
-        clip.source = (clip.path, clip.start, clip.duration)
+        self._adopt_aligned(clip, path, duration, tempo_map, bpm)
+        return True
+
+    @staticmethod
+    def _adopt_aligned(clip, path, length, tempo_map, bpm):
+        clip.source = (clip.path, clip.start, clip.length)
         clip.path = str(path)
         clip.start = max(0.0, float(tempo_map.warp(clip.start, bpm)))
-        clip.duration = max(0.0, float(duration))
+        clip.rescale(length)
         clip.waveform = []
-        return True
 
     def restore_tempo(self):
         state = self.normalized
@@ -1037,7 +1096,8 @@ class EditorModel:
         for clip in self.clips:
             clip.start = max(0.0, float(tempo_map.unwarp(clip.start, bpm)))
             if clip.source is not None:
-                clip.path, _, clip.duration = clip.source
+                clip.path, _, length = clip.source
+                clip.rescale(length)
                 clip.source = None
                 clip.waveform = []
         self._retime(lambda t: tempo_map.unwarp(t, bpm))

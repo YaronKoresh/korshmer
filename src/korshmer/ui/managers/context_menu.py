@@ -38,6 +38,16 @@ class ContextMenuManager:
                         f"'{action_name}' failed:\n{e}",
                     )
 
+    def _run_clip_action(self, action_name, run, parent):
+        self.record_action(f"clip:{action_name}")
+        try:
+            run()
+        except Exception as e:
+            logging.exception(f"Error handling clip action '{action_name}'")
+            QMessageBox.critical(
+                parent, "Action Error", f"'{action_name}' failed:\n{e}"
+            )
+
     def _handle_piano_roll_action(self, action_name, parent):
         self._handle_action("piano_roll", action_name, parent)
 
@@ -50,8 +60,17 @@ class ContextMenuManager:
     def _handle_score_editor_action(self, action_name, parent):
         self._handle_action("score_editor", action_name, parent)
 
-    def create_piano_roll_menu(self, parent):
+    def create_piano_roll_menu(self, parent, clip_actions=()):
         menu = QMenu(parent)
+
+        for label, run in clip_actions:
+            menu.addAction(label).triggered.connect(
+                lambda _=False, name=label, run=run: self._run_clip_action(
+                    name, run, parent
+                )
+            )
+        if clip_actions:
+            menu.addSeparator()
 
         select_all_action = menu.addAction("Select All")
         select_all_action.triggered.connect(

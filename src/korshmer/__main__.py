@@ -500,7 +500,9 @@ Help:
             self.showFullScreen()
 
     def _show_piano_roll_context_menu(self, position):
-        menu = self.context_menu_manager.create_piano_roll_menu(self)
+        menu = self.context_menu_manager.create_piano_roll_menu(
+            self, self.arranger.clip_menu_actions(position)
+        )
         menu.exec(self.arranger.piano_roll.mapToGlobal(position))
 
     def record_undo_action(self, description, data):
@@ -583,6 +585,8 @@ Help:
         super().changeEvent(event)
 
     def eventFilter(self, obj, event):
+        if not self.isVisible():
+            return super().eventFilter(obj, event)
         if event.type() in (QEvent.HoverMove, QEvent.MouseMove):
             if self.moving_window:
                 if self.drag_pos:
@@ -874,7 +878,16 @@ Help:
                 path
                 and os.path.exists(path)
                 and path.lower().endswith(
-                    (".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif")
+                    (
+                        ".wav",
+                        ".mp3",
+                        ".flac",
+                        ".ogg",
+                        ".oga",
+                        ".opus",
+                        ".aiff",
+                        ".aif",
+                    )
                 )
             ):
                 needs_spectrogram = (

@@ -306,7 +306,7 @@ class ProjectManagementActionsMixin:
             self,
             "Import Audio Files",
             str(self.import_manager.imports_dir),
-            "Audio Files (*.wav *.mp3 *.flac *.ogg *.aiff *.aif *.aac)",
+            "Audio Files (*.wav *.mp3 *.flac *.ogg *.oga *.opus *.aiff *.aif *.aac)",
         )
 
         if file_paths:

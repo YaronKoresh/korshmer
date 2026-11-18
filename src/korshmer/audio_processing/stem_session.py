@@ -17,6 +17,7 @@ from korshmer.utils.scale_names import sanitize_scale_name
 logger = logging.getLogger(__name__)
 
 CLEAN_VOCALS_DIR = "Stems"
+TRIM_FADE_S = 0.005
 OLD_CLEAN_VOCALS_DIR = "Editor"
 CLEAN_VOCALS_NAME = "vocals_clean.wav"
 
@@ -665,6 +666,34 @@ def _clip_start_samples(clip, sample_rate):
     return int(round(start * sample_rate))
 
 
+def _clip_seconds(clip, key):
+    try:
+        value = float(clip.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return value if np.isfinite(value) and value > 0 else 0.0
+
+
+def trimmed_clip_audio(data, clip, sample_rate):
+    first = int(round(_clip_seconds(clip, "offset") * sample_rate))
+    first = min(first, data.shape[0])
+    played = _clip_seconds(clip, "duration")
+    last = data.shape[0]
+    if played > 0:
+        last = min(last, first + int(round(played * sample_rate)))
+    if first == 0 and last == data.shape[0]:
+        return data
+    part = np.array(data[first:last], dtype=np.float32)
+    fade = min(int(TRIM_FADE_S * sample_rate), part.shape[0] // 2)
+    if fade > 0:
+        ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)[:, np.newaxis]
+        if first > 0:
+            part[:fade] *= ramp
+        if last < data.shape[0]:
+            part[-fade:] *= ramp[::-1]
+    return part
+
+
 def mix_render_with_clips(
     render_path, clips, out_path, sample_rate=44100, headroom_db=-1.0
 ):
@@ -687,6 +716,7 @@ def mix_render_with_clips(
         except Exception as exc:
             logger.warning(f"Clip could not be read, skipped: {path}: {exc}")
             continue
+        data = trimmed_clip_audio(data, clip, sample_rate)
         gain = _clip_gain(clip)
         if gain != 1.0:
             data = data * np.float32(gain)

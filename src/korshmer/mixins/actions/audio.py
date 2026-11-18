@@ -385,7 +385,16 @@ class AudioActionsMixin(BaseActionsMixin):
             return
 
         if not path.lower().endswith(
-            (".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif")
+            (
+                ".wav",
+                ".mp3",
+                ".flac",
+                ".ogg",
+                ".oga",
+                ".opus",
+                ".aiff",
+                ".aif",
+            )
         ):
             QMessageBox.warning(
                 self,

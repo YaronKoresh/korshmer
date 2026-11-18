@@ -216,6 +216,8 @@ class CoreActionsMixin:
                 ".wav",
                 ".flac",
                 ".ogg",
+                ".oga",
+                ".opus",
                 ".aiff",
                 ".aif",
             )
