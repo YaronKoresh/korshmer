@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 import pretty_midi
 
-from korshmer.constants import NOTE_NAMES, SCALES
+from korshmer.constants import GRID_RESOLUTIONS, NOTE_NAMES, SCALES
 from korshmer.midi_generation import (
     engine,
     genre_feel,
@@ -101,6 +101,15 @@ AUTO_STYLE_TEMPOS = (
     (138.0, "EDM", "EDM"),
 )
 AUTO_STYLE_FAST = ("Phonk", "Rock")
+SYNTH_PROGRAMS = frozenset({38, 39, *range(80, 104)})
+DRIVEN_PROGRAMS = frozenset({29, 30})
+SYNTH_SONG_SHARE = 0.35
+DRIVEN_SONG_SHARE = 0.2
+ANSWER_MIN_BEATS = 2.0
+ANSWER_JOIN_BEATS = 1.0
+ANSWER_NAME = "Melody answer"
+HARMONY_MIN_BEATS = 1.0
+SUNG_PHRASE_SHARE = 0.4
 RHYTHM_ROLES = ("drums", "bass")
 LEAD_ROLES = ("melody", "counter")
 RHYTHM_LEAD = 6
@@ -288,9 +297,42 @@ def validate_options(options):
     return NOTE_NAMES.index(options.root)
 
 
-def resolve_style(style, bpm, scale):
+def _program_shares(existing):
+    counts = {}
+    for inst in existing.instruments:
+        if not inst.is_drum:
+            counts[inst.program] = counts.get(inst.program, 0) + len(inst.notes)
+    total = sum(counts.values())
+    return {p: c / total for p, c in counts.items()} if total else {}
+
+
+def song_style(existing, bpm, scale):
+    shares = _program_shares(existing)
+    synth = sum(v for p, v in shares.items() if p in SYNTH_PROGRAMS)
+    if not shares or synth >= SYNTH_SONG_SHARE:
+        return resolve_style(AUTO_STYLE, bpm, scale)
+    driven = sum(v for p, v in shares.items() if p in DRIVEN_PROGRAMS)
+    if driven >= DRIVEN_SONG_SHARE:
+        return "Rock"
+    if bpm < AUTO_STYLE_TEMPOS[0][0]:
+        return "Lo-Fi" if _is_minor_like(scale) else "Jazz"
+    return "Pop"
+
+
+def match_palette(rng, programs, existing):
+    families = {p // 8 for p in _program_shares(existing)}
+    matched = {}
+    for role, options in programs.items():
+        close = [p for p in options if p // 8 in families]
+        matched[role] = rng.choice(close or list(options))
+    return matched
+
+
+def resolve_style(style, bpm, scale, existing=None):
     if style != AUTO_STYLE:
         return style
+    if existing is not None:
+        return song_style(existing, bpm, scale)
     minor = _is_minor_like(scale)
     for limit, minor_style, major_style in AUTO_STYLE_TEMPOS:
         if bpm < limit:
@@ -827,6 +869,49 @@ def _turn(phrase_count, layering):
     return PHRASE_TURNS[phrase_count % len(PHRASE_TURNS)] if layering else 0
 
 
+def _calm_rate(rates):
+    return min(rates, key=lambda rate: GRID_RESOLUTIONS.get(rate, 4))
+
+
+def lead_spans(lead, lo, hi, join):
+    spans = []
+    for note in sorted(lead, key=lambda n: n.start):
+        if note.end <= lo or note.start >= hi:
+            continue
+        if spans and note.start - spans[-1][1] <= join:
+            spans[-1][1] = max(spans[-1][1], note.end)
+        else:
+            spans.append([note.start, note.end])
+    return [(max(lo, a), min(hi, b)) for a, b in spans]
+
+
+def sung_share(lead, lo, hi, join):
+    if hi <= lo:
+        return 0.0
+    return sum(b - a for a, b in lead_spans(lead, lo, hi, join)) / (hi - lo)
+
+
+def answer_phrases(notes, lead, lo, hi, beat):
+    edges = [lo]
+    for begin, end in lead_spans(lead, lo, hi, ANSWER_JOIN_BEATS * beat):
+        edges += [begin, end]
+    edges.append(hi)
+    gaps = [
+        (a, b)
+        for a, b in zip(edges[::2], edges[1::2], strict=True)
+        if b - a >= ANSWER_MIN_BEATS * beat
+    ]
+    answers = []
+    for note in notes:
+        gap = next((g for g in gaps if g[0] <= note.start < g[1]), None)
+        if gap is None:
+            continue
+        note.end = min(note.end, gap[1])
+        if note.end > note.start:
+            answers.append(note)
+    return answers
+
+
 def _layer_pattern(rng, style, made, key):
     if key not in made:
         seen = [sorted(p.items()) for p in made.values()]
@@ -862,8 +947,10 @@ def _grid_offset(options, existing, bpm):
 def compose(options, existing=None):
     root_idx = validate_options(options)
     bpm = validate_bpm(options.bpm)
-    style = resolve_style(options.style, bpm, options.scale)
     layering = options.mode == "Layer over editor"
+    style = resolve_style(
+        options.style, bpm, options.scale, existing if layering else None
+    )
     song_gains = None
     rng = random.Random(options.seed)
     bar = 240.0 / bpm
@@ -924,6 +1011,8 @@ def compose(options, existing=None):
         role: rng.choice(profile.programs[role])
         for role in genres.PITCHED_ROLES
     }
+    if layering:
+        role_programs = match_palette(rng, profile.programs, existing)
     role_programs["drums"] = profile.kit
     act_count = (total_bars - 1) // ACT_BARS + 1
     arc = plan_acts(
@@ -955,6 +1044,9 @@ def compose(options, existing=None):
     used_hits = []
     layer_patterns = {}
     phrase_count = 0
+    sung_lead = layering and song_match.has_vocal_lead(existing)
+    answers = _new_instrument("counter", role_programs["counter"])
+    answers.name = ANSWER_NAME
     chord_hits = {}
     melody_seed = {}
     acts = {
@@ -1092,8 +1184,20 @@ def compose(options, existing=None):
                 "energy": section.energy,
             }
             rested = layering and kind != "chorus"
+            phrase_lo = phrase_bar * bar
+            sung = sung_lead and (
+                sung_share(
+                    layer_lead,
+                    phrase_lo,
+                    phrase_lo + length * bar,
+                    ANSWER_JOIN_BEATS * bar / 4,
+                )
+                >= SUNG_PHRASE_SHARE
+            )
             for role in section.roles:
                 if rested and PHRASE_RESTS.get(role) == turn:
+                    continue
+                if sung and role == "pluck":
                     continue
                 if role == "drums":
                     pattern = state["pattern"]
@@ -1162,7 +1266,9 @@ def compose(options, existing=None):
                 elif role == "arp":
                     inst = engine.generate_arp(
                         ctx,
-                        feel.arp_rates[
+                        _calm_rate(feel.arp_rates)
+                        if sung
+                        else feel.arp_rates[
                             (act + variant + turn // 2) % len(feel.arp_rates)
                         ],
                         shape=ACT_ARP_SHAPES[look % len(ACT_ARP_SHAPES)],
@@ -1187,13 +1293,34 @@ def compose(options, existing=None):
                         lo = section.start_bar * bar
                         hi = lo + section.bars * bar
                         heard = [n for n in layer_lead if lo <= n.start < hi]
+                        held = [
+                            n
+                            for n in heard
+                            if not sung_lead
+                            or n.end - n.start >= HARMONY_MIN_BEATS * bar / 4
+                        ]
                         harmony = _harmonize(
-                            rng, heard, bar, bar_chords, scale_pcs
+                            rng, held, bar, bar_chords, scale_pcs
                         )
                         program = chapter.programs.get(
                             role, role_programs[role]
                         )
                         _voice(out, role, program).notes.extend(harmony)
+                        if not sung_lead:
+                            continue
+                        tune = engine.generate_melody(
+                            ctx,
+                            mood=state["mood"],
+                            hook=hook,
+                            kind=kind,
+                            seed=melody_seed[(kind, act)],
+                            bars=section.bars,
+                            start_bar=start_bar + section.start_bar,
+                            energy=section.energy,
+                        )
+                        answers.notes.extend(
+                            answer_phrases(tune.notes, heard, lo, hi, bar / 4)
+                        )
                         continue
                     inst = engine.generate_melody(
                         ctx,
@@ -1279,6 +1406,8 @@ def compose(options, existing=None):
         for role in _PRIORITY
         for inst in out.get(role, {}).values()
     ]
+    if answers.notes:
+        voices.append(("melody", answers))
     genre_feel.apply_swing(
         [
             inst

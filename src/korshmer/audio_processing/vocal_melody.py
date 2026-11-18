@@ -19,6 +19,7 @@ MIN_TUNING_FRAMES = 20
 MIN_TUNING_CONCENTRATION = 0.3
 MAX_STATE_COST = 2.5
 GLIDE_SECONDS = 0.09
+WOBBLE_SECONDS = 0.12
 LEVEL_FRAME_LENGTH = 512
 DIP_DB = 10.0
 MIN_LEVEL_DB = -60.0
@@ -40,6 +41,7 @@ class VocalMelodyOptions:
     min_note_s: float = 0.06
     max_level_drop_db: float = 30.0
     min_voiced_prob: float = 0.02
+    loud_voice_db: float = 12.0
     speech_gate: bool = True
     gate_window_s: float = 3.0
     gate_run_s: float = 0.25
@@ -73,6 +75,7 @@ class VocalMelodyOptions:
         validate_effect_number(
             self.min_voiced_prob, "Minimum voiced probability", 0, 1
         )
+        validate_effect_number(self.loud_voice_db, "Loud voice range", 0, 120)
         validate_effect_number(self.gate_window_s, "Gate window", 0.5, 20)
         validate_effect_number(self.gate_run_s, "Gate run length", 0.05, 5)
         validate_effect_number(self.gate_tolerance, "Gate tolerance", 0.1, 6)
@@ -265,6 +268,45 @@ def _split_at_dips(span, db, min_frames):
     ]
 
 
+def _confident_or_loud(spans, probability, db, options):
+    if not spans:
+        return spans
+    sure = np.array(
+        [
+            probability[a:b].mean() >= options.min_voiced_prob
+            for a, b, _ in spans
+        ]
+    )
+    levels = np.array([db[a:b].mean() for a, b, _ in spans])
+    if not sure.any():
+        return []
+    loud = np.percentile(levels[sure], 95) - options.loud_voice_db
+    return [
+        span
+        for span, ok, level in zip(spans, sure, levels, strict=True)
+        if ok or level >= loud
+    ]
+
+
+def _join_wobbles(spans, hop_s):
+    joined = []
+    for span in spans:
+        joined.append(span)
+        while len(joined) >= 3:
+            (a0, a1, low), (b0, b1, mid), (c0, c1, high) = joined[-3:]
+            wobble = (
+                low == high
+                and abs(mid - low) == 1
+                and (b1 - b0) * hop_s <= WOBBLE_SECONDS
+                and b0 == a1
+                and c0 == b1
+            )
+            if not wobble:
+                break
+            joined[-3:] = [(a0, c1, low)]
+    return joined
+
+
 def _velocity(level, reference, drop):
     return int(
         round(
@@ -286,11 +328,8 @@ def _notes_from_pitch(f0, probability, rms, options):
     spans = [
         part for span in spans for part in _split_at_dips(span, db, min_frames)
     ]
-    spans = [
-        span
-        for span in spans
-        if probability[span[0] : span[1]].mean() >= options.min_voiced_prob
-    ]
+    spans = _confident_or_loud(spans, probability, db, options)
+    spans = _join_wobbles(spans, hop_s)
     if options.speech_gate and spans:
         share = singing_share(smooth, hop_s, options)
         spans = [

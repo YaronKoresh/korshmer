@@ -672,6 +672,10 @@ def _voices(existing):
     return list(voices.values())
 
 
+def has_vocal_lead(existing):
+    return existing is not None and bool(_named_lead(existing, "vocal"))
+
+
 def find_lead(existing, prefer="vocal"):
     if existing is None:
         return []
