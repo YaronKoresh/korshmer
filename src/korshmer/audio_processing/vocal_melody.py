@@ -20,8 +20,9 @@ MIN_TUNING_CONCENTRATION = 0.3
 MAX_STATE_COST = 2.5
 GLIDE_SECONDS = 0.09
 WOBBLE_SECONDS = 0.12
-SCOOP_SECONDS = 0.1
+SCOOP_SECONDS = 0.12
 SCOOP_RATIO = 2.0
+SCOOP_SPAN = 2
 LEVEL_FRAME_LENGTH = 512
 DIP_DB = 10.0
 MIN_LEVEL_DB = -60.0
@@ -320,7 +321,7 @@ def _absorb_scoops(spans, hop_s):
             short, long = sorted((last - first, end - begin))
             if (
                 begin == last
-                and abs(other - pitch) == 1
+                and 0 < abs(other - pitch) <= SCOOP_SPAN
                 and short * hop_s <= SCOOP_SECONDS
                 and long >= SCOOP_RATIO * short
             ):

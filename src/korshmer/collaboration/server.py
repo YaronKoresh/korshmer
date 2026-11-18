@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncIterator
+from typing import Any, Protocol
 
 from korshmer.utils.secure_random import new_id
 
@@ -11,21 +12,13 @@ from .rate_limit import TokenBucket
 try:
     import websockets
 
-    if TYPE_CHECKING:
-        from websockets.asyncio.server import (
-            ServerConnection as WebSocketServerProtocol,
-        )
-    else:
-        try:
-            from websockets.asyncio.server import (
-                ServerConnection as WebSocketServerProtocol,
-            )
-        except ImportError:
-            from websockets.server import WebSocketServerProtocol
-
     _HAS_WEBSOCKETS = True
 except ImportError:
     _HAS_WEBSOCKETS = False
+
+
+class _PeerConnection(Protocol):
+    def __aiter__(self) -> AsyncIterator[str | bytes]: ...
 
 
 SERVER_ONLY_OP_TYPES = frozenset(
@@ -112,7 +105,7 @@ class CollaborationServer:
         return f"korshmer://session/{session_id}@{self.host}:{self.port}"
 
     async def _handle_client(
-        self, websocket: WebSocketServerProtocol, path: str | None = None
+        self, websocket: _PeerConnection, path: str | None = None
     ):
         peer_id = new_id()
         joined: list[str] = []

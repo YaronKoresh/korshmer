@@ -144,7 +144,7 @@ class ChordDetector:
         ChordQuality.DOMINANT13: (0, 4, 7, 10, 14, 17, 21),
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.detected_chords: list[Chord] = []
 
     def detect_chord_from_notes(self, notes: list[int]) -> Chord | None:

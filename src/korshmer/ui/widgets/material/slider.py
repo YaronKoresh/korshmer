@@ -1,9 +1,10 @@
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSlider,
     QStyle,
     QStyleOptionSlider,
@@ -18,16 +19,18 @@ except ImportError:
     MAT_PRIMARY = "#1A73E8"
 
 try:
-    from korshmer.ui.widgets.material.button import HelpButton
-except ImportError:
-    if not TYPE_CHECKING:
-        from PySide6.QtWidgets import QPushButton
+    from korshmer.ui.widgets.material.button import HelpButton as _HelpButton
 
-        class HelpButton(QPushButton):
-            def __init__(self, tooltip):
-                super().__init__("?")
-                self.setToolTip(tooltip)
-                self.setFixedSize(16, 16)
+    HelpButton: Callable[[str], QPushButton] = _HelpButton
+except ImportError:
+
+    class _FallbackHelpButton(QPushButton):
+        def __init__(self, tooltip: str) -> None:
+            super().__init__("?")
+            self.setToolTip(tooltip)
+            self.setFixedSize(16, 16)
+
+    HelpButton = _FallbackHelpButton
 
 
 class MaterialSlider(QWidget):

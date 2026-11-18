@@ -53,3 +53,30 @@ def mock_qt_app():
         app = QApplication(sys.argv)
 
     yield app
+
+
+_RECOVERY_FILE = {}
+
+
+@pytest.fixture(autouse=True, scope="session")
+def app_recovery_file_stays_out_of_the_real_data_folder(tmp_path_factory):
+    from korshmer.constants import BASE_DIR
+    from korshmer.project_management.project_manager import ProjectManager
+
+    original = ProjectManager._recovery_file
+    _RECOVERY_FILE["path"] = tmp_path_factory.mktemp("recovery") / "first.gz"
+
+    def recovery_file(self):
+        if Path(self.base_dir).resolve() == Path(BASE_DIR).resolve():
+            return _RECOVERY_FILE["path"]
+        return original(self)
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(ProjectManager, "_recovery_file", recovery_file)
+    yield
+    patch.undo()
+
+
+@pytest.fixture(autouse=True)
+def each_test_starts_without_a_recovery_file(tmp_path_factory):
+    _RECOVERY_FILE["path"] = tmp_path_factory.mktemp("recovery") / "test.gz"

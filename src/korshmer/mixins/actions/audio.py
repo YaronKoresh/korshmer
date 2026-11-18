@@ -2,7 +2,6 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -18,14 +17,25 @@ except ImportError:
     DATA_DIR = Path.home() / ".korshmer" / "data"
 
 try:
-    from korshmer.ui.widgets.dialogs.image_preview import ImagePreviewDialog
-    from korshmer.ui.widgets.dialogs.range_eq import RangeEQDialog
-    from korshmer.workers.chord_analysis import ChordAnalysisThread
+    from korshmer.ui.widgets.dialogs.image_preview import (
+        ImagePreviewDialog as _ImagePreviewDialog,
+    )
+    from korshmer.ui.widgets.dialogs.range_eq import (
+        RangeEQDialog as _RangeEQDialog,
+    )
+    from korshmer.workers.chord_analysis import (
+        ChordAnalysisThread as _ChordAnalysisThread,
+    )
+
+    ImagePreviewDialog: type[_ImagePreviewDialog] | None = _ImagePreviewDialog
+    RangeEQDialog: type[_RangeEQDialog] | None = _RangeEQDialog
+    ChordAnalysisThread: type[_ChordAnalysisThread] | None = (
+        _ChordAnalysisThread
+    )
 except ImportError:
-    if not TYPE_CHECKING:
-        ImagePreviewDialog = None
-        RangeEQDialog = None
-        ChordAnalysisThread = None
+    ImagePreviewDialog = None
+    RangeEQDialog = None
+    ChordAnalysisThread = None
 
 
 class AudioActionsMixin(BaseActionsMixin):

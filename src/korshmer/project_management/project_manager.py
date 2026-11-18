@@ -64,7 +64,7 @@ R = TypeVar("R")
 
 
 class ReadWriteLock:
-    def __init__(self):
+    def __init__(self) -> None:
         self._cond = threading.Condition(threading.Lock())
         self._readers = 0
         self._writer: int | None = None

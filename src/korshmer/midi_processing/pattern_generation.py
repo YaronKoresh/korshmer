@@ -416,7 +416,7 @@ class PolyrhythmGenerator:
 
 
 class PatternChainer:
-    def __init__(self):
+    def __init__(self) -> None:
         self.patterns: list[Pattern] = []
         self.variations: dict[str, Pattern] = {}
 
@@ -486,7 +486,7 @@ class MidiCCAutomation:
         value: int
         cc_number: int
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.automation_data: dict[int, list[MidiCCAutomation.CCPoint]] = {}
 
     def add_point(self, cc_number: int, time: float, value: int):

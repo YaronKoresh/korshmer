@@ -534,6 +534,9 @@ Help:
             self.arranger.wait_for_waveforms(timeout_ms)
 
     def closeEvent(self, event):
+        if not self.confirm_unsaved_changes():
+            event.ignore()
+            return
         try:
             if hasattr(self, "control_bar"):
                 self.control_bar.player.stop()

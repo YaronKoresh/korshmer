@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 
 import numpy as np
 
@@ -16,7 +17,7 @@ def scalar_tempo(tempo) -> float:
     return float(values[0]) if values.size else 0.0
 
 
-def validate_bpm(value, default=DEFAULT_BPM):
+def validate_bpm(value, default=DEFAULT_BPM) -> float:
     try:
         bpm = float(value)
     except (TypeError, ValueError):
@@ -80,14 +81,14 @@ class TapTempo:
         return validate_bpm(60.0 / interval)
 
 
-def midi_file_tempo(path):
+def midi_file_tempo(path: str | os.PathLike[str]) -> float | None:
     import mido
 
     try:
         midi = mido.MidiFile(str(path))
     except (OSError, ValueError, EOFError, KeyError, IndexError):
         return None
-    changes = {}
+    changes: dict[int, int] = {}
     end = 0
     for track in midi.tracks:
         tick = 0

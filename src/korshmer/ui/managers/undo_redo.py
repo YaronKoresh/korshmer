@@ -33,10 +33,10 @@ class UndoRedoManager:
             )
 
     @staticmethod
-    def _action_size(action):
+    def _action_size(action: object) -> int:
         seen: set[int] = set()
 
-        def _deep(obj):
+        def _deep(obj: object) -> int:
             oid = id(obj)
             if oid in seen:
                 return 0

@@ -68,6 +68,7 @@ from korshmer.midi.transcription_cleanup import (
     adopt_heard_notes,
     clean_transcription,
     drop_notes_outside_regions,
+    extend_ringing_notes,
     level_flux,
     merge_cross_track_handoffs,
     merge_note_variants,
@@ -581,6 +582,8 @@ def process_track(
                             merge_sustained_splits(
                                 inst, level, level_fps, flux=flux
                             )
+                            if not is_vocal_stem:
+                                extend_ringing_notes(inst, level, level_fps)
                 if (
                     not drum_check
                     and scale_type != "Auto (Detect)"

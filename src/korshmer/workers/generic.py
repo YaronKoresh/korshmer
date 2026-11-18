@@ -2,7 +2,6 @@ import concurrent.futures
 import logging
 import os
 import threading
-from typing import TYPE_CHECKING
 
 from korshmer.constants import current_dir
 from korshmer.utils.worker_count import compute_worker_count
@@ -64,12 +63,25 @@ def wait_all(*futures, timeout=None, raise_on_error=False):
     return results
 
 
+class _PlainWorkerThread:
+    def __init__(self, file_paths, params, process_track_func=None):
+        self.file_paths = file_paths
+        self.params = params
+        self.is_running = True
+        self.process_track_func = process_track_func
+        self.cancel_token = threading.Event()
+
+    def stop(self):
+        self.is_running = False
+        self.cancel_token.set()
+
+
 try:
     from PySide6.QtCore import Signal
 
     from korshmer.workers.base import TaskWorker
 
-    class WorkerThread(TaskWorker):
+    class _QtWorkerThread(TaskWorker):
         progress_update = Signal(int, str)
         process_finished = Signal(list)
         process_error = Signal(str)
@@ -173,20 +185,11 @@ try:
                 f.cancel()
             self.progress_update.emit(0, "Stopping process... please wait")
 
+    WorkerThread: type[_QtWorkerThread] | type[_PlainWorkerThread] = (
+        _QtWorkerThread
+    )
 except ImportError:
-    if not TYPE_CHECKING:
-
-        class WorkerThread:
-            def __init__(self, file_paths, params, process_track_func=None):
-                self.file_paths = file_paths
-                self.params = params
-                self.is_running = True
-                self.process_track_func = process_track_func
-                self.cancel_token = threading.Event()
-
-            def stop(self):
-                self.is_running = False
-                self.cancel_token.set()
+    WorkerThread = _PlainWorkerThread
 
 
 PRESETS_FILE = os.path.abspath(os.path.join(current_dir, "..", "presets.json"))

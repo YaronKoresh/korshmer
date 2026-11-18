@@ -1,10 +1,13 @@
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from types import ModuleType
+from typing import Protocol
 
 try:
-    import torch
+    import torch as _torch
+
+    torch: ModuleType | None = _torch
 except ImportError:
-    if not TYPE_CHECKING:
-        torch = None
+    torch = None
 import logging
 import os
 import threading
@@ -18,13 +21,19 @@ from korshmer.utils.perf_metrics import measure
 
 _logger = logging.getLogger(__name__)
 
+
+class _StemModel(Protocol):
+    def to(self, device: str) -> object: ...
+
+
+get_model: Callable[[str], _StemModel] | None
+apply_model: Callable[..., object] | None
 try:
     from demucs.apply import apply_model
     from demucs.pretrained import get_model
 except ImportError:
-    if not TYPE_CHECKING:
-        get_model = None
-        apply_model = None
+    get_model = None
+    apply_model = None
 
 
 DEFAULT_SAMPLE_RATE = 44100
@@ -63,6 +72,10 @@ class StemSeparator:
         if audio.ndim == 1:
             audio = np.stack([audio, audio])
 
+        if torch is None:
+            raise ImportError(
+                "StemSeparator requires the 'torch' and 'demucs' packages to be installed."
+            )
         audio_tensor = torch.from_numpy(audio).float()
 
         if audio_tensor.dim() == 2:

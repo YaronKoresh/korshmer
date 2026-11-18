@@ -180,6 +180,9 @@ class StemsActionsMixin:
             return False
         if replace and hasattr(arranger, "clear_editor"):
             arranger.clear_editor()
+        was_clean = not (
+            hasattr(self, "has_unsaved_changes") and self.has_unsaved_changes()
+        )
         self.current_session = session
         self._apply_session_tempo(session)
         loaded = 0
@@ -219,6 +222,8 @@ class StemsActionsMixin:
                 except Exception as exc:
                     logger.error(f"Could not load {midi_path}: {exc}")
         self._apply_session_grid(session)
+        if was_clean and hasattr(self, "_mark_song_saved"):
+            self._mark_song_saved()
         if loaded:
             self._show_editor_tab()
             publish(

@@ -1,21 +1,23 @@
-from typing import TYPE_CHECKING
+from types import ModuleType
 
 try:
-    import numpy as np
-    import soundfile as sf
+    import numpy as _np
+    import soundfile as _sf
 
+    np: ModuleType | None = _np
+    sf: ModuleType | None = _sf
     _AUDIO_DEPS = True
 except ImportError:
-    if not TYPE_CHECKING:
-        np = None
-        sf = None
+    np = None
+    sf = None
     _AUDIO_DEPS = False
 
 try:
-    from korshmer.audio_file import AudioFile
+    from korshmer.audio_file import AudioFile as _AudioFile
+
+    AudioFile: type[_AudioFile] | None = _AudioFile
 except ImportError:
-    if not TYPE_CHECKING:
-        AudioFile = None
+    AudioFile = None
 
 from korshmer.plugins.base import AudioEffectPlugin, PluginParam
 

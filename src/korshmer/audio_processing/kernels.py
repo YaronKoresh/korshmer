@@ -1,20 +1,33 @@
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TypeVar, overload
 
 import numpy as np
 
+_Kernel = TypeVar("_Kernel", bound=Callable[..., object])
+
+
+@overload
+def _passthrough_njit(function: _Kernel, /) -> _Kernel: ...
+
+
+@overload
+def _passthrough_njit(**kwargs: object) -> Callable[[_Kernel], _Kernel]: ...
+
+
+def _passthrough_njit(*args: object, **kwargs: object) -> object:
+    if len(args) == 1 and callable(args[0]) and not kwargs:
+        return args[0]
+    return lambda func: func
+
+
+njit: Callable[..., Callable[[Callable[..., object]], Callable[..., object]]]
 try:
     from numba import njit
 
     HAS_NUMBA = True
 except Exception:
     HAS_NUMBA = False
-
-    if not TYPE_CHECKING:
-
-        def njit(*args, **kwargs):
-            if len(args) == 1 and callable(args[0]) and not kwargs:
-                return args[0]
-            return lambda func: func
+    njit = _passthrough_njit
 
 
 def _compress_channel(

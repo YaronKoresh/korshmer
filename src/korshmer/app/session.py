@@ -1,15 +1,15 @@
-from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from korshmer.core.di_container import DIContainer as Container
 from korshmer.event_bus import Event, EventBus
 
+WorkerThread: Callable[..., object] | None
 try:
     from korshmer.workers.generic import WorkerThread
 
     _WORKER_AVAILABLE = True
 except ImportError:
-    if not TYPE_CHECKING:
-        WorkerThread = None
+    WorkerThread = None
     _WORKER_AVAILABLE = False
 
 

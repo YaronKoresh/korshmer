@@ -89,7 +89,7 @@ class Marker:
 
 
 class MIDIFileEnhancer:
-    def __init__(self):
+    def __init__(self) -> None:
         self.tempo_map: list[TempoChange] = []
         self.time_signatures: list[TimeSignature] = []
         self.key_signatures: list[KeySignature] = []
@@ -276,7 +276,7 @@ class MIDIFormatConverter:
 
 
 class SysExHandler:
-    def __init__(self):
+    def __init__(self) -> None:
         self.sysex_messages: list[tuple[float, bytes]] = []
 
     def add_sysex(self, time: float, data: bytes):
@@ -387,7 +387,7 @@ class MIDI2Support:
 
 
 class MIDIBatchProcessor:
-    def __init__(self):
+    def __init__(self) -> None:
         self.operations: list[tuple[str, dict]] = []
 
     @staticmethod
@@ -438,7 +438,7 @@ class MIDIBatchProcessor:
 
 
 class CuePointManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.cue_points: list[Marker] = []
 
     def add_cue_point(self, time: float, name: str):

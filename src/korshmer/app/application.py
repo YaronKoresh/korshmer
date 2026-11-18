@@ -1,15 +1,15 @@
 import sys
-from typing import TYPE_CHECKING
 
 try:
-    from PySide6.QtGui import QFont
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QFont as _QFont
+    from PySide6.QtWidgets import QApplication as _QApplication
 
+    QApplication: type[_QApplication] | None = _QApplication
+    QFont: type[_QFont] | None = _QFont
     _QT_AVAILABLE = True
 except ImportError:
-    if not TYPE_CHECKING:
-        QApplication = None
-        QFont = None
+    QApplication = None
+    QFont = None
     _QT_AVAILABLE = False
 
 from korshmer.core.di_container import DIContainer as Container

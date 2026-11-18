@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,11 @@ NEW_SONG_QUESTION = (
     "The editor will be emptied. Save the current song first if you want "
     "to keep it."
 )
+UNSAVED_QUESTION = (
+    "This song has changes that are not saved.\n\n"
+    "Save keeps them. Discard closes without saving."
+)
+FINGERPRINT_KEYS = ("tempo", "tracks", "notes", "clips")
 SAVED_EDITS_QUESTION = (
     "This song has saved edits.\n\n"
     "Yes opens your saved song. No loads the fresh conversion instead."
@@ -78,6 +84,37 @@ class ProjectManagementActionsMixin:
             name = "song"
         return Path(folder) / f"{name}{SONG_SUFFIX}"
 
+    def _editor_fingerprint(self):
+        arranger = getattr(self, "arranger", None)
+        if arranger is None or not hasattr(arranger, "to_project_dict"):
+            return None
+        state = arranger.to_project_dict()
+        kept = {key: state.get(key) for key in FINGERPRINT_KEYS}
+        return json.dumps(kept, sort_keys=True, default=str)
+
+    def _mark_song_saved(self):
+        self._saved_fingerprint = self._editor_fingerprint()
+
+    def has_unsaved_changes(self):
+        if not self._editor_has_content():
+            return False
+        saved = getattr(self, "_saved_fingerprint", None)
+        return self._editor_fingerprint() != saved
+
+    def confirm_unsaved_changes(self):
+        if not self.has_unsaved_changes():
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved Song",
+            UNSAVED_QUESTION,
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+        if answer == QMessageBox.Save:
+            return bool(self.save_project_action())
+        return answer == QMessageBox.Discard
+
     def _editor_has_content(self):
         model = getattr(getattr(self, "arranger", None), "model", None)
         return bool(model is not None and (model.notes or model.clips))
@@ -109,6 +146,7 @@ class ProjectManagementActionsMixin:
         if arranger is None or not isinstance(editor, dict):
             return False
         arranger.load_project_dict(with_found_clips(editor, folder))
+        self._mark_song_saved()
         if hasattr(self, "_show_editor_tab"):
             self._show_editor_tab()
         return True
@@ -154,6 +192,7 @@ class ProjectManagementActionsMixin:
             arranger = getattr(self, "arranger", None)
             if arranger is not None and hasattr(arranger, "clear_editor"):
                 arranger.clear_editor()
+            self._mark_song_saved()
             publish(
                 Event.STATUS_UPDATE,
                 text=f"New song: {name}. It is kept in the folder {name}.",
@@ -174,6 +213,7 @@ class ProjectManagementActionsMixin:
         )
         if hasattr(self, "refresh_lists"):
             self.refresh_lists()
+        self._mark_song_saved()
         return True
 
     def save_project_action(self):

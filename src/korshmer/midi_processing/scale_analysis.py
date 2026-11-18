@@ -154,7 +154,7 @@ class ScaleDetector:
         ScaleType.CHINESE: (0, 4, 6, 7, 11),
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.detected_scales: list[Scale] = []
 
     def detect_scale_from_notes(self, notes: list[int]) -> list[Scale]:
@@ -358,7 +358,7 @@ class MicrotonalScale:
 
 
 class CustomScaleBuilder:
-    def __init__(self):
+    def __init__(self) -> None:
         self.custom_scales: dict[str, Scale] = {}
 
     def create_scale(

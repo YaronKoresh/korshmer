@@ -91,7 +91,7 @@ class VoiceLeadingViolation:
 
 
 class VoiceLeadingAnalyzer:
-    def __init__(self):
+    def __init__(self) -> None:
         self.violations: list[VoiceLeadingViolation] = []
 
     def analyze_voices(
@@ -391,7 +391,7 @@ class FugueAnalyzer:
         start_time: float
         duration: float
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.subjects: list[FugueAnalyzer.Subject] = []
 
     def detect_subject(

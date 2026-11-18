@@ -686,6 +686,10 @@ REATTACK_AFTER_S = 0.08
 ADOPT_APART_S = 0.1
 ADOPT_WITHIN_DB = 10.0
 ADOPT_FLOOR_DB = -30.0
+RING_DROP_DB = 9.0
+RING_MAX_EXTRA_S = 2.0
+RING_MIN_EXTRA_S = 0.05
+RING_GAP_S = 0.02
 
 
 def pitch_band_level(audio, sample_rate):
@@ -748,6 +752,43 @@ def adopt_heard_notes(midi, variants, level, frames_per_second):
     pitched[0].notes.extend(adopted)
     pitched[0].notes.sort(key=lambda n: (n.start, n.pitch))
     return len(adopted)
+
+
+def _ring_end(note, row, limit, frames_per_second):
+    first = int(note.start * frames_per_second)
+    last = max(first + 1, int(note.end * frames_per_second))
+    if last >= len(row):
+        return note.end
+    own = float(row[first:last].mean())
+    floor = max(own - RING_DROP_DB, ADOPT_FLOOR_DB)
+    stop = min(len(row), int(limit * frames_per_second))
+    frame = last
+    while frame < stop and row[frame] >= floor:
+        frame += 1
+    return max(note.end, min(limit, frame / frames_per_second))
+
+
+def extend_ringing_notes(inst, level, frames_per_second):
+    if inst.is_drum:
+        return 0
+    by_pitch = _by_pitch(inst.notes)
+    extended = 0
+    for pitch, notes in by_pitch.items():
+        row_index = pitch - PITCH_FLUX_LOWEST
+        if not 0 <= row_index < level.shape[0]:
+            continue
+        notes.sort(key=lambda n: n.start)
+        for note, following in zip(notes, [*notes[1:], None], strict=True):
+            limit = note.end + RING_MAX_EXTRA_S
+            if following is not None:
+                limit = min(limit, following.start - RING_GAP_S)
+            if limit <= note.end:
+                continue
+            end = _ring_end(note, level[row_index], limit, frames_per_second)
+            if end > note.end + RING_MIN_EXTRA_S:
+                note.end = end
+                extended += 1
+    return extended
 
 
 def level_flux(level):

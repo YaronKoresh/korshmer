@@ -138,7 +138,7 @@ GM_DRUM_MAP = {
 
 
 class DrumMapEditor:
-    def __init__(self):
+    def __init__(self) -> None:
         self.custom_maps: dict[str, dict[int, DrumSample]] = {}
         self.current_map = "GM"
         self.gm_map: dict[int, DrumSample] = {
@@ -209,7 +209,7 @@ class DrumPatternLibrary:
             + [(38, 1.0 + i * 2.0, 105) for i in range(2)]
         )
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.patterns: dict[str, list[tuple[int, float, int]]] = {
             "rock_basic": list(self.ROCK_BASIC),
             "jazz_swing": list(self.JAZZ_SWING),
