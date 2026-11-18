@@ -1,33 +1,65 @@
+import hashlib
 import os
+import re
+from dataclasses import dataclass
 
 import librosa
 import numpy as np
 import soundfile as sf
 
+from korshmer.audio_processing import clip_level, clip_tempo
 from korshmer.constants import DATA_DIR
 
 POLISHED_FOLDER = "clip_edits"
-PULSE_HOP = 256
-PULSE_STEPS_PER_BEAT = (1, 2, 4)
+PULSE_HOP = clip_tempo.PULSE_HOP
+PULSE_STEPS_PER_BEAT = clip_tempo.PULSE_STEPS_PER_BEAT
 PULSE_CERTAINTY = 2.6
 COARSER_PULSE_SHARE = 0.7
-CUT_EDGE_SECONDS = 0.05
-NOISE_SPREADS = 2.0
 FIRST_SOUND_SHARE = 0.1
 SILENCE_LEVEL = 1e-4
 ON_PULSE = "pulse"
 ON_FIRST_SOUND = "first sound"
 SILENT = "silent"
 MIN_PULSE_SECONDS = 1.0
-NOISE_SUFFIX = "clean"
-QUALITY_SUFFIX = "improved"
+NOISE_TAG = "clean"
+QUALITY_TAG = "improved"
+TEMPO_TAG = "tempo"
+NOISE = "noise"
+QUALITY = "quality"
+ALIGN = "align"
+EARLIER_TAGS = re.compile(
+    rf"(_({NOISE_TAG}|{QUALITY_TAG}|{TEMPO_TAG})(_[0-9a-f]{{8}})?)+$"
+)
+NOISE_STAGE = "Removing background noise"
+QUALITY_STAGE = "Measuring and improving the level"
+TEMPO_STAGE = "Comparing the tempo with the song"
+STRETCH_STAGE = "Matching the tempo of the song"
+BEAT_STAGE = "Finding the beat"
 
 
-def _polished_path(path, suffix, folder=None):
+class ClipFixCancelled(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class ClipAudio:
+    path: str
+    start: float = 0.0
+    offset: float = 0.0
+    duration: float | None = None
+    source_path: str | None = None
+
+
+def fixed_clip_path(path, tag, folder=None):
     folder = folder or os.path.join(str(DATA_DIR), POLISHED_FOLDER)
     os.makedirs(folder, exist_ok=True)
-    base = os.path.splitext(os.path.basename(path))[0]
-    return os.path.join(folder, f"{base}_{suffix}.wav")
+    name = os.path.splitext(os.path.basename(path))[0]
+    stat = os.stat(path)
+    key = f"{os.path.abspath(path)}|{stat.st_mtime_ns}|{stat.st_size}|{tag}"
+    mark = hashlib.sha1(key.encode()).hexdigest()[:8]
+    return os.path.join(
+        folder, f"{EARLIER_TAGS.sub('', name)}_{tag}_{mark}.wav"
+    )
 
 
 def _read(path):
@@ -60,20 +92,14 @@ def _beats_of(frames, sample_rate, beats_at, start):
 def _pulse_shift(mono, sample_rate, beats_at, start):
     if mono.shape[0] < MIN_PULSE_SECONDS * sample_rate:
         return None
-    strength = librosa.onset.onset_strength(
-        y=mono, sr=sample_rate, hop_length=PULSE_HOP
-    )
-    hits = librosa.onset.onset_detect(
-        onset_envelope=strength, sr=sample_rate, hop_length=PULSE_HOP
-    )
-    hits = hits[hits >= CUT_EDGE_SECONDS * sample_rate / PULSE_HOP]
-    middle = float(np.median(strength))
-    floor = middle + NOISE_SPREADS * float(np.median(np.abs(strength - middle)))
-    weights = np.maximum(strength[hits] - floor, 0.0).astype(np.float64)
+    seconds, weights = clip_tempo.onsets(mono, sample_rate)
     spread = float(np.sqrt(np.sum(weights**2)))
-    if hits.size == 0 or spread <= 0.0:
+    if seconds.shape[0] == 0 or spread <= 0.0:
         return None
-    beats = _beats_of(hits, sample_rate, beats_at, start)
+    beats = np.array(
+        [beats_at(float(start) + second) for second in seconds],
+        dtype=np.float64,
+    )
     pulses = [
         (np.sum(weights * np.exp(2j * np.pi * steps * beats)), steps)
         for steps in PULSE_STEPS_PER_BEAT
@@ -116,9 +142,12 @@ def clip_beat_shift(
     return None, SILENT
 
 
-def file_beat_shift(path, beats_at, start=0.0, offset=0.0, duration=None):
-    data, sample_rate = _read(path)
-    return clip_beat_shift(data, sample_rate, beats_at, start, offset, duration)
+def clip_own_tempo(data, sample_rate, song_bpm, offset=0.0, duration=None):
+    mono = _kept_part(data, sample_rate, offset, duration)
+    if mono.shape[0] < MIN_PULSE_SECONDS * sample_rate:
+        return None
+    seconds, weights = clip_tempo.onsets(mono, sample_rate)
+    return clip_tempo.own_tempo(seconds, weights, float(song_bpm))
 
 
 def remove_noise_file(path, folder=None):
@@ -126,25 +155,138 @@ def remove_noise_file(path, folder=None):
 
     data, sample_rate = _read(path)
     return _write(
-        _polished_path(path, NOISE_SUFFIX, folder),
+        fixed_clip_path(path, NOISE_TAG, folder),
         clean_vocal(data, sample_rate),
         sample_rate,
     )
 
 
 def improve_quality_file(path, folder=None):
-    from korshmer.audio_processing.smart_mastering import (
-        SmartMastering,
-        SmartMasteringConfig,
-    )
+    data, sample_rate = _read(path)
+    improved, readings = clip_level.improve(data, sample_rate)
+    if not readings or clip_level.unchanged(readings):
+        return path, readings
+    target = fixed_clip_path(path, QUALITY_TAG, folder)
+    return _write(target, improved, sample_rate), readings
+
+
+def match_tempo_file(path, clip_bpm, song_bpm, folder=None):
+    from korshmer.audio_processing.tempo_align import stretch_to_tempo
+    from korshmer.midi.tempo_map import TempoMap
 
     data, sample_rate = _read(path)
-    improved, sample_rate = SmartMastering(SmartMasteringConfig()).process(
-        data.T, sample_rate
+    matched = stretch_to_tempo(
+        data.T, sample_rate, 0.0, TempoMap.uniform(clip_bpm), song_bpm
     )
-    improved = np.asarray(improved, dtype=np.float32)
-    if improved.ndim == 2:
-        improved = improved.T
-    return _write(
-        _polished_path(path, QUALITY_SUFFIX, folder), improved, int(sample_rate)
+    target = fixed_clip_path(path, TEMPO_TAG, folder)
+    _write(target, matched.T, sample_rate)
+    return target, matched.shape[1] / sample_rate
+
+
+def _stages(steps, clip, song_bpm):
+    paths = 1 + (clip.source_path is not None)
+    stages = []
+    if NOISE in steps:
+        stages += [NOISE_STAGE] * paths
+    if QUALITY in steps:
+        stages += [QUALITY_STAGE] * paths
+    if ALIGN in steps:
+        if song_bpm is not None and clip.source_path is None:
+            stages += [TEMPO_STAGE, STRETCH_STAGE]
+        stages.append(BEAT_STAGE)
+    return stages
+
+
+def fix_clip(
+    clip,
+    steps,
+    beats_at,
+    song_bpm=None,
+    report=None,
+    cancelled=None,
+    folder=None,
+):
+    stages = _stages(steps, clip, song_bpm)
+    made = []
+    done = 0
+
+    def enter(stage):
+        nonlocal done
+        if cancelled is not None and cancelled():
+            raise ClipFixCancelled(stage)
+        if report is not None:
+            report(stage, done, len(stages))
+        done += 1
+
+    def kept(path, origin):
+        if path != origin:
+            made.append(path)
+        return path
+
+    result = {"steps": tuple(steps), "path": clip.path}
+    current = {"path": clip.path, "source": clip.source_path}
+    try:
+        for step in (NOISE, QUALITY):
+            if step not in steps:
+                continue
+            for role in ("path", "source"):
+                if current[role] is None:
+                    continue
+                if step == NOISE:
+                    enter(NOISE_STAGE)
+                    fixed = remove_noise_file(current[role], folder)
+                else:
+                    enter(QUALITY_STAGE)
+                    fixed, readings = improve_quality_file(
+                        current[role], folder
+                    )
+                    if role == "path":
+                        result["readings"] = readings
+                current[role] = kept(fixed, current[role])
+        if ALIGN in steps:
+            _align(
+                clip, current, result, beats_at, song_bpm, enter, kept, folder
+            )
+    except Exception:
+        _remove(made)
+        raise
+    result["path"] = current["path"]
+    if current["source"] is not None:
+        result["source"] = current["source"]
+    finals = {current["path"], current["source"]}
+    _remove([path for path in made if path not in finals])
+    result["made"] = [path for path in made if path in finals]
+    return result
+
+
+def _align(clip, current, result, beats_at, song_bpm, enter, kept, folder):
+    offset, duration = clip.offset, clip.duration
+    data, sample_rate = _read(current["path"])
+    if song_bpm is not None and clip.source_path is None:
+        enter(TEMPO_STAGE)
+        found = clip_own_tempo(data, sample_rate, song_bpm, offset, duration)
+        enter(STRETCH_STAGE)
+        if found is not None:
+            clip_bpm, _certainty = found
+            matched, length = match_tempo_file(
+                current["path"], clip_bpm, song_bpm, folder
+            )
+            current["path"] = kept(matched, current["path"])
+            ratio = clip_bpm / float(song_bpm)
+            offset *= ratio
+            duration = None if duration is None else duration * ratio
+            result["tempo"] = (float(clip_bpm), float(song_bpm))
+            result["length"] = float(length)
+            data, sample_rate = _read(matched)
+    enter(BEAT_STAGE)
+    result["shift"], result["anchor"] = clip_beat_shift(
+        data, sample_rate, beats_at, clip.start, offset, duration
     )
+
+
+def _remove(paths):
+    for path in paths:
+        try:
+            os.remove(path)
+        except OSError:
+            continue

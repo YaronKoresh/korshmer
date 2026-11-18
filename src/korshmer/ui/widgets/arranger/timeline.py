@@ -13,8 +13,10 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -304,6 +306,8 @@ class ClipWaveformWorker(QThread):
 class ClipEditWorker(QThread):
     edit_ready = Signal(int, str, object)
     edit_failed = Signal(int, str, str)
+    edit_cancelled = Signal(int, str)
+    edit_progress = Signal(int, str, str, int)
 
     def __init__(self, clip_id, label, job, parent=None):
         super().__init__(parent)
@@ -311,9 +315,18 @@ class ClipEditWorker(QThread):
         self.label = label
         self.job = job
 
+    def _report(self, stage, done, total):
+        percent = int(100 * done / total) if total else 0
+        self.edit_progress.emit(self.clip_id, self.label, stage, percent)
+
     def run(self):
+        from korshmer.audio_processing.clip_polish import ClipFixCancelled
+
         try:
-            result = self.job()
+            result = self.job(self._report, self.isInterruptionRequested)
+        except ClipFixCancelled:
+            self.edit_cancelled.emit(self.clip_id, self.label)
+            return
         except Exception as problem:
             logging.getLogger(__name__).exception(
                 f"{self.label} failed for clip {self.clip_id}"
@@ -339,6 +352,8 @@ class ArrangerTimeline(QWidget):
         self._waveform_workers = []
         self._pending_waveform_ids = set()
         self._clip_edit_workers = []
+        self._clip_edit_files = set()
+        self._saved_clip_files = set()
         layout = QVBoxLayout(self)
 
         self.piano_roll = InteractivePianoRoll()
@@ -381,8 +396,30 @@ class ArrangerTimeline(QWidget):
             self.piano_roll.select_track_notes
         )
 
+        self._build_clip_edit_bar(layout)
         layout.addWidget(self.splitter, 1)
         self._update_history_buttons()
+
+    def _build_clip_edit_bar(self, layout):
+        self.clip_edit_bar = QWidget()
+        row = QHBoxLayout(self.clip_edit_bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(TOOLBAR_SPACING)
+        self.clip_edit_label = QLabel("")
+        self.clip_edit_progress = QProgressBar()
+        self.clip_edit_progress.setRange(0, 100)
+        self.clip_edit_progress.setAccessibleName("Clip fix progress")
+        self.btn_cancel_clip_edit = QPushButton("Cancel")
+        self.btn_cancel_clip_edit.setToolTip(
+            "Stop the clip fix that is running and leave the clip as it was"
+        )
+        self.btn_cancel_clip_edit.setAccessibleName("Cancel clip fix")
+        self.btn_cancel_clip_edit.clicked.connect(self.cancel_clip_edits)
+        row.addWidget(self.clip_edit_label)
+        row.addWidget(self.clip_edit_progress, 1)
+        row.addWidget(self.btn_cancel_clip_edit)
+        self.clip_edit_bar.setVisible(False)
+        layout.addWidget(self.clip_edit_bar)
 
     def _build_transport_toolbar(self, layout):
         toolbar = FlowLayout(spacing=TOOLBAR_SPACING)
@@ -587,6 +624,7 @@ class ArrangerTimeline(QWidget):
             self.tracks_changed.emit()
         self._update_history_buttons()
         self.check_placeholder()
+        self._drop_unused_clip_files()
 
     def _on_tracks_edited(self):
         self.piano_roll.load_model(keep_selection=True)
@@ -846,27 +884,21 @@ class ArrangerTimeline(QWidget):
     def _clip_edit_job(self, clip, steps):
         from korshmer.audio_processing import clip_polish
 
-        path, start = clip.path, clip.start
-        offset, duration = clip.offset, clip.duration
-        source = clip.source
+        audio = clip_polish.ClipAudio(
+            clip.path,
+            clip.start,
+            clip.offset,
+            clip.duration,
+            clip.source[0] if clip.source is not None else None,
+        )
         beats_at = self._clip_beats_at()
+        steady = self.model.tempo_map is None and self.model.normalized is None
+        song_bpm = float(self.model.tempo) if steady else None
 
-        def polished(target):
-            if "noise" in steps:
-                target = clip_polish.remove_noise_file(target)
-            if "quality" in steps:
-                target = clip_polish.improve_quality_file(target)
-            return target
-
-        def job():
-            result = {"path": polished(path), "steps": steps}
-            if source is not None:
-                result["source"] = polished(source[0])
-            if "align" in steps:
-                result["shift"], result["anchor"] = clip_polish.file_beat_shift(
-                    result["path"], beats_at, start, offset, duration
-                )
-            return result
+        def job(report, cancelled):
+            return clip_polish.fix_clip(
+                audio, steps, beats_at, song_bpm, report, cancelled
+            )
 
         return job
 
@@ -880,10 +912,50 @@ class ArrangerTimeline(QWidget):
         )
         worker.edit_ready.connect(self._on_clip_edit_ready)
         worker.edit_failed.connect(self._on_clip_edit_failed)
+        worker.edit_cancelled.connect(self._on_clip_edit_cancelled)
+        worker.edit_progress.connect(self._on_clip_edit_progress)
+        worker.finished.connect(self._refresh_clip_edit_bar)
         self._clip_edit_workers.append(worker)
         self.clip_edit_status.emit(f"{label}: working on '{clip.name}'")
+        self._show_clip_edit_progress(label, clip.name, "Starting", 0)
         worker.start()
         return worker
+
+    def _show_clip_edit_progress(self, label, name, stage, percent):
+        self.clip_edit_label.setText(f"{label} on '{name}': {stage}")
+        self.clip_edit_progress.setValue(percent)
+        self.clip_edit_bar.setVisible(True)
+
+    def _on_clip_edit_progress(self, clip_id, label, stage, percent):
+        clip = self.model.clip_by_id(clip_id)
+        name = clip.name if clip is not None else "the clip"
+        self._show_clip_edit_progress(label, name, stage, percent)
+
+    def _refresh_clip_edit_bar(self):
+        self.clip_edit_bar.setVisible(self.clip_edit_running())
+
+    def cancel_clip_edits(self):
+        for worker in self._clip_edit_workers:
+            worker.requestInterruption()
+
+    def _on_clip_edit_cancelled(self, clip_id, label):
+        clip = self.model.clip_by_id(clip_id)
+        name = clip.name if clip is not None else "the clip"
+        self.clip_edit_status.emit(
+            f"{label}: cancelled, '{name}' was left as it was"
+        )
+        self._refresh_clip_edit_bar()
+
+    def _drop_unused_clip_files(self):
+        in_use = self.model.clip_files_in_use() | self._saved_clip_files
+        for path in sorted(self._clip_edit_files - in_use):
+            self._clip_edit_files.discard(path)
+            try:
+                os.remove(path)
+            except OSError as problem:
+                logging.getLogger(__name__).warning(
+                    f"Could not remove the unused clip file {path}: {problem}"
+                )
 
     def clip_edit_running(self, clip_id=None):
         self._clip_edit_workers = [
@@ -922,22 +994,39 @@ class ArrangerTimeline(QWidget):
         return clip.start + beats * 60.0 / float(self.model.tempo)
 
     def _on_clip_edit_ready(self, clip_id, label, result):
+        from korshmer.audio_processing import clip_level
+
+        self._clip_edit_files.update(result.get("made", ()))
         self.piano_roll.sync_model_from_scene()
         clip = self.model.clip_by_id(clip_id)
         if clip is None:
+            self._drop_unused_clip_files()
             return
-        target = clip.start
+        start = clip.start
         if result.get("shift"):
-            target = self._shifted_clip_start(clip, result["shift"])
-            if target < 0.0:
-                target = self._shifted_clip_start(clip, result["shift"] + 1.0)
-        moved = abs(target - clip.start) >= CLIP_MOVE_TOLERANCE_S
-        placement = self._clip_placement_text(
-            result, target - clip.start, moved
-        )
+            start = self._shifted_clip_start(clip, result["shift"])
+            if start < 0.0:
+                start = self._shifted_clip_start(clip, result["shift"] + 1.0)
+        moved = abs(start - clip.start) >= CLIP_MOVE_TOLERANCE_S
+        notes = []
+        if "readings" in result:
+            notes.append(clip_level.summary(result["readings"]))
+        if "tempo" in result:
+            notes.append(
+                "tempo matched from {:.1f} to {:.1f} BPM".format(
+                    *result["tempo"]
+                )
+            )
+        placement = self._clip_placement_text(result, start - clip.start, moved)
+        if placement:
+            notes.append(placement)
         new_path = result["path"]
         if new_path == clip.path and not moved:
-            self.clip_edit_status.emit(f"{label}: '{clip.name}' {placement}")
+            self.clip_edit_status.emit(
+                f"{label}: nothing changed in '{clip.name}': "
+                + "; ".join(notes)
+            )
+            self._refresh_clip_edit_bar()
             return
         self.model.snapshot()
         if new_path != clip.path:
@@ -945,18 +1034,23 @@ class ArrangerTimeline(QWidget):
             clip.waveform = []
             if clip.source is not None and "source" in result:
                 clip.source = (result["source"], *clip.source[1:])
-            if "quality" in result["steps"]:
+            if "length" in result:
+                clip.rescale(result["length"])
+            readings = result.get("readings")
+            if readings and not clip_level.unchanged(readings):
                 clip.gain = 1.0
         if moved:
-            clip.start = target
+            clip.start = start
         self.piano_roll.load_model(keep_selection=True)
         if not clip.waveform:
             self._queue_waveform(clip)
             self._start_visible_waveforms()
         self._on_model_changed()
+        self._drop_unused_clip_files()
+        self._refresh_clip_edit_bar()
         ready = f"{label}: '{clip.name}' is ready"
         self.clip_edit_status.emit(
-            f"{ready}, it {placement}" if placement else ready
+            f"{ready}: {'; '.join(notes)}" if notes else ready
         )
 
     @staticmethod
@@ -967,20 +1061,21 @@ class ArrangerTimeline(QWidget):
         if anchor is None:
             return ""
         if anchor == clip_polish.SILENT:
-            return "is silent, so it stayed where it was"
+            return "it is silent, so it stayed where it was"
         if not moved:
-            return "is already on the beat"
+            return "it is already on the beat"
         if anchor == clip_polish.ON_FIRST_SOUND:
             return (
-                f"has no steady beat, so its first sound was moved "
+                f"it has no steady beat, so its first sound was moved "
                 f"{seconds:+.3f} s onto a beat"
             )
-        return f"was moved {seconds:+.3f} s onto the beat"
+        return f"it was moved {seconds:+.3f} s onto the beat"
 
     def _on_clip_edit_failed(self, clip_id, label, problem):
         clip = self.model.clip_by_id(clip_id)
         name = clip.name if clip is not None else "the clip"
         text = f"{label} could not finish for '{name}': {problem}"
+        self._refresh_clip_edit_bar()
         self.clip_edit_status.emit(text)
         QMessageBox.warning(self, label, text)
 
@@ -1097,6 +1192,10 @@ class ArrangerTimeline(QWidget):
     def to_project_dict(self):
         self.piano_roll.sync_model_from_scene()
         data = self.model.to_dict()
+        self._saved_clip_files |= {clip.path for clip in self.model.clips}
+        self._saved_clip_files |= {
+            clip.source[0] for clip in self.model.clips if clip.source
+        }
         data["snap"] = self.piano_roll.snap_enabled
         data["grid"] = self.combo_grid.currentText()
         data["current_track_id"] = self.piano_roll.current_track_id

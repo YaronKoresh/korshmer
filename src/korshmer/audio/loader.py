@@ -1,3 +1,4 @@
+import hashlib
 import math
 import numbers
 import os
@@ -63,7 +64,8 @@ def usable_audio_path(path, folder=None):
         return path
     source = Path(path)
     target_dir = Path(folder) if folder else Path(DATA_DIR) / CONVERTED_FOLDER
-    target = target_dir / f"{source.stem}.wav"
+    mark = hashlib.sha1(str(source.resolve()).encode()).hexdigest()[:8]
+    target = target_dir / f"{source.stem}_{mark}.wav"
     if target.is_file() and target.stat().st_mtime >= source.stat().st_mtime:
         return str(target)
     ffmpeg = shutil.which("ffmpeg")

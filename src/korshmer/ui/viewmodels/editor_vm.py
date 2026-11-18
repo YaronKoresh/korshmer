@@ -1155,6 +1155,16 @@ class EditorModel:
         self.notes = [n.copy() for n in notes]
         self.clips = [c.copy() for c in clips]
 
+    def clip_files_in_use(self):
+        used = set()
+        history = [state[2] for state in self._undo_stack + self._redo_stack]
+        for clips in [self.clips, *history]:
+            for clip in clips:
+                used.add(clip.path)
+                if clip.source is not None:
+                    used.add(clip.source[0])
+        return used
+
     def snapshot(self):
         self._undo_stack.append(self._capture())
         overflow = len(self._undo_stack) - self.max_undo_steps
