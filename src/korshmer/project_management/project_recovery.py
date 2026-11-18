@@ -52,7 +52,7 @@ def load_recovery_file(recovery_file: Path) -> dict[str, Any] | None:
     try:
         with logged_file_op("Load recovery file", recovery_file):
             with gzip.open(recovery_file, "rt", encoding="utf-8") as f:
-                recovery_data = json.load(f)
+                recovery_data: dict[str, Any] = json.load(f)
         problem = validate_recovery_data(recovery_data)
     except Exception as e:
         problem = str(e) or type(e).__name__

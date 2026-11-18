@@ -41,8 +41,8 @@ class FilesMixin:
             if hasattr(self.spectrogram, "spectrogram_image"):
                 self.spectrogram.spectrogram_image = None
                 self.spectrogram.update()
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.warning(f"Could not release the open file: {exc}")
 
     def export_file_action(self, source_path):
         if not os.path.exists(source_path):

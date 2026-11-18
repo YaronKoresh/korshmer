@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -18,13 +20,14 @@ except ImportError:
 try:
     from korshmer.ui.widgets.material.button import HelpButton
 except ImportError:
-    from PySide6.QtWidgets import QPushButton
+    if not TYPE_CHECKING:
+        from PySide6.QtWidgets import QPushButton
 
-    class HelpButton(QPushButton):
-        def __init__(self, tooltip):
-            super().__init__("?")
-            self.setToolTip(tooltip)
-            self.setFixedSize(16, 16)
+        class HelpButton(QPushButton):
+            def __init__(self, tooltip):
+                super().__init__("?")
+                self.setToolTip(tooltip)
+                self.setFixedSize(16, 16)
 
 
 class MaterialSlider(QWidget):

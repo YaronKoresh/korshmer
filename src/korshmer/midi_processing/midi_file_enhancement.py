@@ -264,7 +264,7 @@ class MIDIFormatConverter:
     def split_channels(
         self, track: list[dict], channels: list[int]
     ) -> list[list[dict]]:
-        channel_tracks = {ch: [] for ch in channels}
+        channel_tracks: dict[int, list[dict]] = {ch: [] for ch in channels}
 
         for event in track:
             if "channel" in event:

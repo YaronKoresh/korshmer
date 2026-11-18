@@ -102,7 +102,8 @@ class MusicCopilot:
         )
         with urllib.request.urlopen(req, timeout=30) as response:
             data = json.loads(response.read().decode("utf-8"))
-            return data.get("response", "")
+            text: str = data.get("response", "")
+            return text
 
     def _call_openai(self, prompt: str) -> str:
         return self._guarded("openai", lambda: self._request_openai(prompt))
@@ -127,7 +128,8 @@ class MusicCopilot:
         )
         with urllib.request.urlopen(req, timeout=30) as response:
             data = json.loads(response.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"]
+            text: str = data["choices"][0]["message"]["content"]
+            return text
 
     def _call_anthropic(self, prompt: str) -> str:
         return self._guarded(
@@ -152,7 +154,8 @@ class MusicCopilot:
         )
         with urllib.request.urlopen(req, timeout=30) as response:
             data = json.loads(response.read().decode("utf-8"))
-            return data["content"][0]["text"]
+            text: str = data["content"][0]["text"]
+            return text
 
     def suggest(
         self,

@@ -2,6 +2,7 @@ import math
 import numbers
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, TypedDict
 
 import numpy as np
 
@@ -21,7 +22,7 @@ def _finite_number(value, name: str) -> float:
 def _point_count(value, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
         raise ValueError(f"{name} must be a whole number, got {value!r}")
-    if not 1 <= value <= MAX_CURVE_POINTS:
+    if not 1 <= int(value) <= MAX_CURVE_POINTS:
         raise ValueError(
             f"{name} must be between 1 and {MAX_CURVE_POINTS}, got {value!r}"
         )
@@ -208,7 +209,7 @@ class MPEProcessor:
         note.slide.sort(key=lambda x: x[0])
 
     def convert_to_midi(self, note: MPENote) -> list[dict]:
-        messages = []
+        messages: list[dict[str, Any]] = []
 
         messages.append(
             {
@@ -290,7 +291,7 @@ class MPEProcessor:
 
 
 class MPEChannelAllocator:
-    def __init__(self, config: MPEConfiguration = None):
+    def __init__(self, config: MPEConfiguration | None = None):
         self.config = config
         self.available_lower = (
             set(config.lower_zone_channels) if config else set()
@@ -298,7 +299,7 @@ class MPEChannelAllocator:
         self.available_upper = (
             set(config.upper_zone_channels) if config else set()
         )
-        self.allocated = {}
+        self.allocated: dict[int, MPEZone] = {}
 
     def allocate_channel(self, zone: MPEZone) -> int:
         if self.config is None:
@@ -369,7 +370,7 @@ class MPEToStandardMIDIConverter:
             self.PITCH_BEND_RANGE = pitch_bend_range
 
     def convert_note(self, mpe_note: MPENote) -> list[dict]:
-        messages = []
+        messages: list[dict[str, Any]] = []
 
         base_pitch = mpe_note.pitch
 
@@ -423,8 +424,15 @@ class MPEToStandardMIDIConverter:
         return messages
 
 
+class MPEControllerPreset(TypedDict):
+    pitch_bend_range: int
+    pressure_cc: int | None
+    timbre_cc: int
+    slide_cc: int
+
+
 class MPEControllerMapper:
-    CONTROLLER_PRESETS = {
+    CONTROLLER_PRESETS: dict[str, MPEControllerPreset] = {
         "roli_seaboard": {
             "pitch_bend_range": 48,
             "pressure_cc": None,

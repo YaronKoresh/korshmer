@@ -125,7 +125,7 @@ def _accents(audio, sr, beats):
     return scores
 
 
-def find_bar_grid(audio, sr, tempo, beats_per_bar=4):
+def find_bar_grid(audio, sr, tempo, beats_per_bar=4) -> BarGrid:
     sr = validate_sample_rate(sr)
     validate_audio_not_empty(audio)
     tempo = float(validate_effect_number(tempo, "Tempo", MIN_BPM, MAX_BPM))

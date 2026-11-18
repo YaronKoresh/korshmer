@@ -1,5 +1,6 @@
 import logging
 import threading
+from typing import Any
 
 _logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class DeviceManager:
     ) -> str:
         from korshmer.exceptions import GPUNotAvailableError
 
+        torch: Any
         try:
             import torch
         except ImportError:

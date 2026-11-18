@@ -3,13 +3,18 @@ from __future__ import annotations
 import functools
 import inspect
 import math
+from collections.abc import Callable
 from pathlib import Path
+from typing import ParamSpec, TypeVar
 
 import numpy as np
 
 from korshmer.constants import MAX_AUDIO_CHANNELS
 
 Number = int | float
+NumberT = TypeVar("NumberT", bound=float)
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 MIN_SAMPLE_RATE: int = 8000
@@ -18,7 +23,7 @@ MIN_SAMPLE_RATE: int = 8000
 MAX_SAMPLE_RATE: int = 192000
 
 
-def validate_sample_rate(sample_rate: Number) -> Number:
+def validate_sample_rate(sample_rate: NumberT) -> NumberT:
     if isinstance(sample_rate, (bool, np.bool_)) or not isinstance(
         sample_rate, (int, float, np.integer, np.floating)
     ):
@@ -552,7 +557,7 @@ def _audio_argument(func):
     return get
 
 
-def passthrough_empty_audio(func):
+def passthrough_empty_audio(func: Callable[P, R]) -> Callable[P, R]:
     get_audio = _audio_argument(func)
 
     @functools.wraps(func)
@@ -567,7 +572,7 @@ def passthrough_empty_audio(func):
     return wrapper
 
 
-def reject_empty_audio(func):
+def reject_empty_audio(func: Callable[P, R]) -> Callable[P, R]:
     get_audio = _audio_argument(func)
 
     @functools.wraps(func)
@@ -578,7 +583,9 @@ def reject_empty_audio(func):
     return wrapper
 
 
-def check_range(**ranges):
+def check_range(
+    **ranges: tuple[float, float],
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     if not ranges:
         raise TypeError("check_range needs at least one name=(min, max) range")
     for name, bounds in ranges.items():
@@ -591,7 +598,7 @@ def check_range(**ranges):
                 f"check_range minimum for {name!r} is above its maximum"
             )
 
-    def decorator(func):
+    def decorator(func: Callable[P, R]) -> Callable[P, R]:
         signature = inspect.signature(func)
         missing = [n for n in ranges if n not in signature.parameters]
         if missing:

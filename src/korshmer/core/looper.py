@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import threading
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -39,7 +40,7 @@ class Looper:
         self._armed = False
         self._rec: np.ndarray | None = None
         self._rec_pos = 0
-        self._stream = None
+        self._stream: Any = None
 
     @staticmethod
     def _positive(value, name) -> int:
@@ -121,6 +122,8 @@ class Looper:
 
     def _finish_layer(self) -> None:
         layer, self._rec = self._rec, None
+        if layer is None:
+            return
         shift = min(self.latency_frames, len(layer))
         if shift:
             layer = np.concatenate(

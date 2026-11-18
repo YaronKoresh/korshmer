@@ -414,7 +414,7 @@ class CustomScaleBuilder:
 
 
 class ScaleDegreeHighlighter:
-    def __init__(self, scale: Scale = None):
+    def __init__(self, scale: Scale | None = None):
         self.scale = scale
 
     def get_degree_color(self, note: int) -> str:

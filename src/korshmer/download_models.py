@@ -6,7 +6,7 @@ import demucs.pretrained
 from basic_pitch.inference import ICASSP_2022_MODEL_PATH
 
 
-def normalize_path(p) -> str:
+def normalize_path(p: str) -> str:
     return p.rstrip("/").replace(os.path.sep, "/")
 
 

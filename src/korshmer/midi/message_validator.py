@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import numbers
+from typing import SupportsInt
 
 from korshmer.midi_processing.note_validation import (
     validate_midi_cc_number,
@@ -20,7 +21,7 @@ PITCH_BEND_MIN: int = 0
 PITCH_BEND_MAX: int = 16383
 
 
-def _whole_int(value, label: str, low: int, high: int) -> int:
+def _whole_int(value: SupportsInt, label: str, low: int, high: int) -> int:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise ValueError(
             f"MIDI {label} must be a whole number from {low} to {high}, "

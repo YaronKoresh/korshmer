@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from typing import Any
 
 from korshmer.network.delay_buffer import DelayBuffer
 from korshmer.network.youtube_live import (
@@ -50,7 +51,7 @@ def make_platform_streamer(
 class MultiStreamer:
     def __init__(self, on_status: Callable[[str, str], None] | None = None):
         self._on_status = on_status
-        self._targets: dict[str, object] = {}
+        self._targets: dict[str, Any] = {}
         self._status: dict[str, str] = {}
         self._lock = threading.Lock()
         self._delay = DelayBuffer()
@@ -108,12 +109,15 @@ class MultiStreamer:
         channels: int = 2,
         **kwargs,
     ) -> YouTubeLiveStreamer:
+        def on_status(text: str) -> None:
+            self._report(name, text)
+
         streamer = make_platform_streamer(
             platform,
             stream_key,
             sample_rate,
             channels,
-            on_status=lambda text, n=name: self._report(n, text),
+            on_status=on_status,
             on_quality=lambda q, n=name: self._report(
                 n, f"{n} connection quality: {q}"
             ),
@@ -192,7 +196,7 @@ class MultiStreamer:
                 accepted += 1
         return accepted
 
-    def _snapshot(self) -> dict[str, object]:
+    def _snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._targets)
 

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from korshmer.audio_processing.validation import validate_time_signature
@@ -66,7 +66,7 @@ class ScoreNote:
     start_time: float
     velocity: int
     accidental: Accidental | None = None
-    articulations: list[Articulation] = None
+    articulations: list[Articulation] = field(default_factory=list)
     ornament: Ornament | None = None
     is_tied: bool = False
     tuplet_ratio: tuple[int, int] | None = None

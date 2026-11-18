@@ -32,7 +32,7 @@ class SmartMixingAssistant:
 
         return features
 
-    def _compute_spectrum(self, audio: np.ndarray, sr: int) -> np.ndarray:
+    def _compute_spectrum(self, audio: np.ndarray, sr: float) -> np.ndarray:
         if audio.ndim == 2:
             audio_mono = np.mean(audio, axis=0)
         else:
@@ -62,7 +62,7 @@ class SmartMixingAssistant:
         else:
             width = 0.0
 
-        return width
+        return float(width)
 
     def _compute_dynamics(self, audio: np.ndarray) -> dict:
         if audio.ndim == 2:
@@ -80,7 +80,7 @@ class SmartMixingAssistant:
 
         return {"rms": rms, "peak": peak, "crest_factor": crest_factor}
 
-    def _compute_frequency_balance(self, audio: np.ndarray, sr: int) -> dict:
+    def _compute_frequency_balance(self, audio: np.ndarray, sr: float) -> dict:
         if audio.ndim == 2:
             audio_mono = np.mean(audio, axis=0)
         else:
@@ -319,7 +319,7 @@ class SmartMixingAssistant:
 
         smoothed_gain = np.where(is_attack, smoothed_attack, smoothed_release)
 
-        compressed = audio * smoothed_gain
+        compressed: np.ndarray = audio * smoothed_gain
 
         return compressed
 
@@ -399,7 +399,7 @@ class SmartMixingAssistant:
         gain_db = target_lufs - current_lufs
         gain_linear = 10 ** (gain_db / 20)
 
-        normalized = audio * gain_linear
+        normalized: np.ndarray = audio * gain_linear
 
         peak = np.max(np.abs(normalized))
         if peak > 0.95:
@@ -474,7 +474,8 @@ class GenreMixingPresets:
         }
 
     def get_preset(self, genre: str) -> dict:
-        return self.presets.get(genre.lower(), self.presets["pop"])
+        preset: dict = self.presets.get(genre.lower(), self.presets["pop"])
+        return preset
 
     def apply_preset(
         self,

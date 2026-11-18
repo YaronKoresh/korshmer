@@ -98,7 +98,7 @@ class AssetManager:
     def add_asset(
         self,
         file_path: Path,
-        tags: list[str] = None,
+        tags: list[str] | None = None,
         copy_to_library: bool = True,
     ) -> str | None:
         try:
@@ -282,8 +282,8 @@ class AssetManager:
     def search_assets(
         self,
         query: str = "",
-        tags: list[str] = None,
-        asset_type: str = None,
+        tags: list[str] | None = None,
+        asset_type: str | None = None,
         favorites_only: bool = False,
     ) -> list[dict[str, Any]]:
         query = sanitize_search_query(query)
@@ -334,7 +334,7 @@ class AssetManager:
             self._save_library()
 
     def find_duplicates(self) -> list[list[str]]:
-        size_groups = {}
+        size_groups: dict[int, list[str]] = {}
 
         for asset_id, asset_info in self.asset_library.items():
             size = asset_info.get("size", 0)
@@ -370,7 +370,7 @@ class AssetManager:
             asset.get("size", 0) for asset in self.asset_library.values()
         )
 
-        type_counts = {}
+        type_counts: dict[str, int] = {}
         for asset in self.asset_library.values():
             asset_type = asset.get("type", "other")
             type_counts[asset_type] = type_counts.get(asset_type, 0) + 1

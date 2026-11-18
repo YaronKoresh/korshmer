@@ -36,10 +36,10 @@ class QueuedTask:
     task_id: str = field(
         default_factory=lambda: str(uuid.uuid4()), compare=False
     )
-    fn: Callable = field(default=None, compare=False)
+    fn: Callable = field(compare=False, kw_only=True)
     args: tuple = field(default_factory=tuple, compare=False)
     kwargs: dict = field(default_factory=dict, compare=False)
-    future: Future = field(default=None, compare=False)
+    future: Future = field(compare=False, kw_only=True)
     cancel_token: threading.Event = field(
         default_factory=threading.Event, compare=False
     )
@@ -48,7 +48,7 @@ class QueuedTask:
 
 
 class ProcessingQueue:
-    def __init__(self, max_workers: int = None):
+    def __init__(self, max_workers: int | None = None):
         if max_workers is None:
             max_workers = compute_worker_count("compute")
         else:
@@ -56,7 +56,7 @@ class ProcessingQueue:
 
         self.max_workers = max_workers
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._heap = []
+        self._heap: list[QueuedTask] = []
         self._heap_lock = TrackedLock("ProcessingQueue.heap")
         self._sequence_counter = 0
         self._tasks_dict: dict[str, QueuedTask] = {}

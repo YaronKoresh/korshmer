@@ -18,12 +18,12 @@ class AudioMetering:
 
     @reject_empty_audio
     def peak_level(self, audio_data: np.ndarray) -> float:
-        return 20 * np.log10(np.max(np.abs(audio_data)) + 1e-10)
+        return float(20 * np.log10(np.max(np.abs(audio_data)) + 1e-10))
 
     @reject_empty_audio
     def rms_level(self, audio_data: np.ndarray) -> float:
         rms = np.sqrt(np.mean(audio_data**2))
-        return 20 * np.log10(rms + 1e-10)
+        return float(20 * np.log10(rms + 1e-10))
 
     @reject_empty_audio
     def lufs(self, audio_data: np.ndarray) -> float:
@@ -34,7 +34,7 @@ class AudioMetering:
             loudness = meter.integrated_loudness(
                 audio_data.T if audio_data.ndim > 1 else audio_data
             )
-            return loudness
+            return float(loudness)
         except ImportError:
             return self.rms_level(audio_data)
 
@@ -44,13 +44,13 @@ class AudioMetering:
             audio_data, orig_sr=self.sr, target_sr=self.sr * 4
         )
         peak = np.max(np.abs(upsampled))
-        return 20 * np.log10(peak + 1e-10)
+        return float(20 * np.log10(peak + 1e-10))
 
     @reject_empty_audio
     def crest_factor(self, audio_data: np.ndarray) -> float:
         peak = np.max(np.abs(audio_data))
         rms = np.sqrt(np.mean(audio_data**2))
-        return 20 * np.log10(peak / (rms + 1e-10))
+        return float(20 * np.log10(peak / (rms + 1e-10)))
 
     @reject_empty_audio
     def dynamic_range(
@@ -63,7 +63,7 @@ class AudioMetering:
             min(int(len(sorted_levels) * percentile / 100), last)
         ]
         noise_floor = sorted_levels[min(int(len(sorted_levels) * 0.1), last)]
-        return 20 * np.log10(peak_level / (noise_floor + 1e-10))
+        return float(20 * np.log10(peak_level / (noise_floor + 1e-10)))
 
     @reject_empty_audio
     def stereo_correlation(self, audio_data: np.ndarray) -> float:
@@ -78,7 +78,7 @@ class AudioMetering:
             return 1.0 if both_constant and left[0] == right[0] else 0.0
 
         correlation = np.corrcoef(left, right)[0, 1]
-        return correlation
+        return float(correlation)
 
     @reject_empty_audio
     def spectrum_analysis(
@@ -100,7 +100,8 @@ class AudioMetering:
         centroid = librosa.feature.spectral_centroid(
             y=audio_data, sr=self.sr, n_fft=n_fft, hop_length=hop_length
         )
-        return centroid[0]
+        result: np.ndarray = centroid[0]
+        return result
 
     @reject_empty_audio
     def zero_crossing_rate(
@@ -116,7 +117,8 @@ class AudioMetering:
         zcr = librosa.feature.zero_crossing_rate(
             audio_data, frame_length=frame_length, hop_length=hop_length
         )
-        return zcr[0]
+        result: np.ndarray = zcr[0]
+        return result
 
 
 class Analyzer:
@@ -128,7 +130,7 @@ class Analyzer:
     def analyze_audio(
         self, audio_data: np.ndarray
     ) -> dict[str, float | np.ndarray]:
-        analysis = {
+        analysis: dict[str, float | np.ndarray] = {
             "peak_db": self.metering.peak_level(audio_data),
             "rms_db": self.metering.rms_level(audio_data),
             "crest_factor_db": self.metering.crest_factor(audio_data),

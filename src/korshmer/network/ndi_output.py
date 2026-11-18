@@ -5,6 +5,7 @@ import queue
 import re
 import threading
 from collections.abc import Callable
+from typing import Any
 
 from korshmer.network.youtube_live import (
     check_audio_format,
@@ -64,7 +65,7 @@ class NdiOutput:
         self._on_status = on_status
         self._factory = sender_factory or CyndilibSender
         self._queue: queue.Queue = queue.Queue(maxsize=int(max_queue))
-        self._sender = None
+        self._sender: Any = None
         self._thread: threading.Thread | None = None
         self._running = False
         self.dropped_blocks = 0

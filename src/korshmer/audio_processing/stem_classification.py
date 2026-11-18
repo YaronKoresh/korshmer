@@ -74,7 +74,7 @@ class StemClassifier:
             score = self._calculate_similarity(features, profile)
             scores[instrument] = score
 
-        classified_instrument = max(scores, key=scores.get)
+        classified_instrument = max(scores, key=lambda name: scores[name])
         confidence = scores[classified_instrument]
 
         return {
@@ -150,7 +150,7 @@ class StemClassifier:
         if features["has_vibrato"] == profile.get("has_vibrato", False):
             score += 0.2
 
-        return score
+        return float(score)
 
     def _detect_vibrato(self, audio: np.ndarray, sr: int) -> bool:
         try:
@@ -182,7 +182,7 @@ class StemClassifier:
                 crossings > vibrato_rate and max_deviation > vibrato_depth_hz
             )
 
-            return has_vibrato
+            return bool(has_vibrato)
         except (ValueError, librosa.ParameterError):
             return False
 
@@ -220,7 +220,7 @@ class StemClassifier:
 
         is_pizzicato = np.sum(strong_onsets) > len(onset_frames) * 0.6
 
-        return is_pizzicato
+        return bool(is_pizzicato)
 
     def _detect_tremolo(self, audio: np.ndarray, sr: int) -> bool:
         rms = librosa.feature.rms(y=audio)[0]
@@ -233,7 +233,7 @@ class StemClassifier:
 
         has_tremolo = crossings > expected_tremolo_rate
 
-        return has_tremolo
+        return bool(has_tremolo)
 
 
 class VocalProcessingAI:
@@ -251,7 +251,7 @@ class VocalProcessingAI:
         self,
         audio: np.ndarray,
         sr: int,
-        scale: list[int] = None,
+        scale: list[int] | None = None,
         strength: float = 0.8,
     ) -> np.ndarray:
         if scale is None:
@@ -352,7 +352,7 @@ class VocalProcessingAI:
                 voice_mask, (0, len(audio) - len(voice_mask)), mode="edge"
             )
 
-        cleaned_audio = audio * voice_mask
+        cleaned_audio: np.ndarray = audio * voice_mask
 
         return cleaned_audio
 

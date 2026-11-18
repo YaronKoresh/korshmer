@@ -90,7 +90,7 @@ class VocalSyllableDetector(SyllableDetector):
         if not isinstance(audio, np.ndarray):
             raise ValueError(f"Audio must be numpy array, got {type(audio)}")
 
-        vocal_notes = []
+        vocal_notes: list[VocalNote] = []
 
         if len(syllables) == 0:
             return vocal_notes

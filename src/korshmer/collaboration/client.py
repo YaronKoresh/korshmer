@@ -18,7 +18,9 @@ except ImportError:
 
 
 class CollaborationClient:
-    def __init__(self, server_url: str, session_id: str, peer_id: str = None):
+    def __init__(
+        self, server_url: str, session_id: str, peer_id: str | None = None
+    ):
         if not _HAS_WEBSOCKETS:
             raise ImportError(
                 "websockets library required for collaboration. "

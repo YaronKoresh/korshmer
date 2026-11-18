@@ -1,5 +1,6 @@
 import gc
 import inspect
+from typing import Any
 
 import librosa
 import numpy as np
@@ -40,7 +41,7 @@ def _check_stft_out(out, audio, n_fft: int, hop_length: int) -> None:
 
 
 def _stft_into(audio, n_fft: int, hop_length: int, window=None, out=None):
-    kwargs = {"n_fft": n_fft, "hop_length": hop_length}
+    kwargs: dict[str, Any] = {"n_fft": n_fft, "hop_length": hop_length}
     if window is not None:
         kwargs["window"] = window
     if out is None:
@@ -76,7 +77,10 @@ class SpectralAnalyzer:
         self._validate_hop_length(hop_length, n_fft)
         if out is not None:
             _check_stft_out(out, audio, n_fft, hop_length)
-        return _stft_into(audio, n_fft, hop_length, window=window, out=out)
+        result: np.ndarray = _stft_into(
+            audio, n_fft, hop_length, window=window, out=out
+        )
+        return result
 
     @passthrough_empty_audio
     def phase_vocoder(
@@ -163,9 +167,10 @@ class SpectralAnalyzer:
     ) -> np.ndarray:
         validate_n_fft(n_fft)
         validate_hop_length(hop_length, n_fft)
-        return librosa.feature.spectral_centroid(
+        result: np.ndarray = librosa.feature.spectral_centroid(
             y=audio, sr=self.sr, n_fft=n_fft, hop_length=hop_length
         )[0]
+        return result
 
     @reject_empty_audio
     def spectral_flatness(
@@ -176,9 +181,10 @@ class SpectralAnalyzer:
     ) -> np.ndarray:
         validate_n_fft(n_fft)
         validate_hop_length(hop_length, n_fft)
-        return librosa.feature.spectral_flatness(
+        result: np.ndarray = librosa.feature.spectral_flatness(
             y=audio, n_fft=n_fft, hop_length=hop_length
         )[0]
+        return result
 
     @reject_empty_audio
     def zero_crossing_rate(
@@ -191,9 +197,10 @@ class SpectralAnalyzer:
             frame_length, "frame_length", 1, MAX_N_FFT
         )
         validate_hop_length(hop_length, frame_length)
-        return librosa.feature.zero_crossing_rate(
+        result: np.ndarray = librosa.feature.zero_crossing_rate(
             audio, frame_length=frame_length, hop_length=hop_length
         )[0]
+        return result
 
     @reject_empty_audio
     def mfcc(

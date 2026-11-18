@@ -28,7 +28,8 @@ def _autocorrelation_lags(signal: np.ndarray, lag_count: int) -> np.ndarray:
     size = scipy.fft.next_fast_len(len(samples) + lag_count)
     spectrum = scipy.fft.rfft(samples, size)
     power = spectrum.real**2 + spectrum.imag**2
-    return scipy.fft.irfft(power, size)[:lag_count]
+    result: np.ndarray = scipy.fft.irfft(power, size)[:lag_count]
+    return result
 
 
 def autocorrelation_pitch(

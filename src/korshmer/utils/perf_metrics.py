@@ -8,13 +8,14 @@ import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, TypeVar
+from typing import ParamSpec, TypeVar
 
 from korshmer.utils.tracing import tracer
 
 SAMPLE_WINDOW = 512
 
-F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class _Stat:
@@ -53,6 +54,9 @@ class _Stat:
 
 
 class PerfMetrics:
+    _window: int
+    _lock: threading.Lock
+
     def __init__(self, window: int = SAMPLE_WINDOW):
         if (
             isinstance(window, bool)
@@ -96,10 +100,10 @@ class PerfMetrics:
         finally:
             self.record(name, time.perf_counter() - started, failed)
 
-    def measure(self, name: str) -> Callable[[F], F]:
-        def decorator(fn: F) -> F:
+    def measure(self, name: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
+        def decorator(fn: Callable[P, R]) -> Callable[P, R]:
             @functools.wraps(fn)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
                 with self.timed(name):
                     return fn(*args, **kwargs)
 

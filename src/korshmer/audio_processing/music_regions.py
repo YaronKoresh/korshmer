@@ -340,7 +340,9 @@ class _Analysis:
     profile: np.ndarray | None = None
 
 
-def _score_curve(audio, sample_rate, on_chunk=None):
+def _score_curve(
+    audio, sample_rate, on_chunk=None
+) -> tuple[np.ndarray, np.ndarray]:
     analysis = _analyse(audio, sample_rate, on_chunk)
     return analysis.times, analysis.scores
 
@@ -414,13 +416,13 @@ def segment_music(
             start = None
     if start is not None:
         spans.append([start, np.inf])
-    merged = []
+    merged: list[list[float]] = []
     for span in spans:
         if merged and span[0] - merged[-1][1] <= options.bridge_gap_s:
             merged[-1][1] = span[1]
         else:
             merged.append(span)
-    regions = []
+    regions: list[tuple[float, float]] = []
     for begin, end in merged:
         if min(end, times[-1]) - begin < options.min_music_s:
             continue
@@ -590,7 +592,7 @@ def _result(
     times=None,
     scores=None,
     timeline=(),
-):
+) -> MusicRegions:
     return MusicRegions(
         tuple((float(a), float(b)) for a, b in regions),
         float(duration),
@@ -602,12 +604,12 @@ def _result(
     )
 
 
-def _left_whole(duration, reason, times=None, scores=None):
+def _left_whole(duration, reason, times=None, scores=None) -> MusicRegions:
     whole = [(0.0, duration)] if duration > 0 else []
     return _result(whole, duration, False, reason, times, scores)
 
 
-def _manual_regions(duration, options):
+def _manual_regions(duration, options) -> MusicRegions:
     start = min(options.manual_start_s or 0.0, duration)
     end = min(
         duration if options.manual_end_s is None else options.manual_end_s,
@@ -841,7 +843,7 @@ def _cut_spoken_breaks(regions, analysis, options):
     return kept
 
 
-def _find_regions(audio, sample_rate, options, on_chunk=None):
+def _find_regions(audio, sample_rate, options, on_chunk=None) -> MusicRegions:
     audio = _mono(audio)
     duration = len(audio) / sample_rate
     if not options.enabled:
@@ -1021,7 +1023,7 @@ def cut_outside_regions(
     return dst
 
 
-def _cut_decoded(src, dst, timeline, fade_s):
+def _cut_decoded(src, dst: str, timeline, fade_s) -> str:
     import librosa
 
     data, rate = librosa.load(src, sr=None, mono=False)

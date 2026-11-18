@@ -337,11 +337,14 @@ class AudioEngine(QObject):
     def _open_and_start_stream(self) -> None:
         self._stream_start_time = None
         self._stream_start_idx = 0
-        self.samples.configure(self.fs, self.data.shape[1])
+        data = self.data
+        if data is None:
+            raise RuntimeError("No audio data is loaded")
+        self.samples.configure(self.fs, data.shape[1])
         self.stream = open_and_start_output_stream(
             sd,
             samplerate=self.fs,
-            channels=self.data.shape[1],
+            channels=data.shape[1],
             callback=self._cb,
             latency="high",
             blocksize=self._current_buffer_size,

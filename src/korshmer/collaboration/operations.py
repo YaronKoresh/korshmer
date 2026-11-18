@@ -38,7 +38,7 @@ class Operation:
         return json.dumps(asdict(self))
 
     @classmethod
-    def from_json(cls, s: str) -> Operation:
+    def from_json(cls, s: str | bytes) -> Operation:
         payload = json.loads(s)
         if not isinstance(payload, dict):
             raise ValueError("Operation message must be a JSON object")

@@ -86,7 +86,7 @@ class GenreMoodDetector:
             score = self._calculate_genre_similarity(features, profile)
             scores[genre] = score
 
-        detected_genre = max(scores, key=scores.get)
+        detected_genre = max(scores, key=lambda name: scores[name])
         confidence = scores[detected_genre]
 
         top_3_genres = sorted(scores.items(), key=lambda x: x[1], reverse=True)[
@@ -100,7 +100,7 @@ class GenreMoodDetector:
             "features": features,
         }
 
-    def _extract_genre_features(self, audio: np.ndarray, sr: int) -> dict:
+    def _extract_genre_features(self, audio: np.ndarray, sr: float) -> dict:
         tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
 
         spectral_centroids = librosa.feature.spectral_centroid(y=audio, sr=sr)
@@ -169,7 +169,7 @@ class GenreMoodDetector:
         )
         score += max(0, 0.2 - percussive_diff)
 
-        return score
+        return float(score)
 
     def detect_mood(self, audio_path: str) -> dict:
         audio, sr = librosa.load(audio_path, sr=None, duration=30)
@@ -190,7 +190,7 @@ class GenreMoodDetector:
             "tempo": features["tempo"],
         }
 
-    def _extract_mood_features(self, audio: np.ndarray, sr: int) -> dict:
+    def _extract_mood_features(self, audio: np.ndarray, sr: float) -> dict:
         tempo, _ = librosa.beat.beat_track(y=audio, sr=sr)
 
         rms = librosa.feature.rms(y=audio)[0]
@@ -263,7 +263,7 @@ class GenreMoodDetector:
         if features["spectral_centroid"] > 2000:
             valence += 0.1
 
-        return np.clip(valence, 0.0, 1.0)
+        return float(np.clip(valence, 0.0, 1.0))
 
     def _map_to_mood(self, arousal: float, valence: float) -> str:
         if arousal > 0.6 and valence > 0.6:
@@ -281,7 +281,9 @@ class GenreMoodDetector:
         else:
             return "neutral"
 
-    def _estimate_key_mode(self, audio: np.ndarray, sr: int) -> tuple[str, str]:
+    def _estimate_key_mode(
+        self, audio: np.ndarray, sr: float
+    ) -> tuple[str, str]:
         chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
 
         chroma_avg = np.mean(chroma, axis=1)

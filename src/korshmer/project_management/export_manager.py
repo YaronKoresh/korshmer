@@ -150,7 +150,7 @@ class ExportManager:
 
         self._ensure_directories()
         self.export_presets = self._load_presets()
-        self.export_queue = deque()
+        self.export_queue: deque[dict[str, Any]] = deque()
         self.is_exporting = False
         self.current_export: dict[str, Any] | None = None
         self._queue_lock = threading.Lock()
@@ -518,9 +518,10 @@ class ExportManager:
         try:
             import librosa
 
-            return librosa.resample(
+            result: np.ndarray = librosa.resample(
                 audio_data.T, orig_sr=source_sr, target_sr=target_sr
             ).T
+            return result
         except (ImportError, ValueError, TypeError):
             return audio_data
 
@@ -557,7 +558,7 @@ class ExportManager:
     def _measure_lufs(self, audio_data: np.ndarray) -> float:
         rms = np.sqrt(np.mean(audio_data**2))
         if rms > 0:
-            return 20 * np.log10(rms) - 0.691
+            return float(20 * np.log10(rms) - 0.691)
         return -100
 
     def _apply_dither(self, audio_data: np.ndarray) -> np.ndarray:
@@ -645,52 +646,54 @@ class ExportManager:
             elif suffix == ".flac":
                 from mutagen.flac import FLAC
 
-                audio = FLAC(str(file_path))
+                flac_file = FLAC(str(file_path))
                 for key, value in metadata.items():
-                    audio[key.upper()] = value
-                audio.save()
+                    flac_file[key.upper()] = value
+                flac_file.save()
 
             elif suffix == ".mp3":
                 from mutagen.id3 import ID3, TALB, TCON, TDRC, TIT2, TPE1
                 from mutagen.mp3 import MP3
 
-                audio = MP3(str(file_path), ID3=ID3)
-                if audio.tags is None:
-                    audio.add_tags()
+                mp3_file = MP3(str(file_path), ID3=ID3)
+                if mp3_file.tags is None:
+                    mp3_file.add_tags()
+                mp3_tags: Any = mp3_file.tags
 
                 if "title" in metadata:
-                    audio.tags.add(TIT2(encoding=3, text=metadata["title"]))
+                    mp3_tags.add(TIT2(encoding=3, text=metadata["title"]))
                 if "artist" in metadata:
-                    audio.tags.add(TPE1(encoding=3, text=metadata["artist"]))
+                    mp3_tags.add(TPE1(encoding=3, text=metadata["artist"]))
                 if "album" in metadata:
-                    audio.tags.add(TALB(encoding=3, text=metadata["album"]))
+                    mp3_tags.add(TALB(encoding=3, text=metadata["album"]))
                 if "date" in metadata:
-                    audio.tags.add(TDRC(encoding=3, text=metadata["date"]))
+                    mp3_tags.add(TDRC(encoding=3, text=metadata["date"]))
                 if "genre" in metadata:
-                    audio.tags.add(TCON(encoding=3, text=metadata["genre"]))
+                    mp3_tags.add(TCON(encoding=3, text=metadata["genre"]))
 
-                audio.save()
+                mp3_file.save()
 
             elif suffix in (".aiff", ".aif"):
                 from mutagen.aiff import AIFF
                 from mutagen.id3 import TALB, TCON, TDRC, TIT2, TPE1
 
-                audio = AIFF(str(file_path))
-                if audio.tags is None:
-                    audio.add_tags()
+                aiff_file = AIFF(str(file_path))
+                if aiff_file.tags is None:
+                    aiff_file.add_tags()
+                aiff_tags: Any = aiff_file.tags
 
                 if "title" in metadata:
-                    audio.tags.add(TIT2(encoding=3, text=metadata["title"]))
+                    aiff_tags.add(TIT2(encoding=3, text=metadata["title"]))
                 if "artist" in metadata:
-                    audio.tags.add(TPE1(encoding=3, text=metadata["artist"]))
+                    aiff_tags.add(TPE1(encoding=3, text=metadata["artist"]))
                 if "album" in metadata:
-                    audio.tags.add(TALB(encoding=3, text=metadata["album"]))
+                    aiff_tags.add(TALB(encoding=3, text=metadata["album"]))
                 if "date" in metadata:
-                    audio.tags.add(TDRC(encoding=3, text=metadata["date"]))
+                    aiff_tags.add(TDRC(encoding=3, text=metadata["date"]))
                 if "genre" in metadata:
-                    audio.tags.add(TCON(encoding=3, text=metadata["genre"]))
+                    aiff_tags.add(TCON(encoding=3, text=metadata["genre"]))
 
-                audio.save()
+                aiff_file.save()
 
         except Exception as e:
             logging.debug(f"Metadata embedding not available: {e}")

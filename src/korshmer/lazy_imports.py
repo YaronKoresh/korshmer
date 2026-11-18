@@ -1,6 +1,7 @@
 import threading
+from typing import Any
 
-_cache = {}
+_cache: dict[str, Any] = {}
 _lock = threading.Lock()
 
 

@@ -14,7 +14,8 @@ _active_futures: dict[str, list] = {}
 
 
 def _module_name_of(frame) -> str:
-    return frame.f_globals.get("__name__", "__main__")
+    name: str = frame.f_globals.get("__name__", "__main__")
+    return name
 
 
 def _get_executor_unlocked(module: str):

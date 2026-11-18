@@ -1,7 +1,10 @@
+from typing import TYPE_CHECKING
+
 try:
     import torch
 except ImportError:
-    torch = None
+    if not TYPE_CHECKING:
+        torch = None
 import logging
 import os
 import threading
@@ -19,8 +22,9 @@ try:
     from demucs.apply import apply_model
     from demucs.pretrained import get_model
 except ImportError:
-    get_model = None
-    apply_model = None
+    if not TYPE_CHECKING:
+        get_model = None
+        apply_model = None
 
 
 DEFAULT_SAMPLE_RATE = 44100

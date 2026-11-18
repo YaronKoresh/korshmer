@@ -1,4 +1,5 @@
 import logging
+from typing import cast
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -98,7 +99,7 @@ class ControllerMappingDialog(QDialog):
         self.btn_close.clicked.connect(self.reject)
         self.combo_device.currentTextChanged.connect(self._show_device)
 
-        self._shown_device = None
+        self._shown_device: str | None = None
         self._show_device(self.combo_device.currentText())
 
     @property
@@ -149,8 +150,8 @@ class ControllerMappingDialog(QDialog):
     def rows(self) -> list[tuple[int, str]]:
         return [
             (
-                self.table.cellWidget(r, 0).value(),
-                self.table.cellWidget(r, 1).currentText(),
+                cast(QSpinBox, self.table.cellWidget(r, 0)).value(),
+                cast(QComboBox, self.table.cellWidget(r, 1)).currentText(),
             )
             for r in range(self.table.rowCount())
         ]
@@ -196,7 +197,9 @@ class ControllerMappingDialog(QDialog):
             self.add_row(int(controller))
             return True
         try:
-            self.table.cellWidget(row, 0).setValue(int(controller))
+            cast(QSpinBox, self.table.cellWidget(row, 0)).setValue(
+                int(controller)
+            )
         except (TypeError, ValueError):
             return False
         return True

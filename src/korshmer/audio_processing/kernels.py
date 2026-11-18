@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 try:
@@ -7,10 +9,12 @@ try:
 except Exception:
     HAS_NUMBA = False
 
-    def njit(*args, **kwargs):
-        if len(args) == 1 and callable(args[0]) and not kwargs:
-            return args[0]
-        return lambda func: func
+    if not TYPE_CHECKING:
+
+        def njit(*args, **kwargs):
+            if len(args) == 1 and callable(args[0]) and not kwargs:
+                return args[0]
+            return lambda func: func
 
 
 def _compress_channel(

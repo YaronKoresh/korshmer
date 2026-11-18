@@ -7,6 +7,7 @@ import socket
 import struct
 import threading
 from collections.abc import Callable
+from typing import Any
 
 from korshmer.utils.tempo import validate_bpm
 
@@ -29,7 +30,7 @@ def _read_string(data: bytes, pos: int) -> tuple[str, int]:
     return text, (end + 4) & ~3
 
 
-def _unpack(fmt: str, data: bytes, pos: int) -> tuple[object, int]:
+def _unpack(fmt: str, data: bytes, pos: int) -> tuple[Any, int]:
     size = struct.calcsize(fmt)
     if pos + size > len(data):
         raise ValueError("Truncated OSC argument")
@@ -165,6 +166,8 @@ class OscServer:
 
     def _run(self) -> None:
         sock = self._socket
+        if sock is None:
+            return
         while not self._stop.is_set():
             try:
                 data, _ = sock.recvfrom(MAX_PACKET_SIZE + 1)

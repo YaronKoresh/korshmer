@@ -8,6 +8,7 @@ import logging
 import math
 import threading
 from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlsplit
 
 from korshmer.utils.audit_log import OUTCOME_DENIED, OUTCOME_FAILED, audit
@@ -204,10 +205,11 @@ class ObsClient:
         self._queue = asyncio.Queue()
         self._stop_event = asyncio.Event()
         self._stopping = False
+        subprotocols: list[Any] = [SUBPROTOCOL]
         try:
             async with websockets.connect(
                 self.url,
-                subprotocols=[SUBPROTOCOL],
+                subprotocols=subprotocols,
                 open_timeout=self.timeout,
             ) as ws:
                 await asyncio.wait_for(self._handshake(ws), self.timeout)
@@ -234,7 +236,7 @@ class ObsClient:
         hello = json.loads(await ws.recv())
         if hello.get("op") != OP_HELLO:
             raise ConnectionError("OBS did not send Hello")
-        data = {"rpcVersion": RPC_VERSION}
+        data: dict[str, Any] = {"rpcVersion": RPC_VERSION}
         auth = hello.get("d", {}).get("authentication")
         if auth:
             if not self._password:
@@ -263,7 +265,10 @@ class ObsClient:
     async def _serve(self, ws) -> None:
         sender = asyncio.ensure_future(self._send_loop(ws))
         receiver = asyncio.ensure_future(self._receive_loop(ws))
-        stopper = asyncio.ensure_future(self._stop_event.wait())
+        stop_event = self._stop_event
+        if stop_event is None:
+            raise RuntimeError("OBS client is not running")
+        stopper = asyncio.ensure_future(stop_event.wait())
         done, pending = await asyncio.wait(
             {sender, receiver, stopper}, return_when=asyncio.FIRST_COMPLETED
         )
@@ -273,8 +278,11 @@ class ObsClient:
         await asyncio.gather(*pending, return_exceptions=True)
 
     async def _send_loop(self, ws) -> None:
+        queue = self._queue
+        if queue is None:
+            raise RuntimeError("OBS client is not running")
         while True:
-            request_type, request_data = await self._queue.get()
+            request_type, request_data = await queue.get()
             body = {
                 "requestType": request_type,
                 "requestId": new_id(),

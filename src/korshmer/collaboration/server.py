@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from korshmer.utils.secure_random import new_id
 
@@ -11,12 +11,17 @@ from .rate_limit import TokenBucket
 try:
     import websockets
 
-    try:
+    if TYPE_CHECKING:
         from websockets.asyncio.server import (
             ServerConnection as WebSocketServerProtocol,
         )
-    except ImportError:
-        from websockets.server import WebSocketServerProtocol
+    else:
+        try:
+            from websockets.asyncio.server import (
+                ServerConnection as WebSocketServerProtocol,
+            )
+        except ImportError:
+            from websockets.server import WebSocketServerProtocol
 
     _HAS_WEBSOCKETS = True
 except ImportError:
@@ -92,7 +97,7 @@ class CollaborationServer:
             await self.server.wait_closed()
             self.logger.info("Collaboration server stopped")
 
-    def create_session(self, session_id: str = None) -> str:
+    def create_session(self, session_id: str | None = None) -> str:
         if session_id is None:
             session_id = new_id()
         self.sessions[session_id] = {
@@ -237,7 +242,10 @@ class CollaborationServer:
             self.logger.error(f"Failed to send error to peer: {e}")
 
     async def broadcast(
-        self, session_id: str, operation: Operation, exclude_peer: str = None
+        self,
+        session_id: str,
+        operation: Operation,
+        exclude_peer: str | None = None,
     ):
         if session_id not in self.peers:
             return

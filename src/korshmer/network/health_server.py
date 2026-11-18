@@ -100,7 +100,7 @@ def _check_result(result: Any) -> dict[str, Any]:
     if isinstance(result, bool):
         return {"status": STATUS_OK if result else STATUS_ERROR}
     if isinstance(result, dict):
-        data = _jsonable(result)
+        data: dict[str, Any] = _jsonable(result)
         if data.get("status") not in (STATUS_OK, STATUS_DEGRADED, STATUS_ERROR):
             data["status"] = STATUS_OK
         return data
@@ -233,7 +233,9 @@ class HealthServer:
             "component": (first("component") or "").strip() or None,
         }, None
 
-    def _logs_response(self, query: dict[str, list[str]]):
+    def _logs_response(
+        self, query: dict[str, list[str]]
+    ) -> tuple[int, dict[str, Any]]:
         if self.log_stream is None:
             return 404, {
                 "status": STATUS_ERROR,

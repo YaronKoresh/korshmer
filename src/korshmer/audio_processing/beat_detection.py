@@ -40,7 +40,7 @@ class BeatDetector:
             ]
 
             if len(tempos) > 0:
-                final_tempo = np.median(tempos)
+                final_tempo = float(np.median(tempos))
             else:
                 final_tempo = tempo1
 
@@ -55,12 +55,12 @@ class BeatDetector:
         return scalar_tempo(tempo), beat_times
 
     def _librosa_beat_track(
-        self, audio: np.ndarray, sr: int
+        self, audio: np.ndarray, sr: float
     ) -> tuple[float, np.ndarray]:
         tempo, beats = librosa.beat.beat_track(y=audio, sr=sr)
         return scalar_tempo(tempo), beats
 
-    def _onset_strength_tempo(self, audio: np.ndarray, sr: int) -> float:
+    def _onset_strength_tempo(self, audio: np.ndarray, sr: float) -> float:
         onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
 
         tempogram = librosa.feature.tempogram(onset_envelope=onset_env, sr=sr)
@@ -77,7 +77,7 @@ class BeatDetector:
         candidates = np.where(in_range, avg_tempogram, -np.inf)
         return float(tempo_frequencies[np.argmax(candidates)])
 
-    def _autocorrelation_tempo(self, audio: np.ndarray, sr: int) -> float:
+    def _autocorrelation_tempo(self, audio: np.ndarray, sr: float) -> float:
         onset_env = librosa.onset.onset_strength(y=audio, sr=sr)
 
         ac = librosa.autocorrelate(onset_env, max_size=onset_env.shape[0])

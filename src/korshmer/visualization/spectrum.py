@@ -186,7 +186,7 @@ def create_spectrogram_image(path: str) -> QImage:
         lut_b = (255 + (232 - 255) * t).astype(np.uint8)
         rgb = np.dstack((lut_r[S_norm], lut_g[S_norm], lut_b[S_norm])).tobytes()
 
-        result = QImage(rgb, w, h, w * 3, QImage.Format_RGB888).copy()
+        result = QImage(rgb, w, h, w * 3, QImage.Format.Format_RGB888).copy()
 
         del S_norm, t, lut_r, lut_g, lut_b
 

@@ -97,7 +97,8 @@ def ensure_directory(path: str | Path, fallback_to_temp: bool = False) -> Path:
         if fallback_to_temp:
             unique_suffix = str(uuid.uuid4())[:8]
             temp_path = (
-                Path(tempfile.gettempdir()) / f"{path.name}_{unique_suffix}"
+                Path(tempfile.gettempdir())
+                / f"{Path(path).name}_{unique_suffix}"
             )
             warning_msg = f"Falling back to temp directory: {temp_path}"
             if logging.getLogger().hasHandlers():

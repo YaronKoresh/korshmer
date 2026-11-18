@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -21,9 +22,10 @@ try:
     from korshmer.ui.widgets.dialogs.range_eq import RangeEQDialog
     from korshmer.workers.chord_analysis import ChordAnalysisThread
 except ImportError:
-    ImagePreviewDialog = None
-    RangeEQDialog = None
-    ChordAnalysisThread = None
+    if not TYPE_CHECKING:
+        ImagePreviewDialog = None
+        RangeEQDialog = None
+        ChordAnalysisThread = None
 
 
 class AudioActionsMixin(BaseActionsMixin):

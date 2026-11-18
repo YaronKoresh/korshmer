@@ -9,7 +9,7 @@ class CollaborationManager:
         self.base_dir = Path(base_dir)
         self.session_active = False
         self.current_session_id = None
-        self.participants = []
+        self.participants: list[dict[str, Any]] = []
         logging.info(
             "Collaboration manager initialized (stub - WebSocket server pending)"
         )

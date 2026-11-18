@@ -22,6 +22,16 @@ class CircuitOpenError(RuntimeError):
 
 
 class CircuitBreaker:
+    name: str
+    failure_threshold: int
+    recovery_seconds: float
+    _clock: Callable[[], float]
+    _lock: threading.Lock
+    _state: str
+    _failures: int
+    _opened_at: float
+    _probing: bool
+
     def __init__(
         self,
         name: str = "service",

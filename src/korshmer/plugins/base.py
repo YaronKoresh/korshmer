@@ -63,7 +63,7 @@ class PluginBase:
     version = "1.0.0"
     author = ""
     category = "General"
-    plugin_type = None
+    plugin_type: PluginType | None = None
 
     @classmethod
     def params(cls):

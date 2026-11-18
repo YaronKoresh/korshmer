@@ -315,12 +315,13 @@ def _build_oversampling_kernel(
 ) -> np.ndarray:
     if os_factor <= 1:
         return np.ones(1)
-    return firwin(
+    result: np.ndarray = firwin(
         OVERSAMPLING_TAPS_PER_FACTOR * os_factor + 1,
         sr / 2.0,
         window=("kaiser", kaiser_beta),
         fs=sr * os_factor,
     )
+    return result
 
 
 def _saturate_analog_warmth(
@@ -333,7 +334,8 @@ def _saturate_analog_warmth(
         return np.tanh(xd) + 0.14 * xd * np.abs(xd) / (1.0 + np.abs(xd))
 
     if oversample <= 1:
-        return curve(band)
+        result: np.ndarray = curve(band)
+        return result
 
     kernel = _build_oversampling_kernel(sr, oversample, EXCITER_KAISER_BETA)
     rows = []
@@ -353,7 +355,10 @@ def _band_envelope(band: np.ndarray, sr: int) -> np.ndarray:
     level = np.concatenate([level[pre:0:-1], level])
     ac = float(np.exp(-1.0 / (sr * EXCITER_DUCK_ATTACK_MS / 1000.0)))
     rc = float(np.exp(-1.0 / (sr * EXCITER_DUCK_RELEASE_MS / 1000.0)))
-    return _decoupled_envelope(np.ascontiguousarray(level), ac, rc)[pre:]
+    result: np.ndarray = _decoupled_envelope(
+        np.ascontiguousarray(level), ac, rc
+    )[pre:]
+    return result
 
 
 def _excite_band(
@@ -428,9 +433,10 @@ def _excite_band(
         return np.zeros_like(y)
 
     cap_db = _harmonic_cap_db(f_high)
-    return harmonics * (
+    result: np.ndarray = harmonics * (
         rms_band * 10.0 ** (cap_db / 20.0) / (rms_harmonics + 1e-12)
     )
+    return result
 
 
 def _harmonic_cap_db(freq_hz: float) -> float:
@@ -484,7 +490,10 @@ def _measure_band_powers_db(
             for center in centers_hz
         ]
     )
-    return 10.0 * np.log10(np.maximum(powers, EXCITER_POWER_FLOOR))
+    result: np.ndarray = 10.0 * np.log10(
+        np.maximum(powers, EXCITER_POWER_FLOOR)
+    )
+    return result
 
 
 def _find_cutoff_index(dry_db: np.ndarray) -> int | None:
@@ -516,7 +525,10 @@ def _project_levels_db(
         intercept = float(np.mean(dry_db[valid] - slope * log_f[valid]))
         trend = intercept + slope * log_f
         valid = valid & (dry_db >= trend - EXCITER_HOLE_DEPTH_DB)
-    return np.minimum(trend, np.median(dry_db[max(0, cutoff - 4) : cutoff]))
+    result: np.ndarray = np.minimum(
+        trend, np.median(dry_db[max(0, cutoff - 4) : cutoff])
+    )
+    return result
 
 
 def _compute_fill_gains(
@@ -545,7 +557,10 @@ def _compute_fill_gains(
         / np.maximum(harmonics_power, EXCITER_POWER_FLOOR)
     )
     gains = np.where(is_hole & has_harmonics, gains, 0.0)
-    return np.minimum(gains, 10.0 ** (EXCITER_MAX_FILL_GAIN_DB / 20.0))
+    result: np.ndarray = np.minimum(
+        gains, 10.0 ** (EXCITER_MAX_FILL_GAIN_DB / 20.0)
+    )
+    return result
 
 
 def _build_fill_filter(
@@ -559,9 +574,10 @@ def _build_fill_filter(
         left=0.0,
         right=0.0,
     )
-    return firwin2(
+    result: np.ndarray = firwin2(
         EXCITER_FIR_TAPS, np.clip(grid_hz / (sr / 2.0), 0.0, 1.0), curve
     )
+    return result
 
 
 def _fill_block(
@@ -581,12 +597,13 @@ def _fill_block(
     gains = np.where(active, gains, 0.0)
     if not np.any(gains > 0.0):
         return np.zeros_like(harmonics)
-    return signal.oaconvolve(
+    result: np.ndarray = signal.oaconvolve(
         harmonics,
         _build_fill_filter(centers_hz, gains, sr)[None, :],
         mode="same",
         axes=-1,
     )
+    return result
 
 
 @passthrough_empty_audio
@@ -595,7 +612,7 @@ def apply_exciter(
     sr: int,
     low_hz: float = EXCITER_LOW_HZ,
     high_hz: float = EXCITER_HIGH_HZ,
-    drive: float = None,
+    drive: float | None = None,
     oversample: int = 4,
     mix: float = 1.0,
 ) -> np.ndarray:
@@ -621,7 +638,10 @@ def apply_exciter(
     block = int(round(EXCITER_BLOCK_SECONDS * sr))
     block += block % 2
     if n <= block:
-        return y + _fill_block(y, harmonics, sr, centers_hz, active, mix)
+        result: np.ndarray = y + _fill_block(
+            y, harmonics, sr, centers_hz, active, mix
+        )
+        return result
 
     hop = block // 2
     window = signal.windows.hann(block, sym=False)[None, :]
@@ -635,7 +655,8 @@ def apply_exciter(
         air[:, seg] += window * _fill_block(
             y_pad[:, seg], h_pad[:, seg], sr, centers_hz, active, mix
         )
-    return y + air[:, hop : hop + n]
+    result = y + air[:, hop : hop + n]
+    return result
 
 
 @passthrough_empty_audio
@@ -678,7 +699,8 @@ def apply_bass_enhancer(
 
     rms_h = float(np.sqrt(np.mean(harm**2)))
     harm = harm * (mix * rms_b / (rms_h + 1e-12))
-    return y + harm[None, :]
+    result: np.ndarray = y + harm[None, :]
+    return result
 
 
 def stereo(*y_s, lr=True, sr=44100):
@@ -826,6 +848,7 @@ def freq_cut(y: np.ndarray, sr: int, low_cut: int | None, high_cut: int | None):
 
 class SmartMastering:
     _profiling_data: dict[str, float] = {}
+    _profiling: bool
 
     def update_bands(self) -> None:
         count = self.multiband_params.num_bands
@@ -974,7 +997,8 @@ class SmartMastering:
         max_freq = self.high_cut if self.high_cut else f_axis[-1]
         f_axis_safe = np.clip(f_axis, min_freq, max_freq)
         octaves = np.log2(f_axis_safe / self.slope_hz)
-        return -self.slope_db * octaves
+        result: np.ndarray = -self.slope_db * octaves
+        return result
 
     def _smooth_target_curve(
         self,
@@ -999,13 +1023,13 @@ class SmartMastering:
         on_grid = np.interp(grid, log_f[1:], target_db[1:])
         sigma = max(smoothing_fraction * pts_per_oct / 2.355, 0.5)
         smoothed_grid = gaussian_filter1d(on_grid, sigma, mode="nearest")
-        smoothed = np.interp(log_f, grid, smoothed_grid)
+        smoothed: np.ndarray = np.interp(log_f, grid, smoothed_grid)
         smoothed[0] = smoothed[1]
         return smoothed
 
     def _tone_curve(self, f_axis: np.ndarray) -> np.ndarray:
         f = np.maximum(np.asarray(f_axis, dtype=float), 1.0)
-        total = np.zeros_like(f)
+        total: np.ndarray = np.zeros_like(f)
         for db, hz, octaves in (
             (self.bass_db, self.bass_hz, self.bass_octaves),
             (self.warmth_db, self.warmth_hz, self.warmth_octaves),
@@ -1023,7 +1047,8 @@ class SmartMastering:
 
     def _phase(self, y: np.ndarray, tp: str) -> np.ndarray:
         if y.ndim == 2 and y.shape[1] < y.shape[0]:
-            return self._phase(y.T, tp).T
+            result: np.ndarray = self._phase(y.T, tp).T
+            return result
 
         orig_len = y.shape[-1]
         y_mono = np.mean(y, axis=0) if y.ndim > 1 else y
@@ -1136,7 +1161,7 @@ class SmartMastering:
             uniform_filter1d(band**2, size=win, axis=-1, mode="nearest"),
             axis=0,
         )
-        det_db = 10.0 * np.log10(power + 1e-14)
+        det_db: np.ndarray = 10.0 * np.log10(power + 1e-14)
 
         active = det_db > (det_db.max() - 80.0)
         if np.count_nonzero(active) < 16 or det_db.max() < -90.0:
@@ -1200,7 +1225,8 @@ class SmartMastering:
             e_out = float(np.sum((band * total_gain) ** 2))
             if e_out > 1e-20:
                 total_gain = total_gain * min(np.sqrt(e_in / e_out), 1.41)
-        return band * total_gain
+        result: np.ndarray = band * total_gain
+        return result
 
     def _multiband_compress(self, y: np.ndarray) -> np.ndarray:
         was_1d = y.ndim == 1
@@ -1264,7 +1290,7 @@ class SmartMastering:
                 ),
                 axis=0,
             )
-            det_db = 10.0 * np.log10(power + 1e-14)
+            det_db: np.ndarray = 10.0 * np.log10(power + 1e-14)
             if det_db.max() < -90.0:
                 continue
             ref_db = 10.0 * np.log10(
@@ -1332,9 +1358,10 @@ class SmartMastering:
 
         rc_fast = float(np.exp(-1.0 / (sr * release_fast_ms / 1000.0)))
         rc_slow = float(np.exp(-1.0 / (sr * release_slow_ms / 1000.0)))
-        return _limiter_release(
+        result: np.ndarray = _limiter_release(
             np.ascontiguousarray(gs), rc_fast, rc_slow, float(slow_weight)
         )
+        return result
 
     def _limiter_prepare(
         self, y: np.ndarray, p: LimiterParams
@@ -1464,7 +1491,10 @@ class SmartMastering:
             ),
         )
         lim_full = 10.0 ** (ceil_db / 20.0)
-        return np.clip(out.astype(np.float64), -lim_full, lim_full)
+        result: np.ndarray = np.clip(
+            out.astype(np.float64), -lim_full, lim_full
+        )
+        return result
 
     def _apply_limiter(
         self,
@@ -1507,7 +1537,7 @@ class SmartMastering:
             band_os *= norm
         drive = 2.5
         history: list[tuple[float, float]] = []
-        best = None
+        best: np.ndarray | None = None
         best_err = np.inf
 
         for _it in range(max(1, p.max_iterations)):
@@ -1545,6 +1575,8 @@ class SmartMastering:
                 break
             drive = new_drive
 
+        if best is None:
+            raise RuntimeError("Limiter produced no output")
         return best
 
     @staticmethod
@@ -1622,7 +1654,8 @@ class SmartMastering:
         if current is None:
             return y
         gain_lin = 10.0 ** ((target_lufs - current) / 20.0)
-        return y * gain_lin
+        result: np.ndarray = y * gain_lin
+        return result
 
     @staticmethod
     def _validate_input(y, sr) -> None:
@@ -1661,7 +1694,9 @@ class SmartMastering:
                 recovery_hint=AUDIO_FINITE_HINT,
             )
 
-    def process(self, y: np.ndarray, sr: int = None) -> tuple[np.ndarray, int]:
+    def process(
+        self, y: np.ndarray, sr: int | None = None
+    ) -> tuple[np.ndarray, int]:
         self._validate_input(y, sr)
         if sr is not None:
             self.sr = validate_sample_rate(sr)

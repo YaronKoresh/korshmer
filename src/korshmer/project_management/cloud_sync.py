@@ -55,7 +55,7 @@ class CloudSyncManager:
         self.sync_dir = self.base_dir / "saved_data" / "cloud_sync"
         self.projects_dir = self.base_dir / "saved_data" / "projects"
         self.enabled = False
-        self.provider = None
+        self.provider: str | None = None
         self.remote_dir: Path | None = None
         self.last_sync: str | None = None
         self._lock = threading.RLock()
@@ -111,7 +111,8 @@ class CloudSyncManager:
     def _remote_path(self, cloud_id) -> Path | None:
         if self.remote_dir is None or not self._valid_id(cloud_id):
             return None
-        return self.remote_dir / cloud_id
+        remote_path: Path = self.remote_dir / cloud_id
+        return remote_path
 
     def connect(self, provider: str, _credentials: dict[str, str]) -> bool:
         if provider != FOLDER_PROVIDER:

@@ -31,7 +31,8 @@ class Distortion:
         self, audio_data: np.ndarray, threshold: float = 0.8
     ) -> np.ndarray:
         validate_effect_number(threshold, "Clip threshold", 0.0, 1.0)
-        return np.clip(audio_data, -threshold, threshold)
+        result: np.ndarray = np.clip(audio_data, -threshold, threshold)
+        return result
 
     @passthrough_empty_audio
     def waveshaper(
@@ -59,7 +60,7 @@ class Distortion:
             sample_rate_reduction, "Sample rate reduction", 1.0, 1000.0
         )
         levels = 2**bits
-        crushed = np.round(audio_data * levels) / levels
+        crushed: np.ndarray = np.round(audio_data * levels) / levels
 
         if sample_rate_reduction > 1.0:
             downsample_factor = int(sample_rate_reduction)
@@ -80,7 +81,9 @@ class Distortion:
         gain_linear = 10 ** (gain_db / 20.0)
         driven = audio_data * gain_linear
 
-        fuzzed = np.sign(driven) * (1 - np.exp(-abs(driven) * texture))
+        fuzzed: np.ndarray = np.sign(driven) * (
+            1 - np.exp(-abs(driven) * texture)
+        )
         return fuzzed
 
 
@@ -102,7 +105,8 @@ class Saturation:
     ) -> np.ndarray:
         validate_effect_number(drive, "Drive", 0.0, 20.0)
         x = audio_data * drive
-        return np.sign(x) * (1 - np.exp(-abs(x)))
+        result: np.ndarray = np.sign(x) * (1 - np.exp(-abs(x)))
+        return result
 
     @passthrough_empty_audio
     def transistor_saturation(
@@ -121,7 +125,8 @@ class Saturation:
         excited = audio_data + amount * np.sin(
             harmonic * np.arcsin(np.clip(audio_data, -1, 1))
         )
-        return np.clip(excited, -1, 1)
+        result: np.ndarray = np.clip(excited, -1, 1)
+        return result
 
 
 class NoiseGate:
@@ -189,7 +194,8 @@ class NoiseGate:
                 output[ch, i] = audio_data[ch, i] * gate_envelope
 
         if output.shape[0] == 1:
-            return output[0]
+            result: np.ndarray = output[0]
+            return result
         return output
 
 

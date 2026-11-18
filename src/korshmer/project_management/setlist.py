@@ -223,6 +223,8 @@ class Setlist:
         try:
             setlist = cls(project_manager, name, crossfader)
             path = setlist._file_path()
+            if path is None:
+                raise ValueError("invalid setlist name")
             payload = json.loads(path.read_text(encoding="utf-8"))
             for entry in payload["items"]:
                 setlist.add(entry["path"], entry["crossfade_ms"])

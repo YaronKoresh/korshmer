@@ -10,7 +10,7 @@ from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 MAX_SPANS = 2048
 MAX_ERROR_LENGTH = 200
@@ -18,7 +18,8 @@ MAX_ERROR_LENGTH = 200
 STATUS_OK = "ok"
 STATUS_ERROR = "error"
 
-F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 @dataclass
@@ -101,10 +102,10 @@ class Tracer:
             with self._lock:
                 self._finished.append(span)
 
-    def trace(self, name: str) -> Callable[[F], F]:
-        def decorator(fn: F) -> F:
+    def trace(self, name: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
+        def decorator(fn: Callable[P, R]) -> Callable[P, R]:
             @functools.wraps(fn)
-            def wrapper(*args, **kwargs):
+            def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
                 with self.span(name):
                     return fn(*args, **kwargs)
 
@@ -120,7 +121,7 @@ class Tracer:
         by_trace: dict[str, list[Span]] = {}
         for span in self.spans():
             by_trace.setdefault(span.trace_id, []).append(span)
-        traces = []
+        traces: list[dict[str, Any]] = []
         order: dict[str, tuple[float, int]] = {}
         for trace_id, spans in by_trace.items():
             spans.sort(key=lambda s: (s.started_at, s.seq))

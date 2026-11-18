@@ -423,7 +423,7 @@ class PatternChainer:
     def add_pattern(self, pattern: Pattern):
         self.patterns.append(pattern)
 
-    def chain_patterns(self, pattern_indices: list[int]) -> Pattern:
+    def chain_patterns(self, pattern_indices: list[int]) -> Pattern | None:
         if not pattern_indices:
             return None
 

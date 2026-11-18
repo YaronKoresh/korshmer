@@ -86,7 +86,9 @@ class CrossfadeMixer:
         if not self.transitioning:
             return {self._target: 1.0} if self._target else {}
         p = self._progress(np.array([float(self._done)]))
-        names = set(self._start) | {self._target}
+        names = set(self._start)
+        if self._target is not None:
+            names.add(self._target)
         return {
             n: float(
                 self._gain_curve(p, self._start.get(n, 0.0), n == self._target)[

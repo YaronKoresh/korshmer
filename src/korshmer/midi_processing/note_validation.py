@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import numbers
+from typing import SupportsInt
 
 MIDI_NOTE_MIN: int = 0
 MIDI_NOTE_MAX: int = 127
@@ -12,7 +13,7 @@ MIDI_CC_MIN: int = 0
 MIDI_CC_MAX: int = 127
 
 
-def validate_midi_note(value, name: str = "pitch") -> int:
+def validate_midi_note(value: SupportsInt, name: str = "pitch") -> int:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise ValueError(
             f"MIDI {name} must be an integer from {MIDI_NOTE_MIN} to "
@@ -33,7 +34,7 @@ def validate_midi_note(value, name: str = "pitch") -> int:
     return note
 
 
-def validate_midi_cc_number(value) -> int:
+def validate_midi_cc_number(value: SupportsInt) -> int:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise ValueError(
             f"MIDI CC controller number must be a whole number from "

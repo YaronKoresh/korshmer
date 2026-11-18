@@ -2,6 +2,7 @@ import concurrent.futures
 import logging
 import os
 import threading
+from typing import TYPE_CHECKING
 
 from korshmer.constants import current_dir
 from korshmer.utils.worker_count import compute_worker_count
@@ -9,7 +10,7 @@ from korshmer.utils.worker_count import compute_worker_count
 _executor_lock = threading.RLock()
 _executor = None
 _executor_shutdown = False
-_active_futures = []
+_active_futures: list[concurrent.futures.Future] = []
 
 
 def get_executor():
@@ -173,18 +174,19 @@ try:
             self.progress_update.emit(0, "Stopping process... please wait")
 
 except ImportError:
+    if not TYPE_CHECKING:
 
-    class WorkerThread:
-        def __init__(self, file_paths, params, process_track_func=None):
-            self.file_paths = file_paths
-            self.params = params
-            self.is_running = True
-            self.process_track_func = process_track_func
-            self.cancel_token = threading.Event()
+        class WorkerThread:
+            def __init__(self, file_paths, params, process_track_func=None):
+                self.file_paths = file_paths
+                self.params = params
+                self.is_running = True
+                self.process_track_func = process_track_func
+                self.cancel_token = threading.Event()
 
-        def stop(self):
-            self.is_running = False
-            self.cancel_token.set()
+            def stop(self):
+                self.is_running = False
+                self.cancel_token.set()
 
 
 PRESETS_FILE = os.path.abspath(os.path.join(current_dir, "..", "presets.json"))

@@ -12,6 +12,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any, SupportsInt
 from urllib.parse import urlsplit
 
 _logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ def valid_stream_key(key: str) -> bool:
     return bool(key) and len(key) <= 128 and bool(_KEY_RE.match(key))
 
 
-def _whole_number(value) -> bool:
+def _whole_number(value: SupportsInt) -> bool:
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return False
     return math.isfinite(value) and value == int(value)
@@ -252,7 +253,7 @@ class YouTubeLiveStreamer:
         self._ffmpeg = ffmpeg
         self._queue: queue.Queue = queue.Queue(maxsize=int(max_queue))
         self._congested_at = max(1, int(max_queue * congestion_ratio))
-        self._proc = None
+        self._proc: Any = None
         self._thread: threading.Thread | None = None
         self._running = False
         self.dropped_blocks = 0

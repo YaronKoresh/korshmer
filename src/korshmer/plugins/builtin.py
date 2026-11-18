@@ -1,17 +1,21 @@
+from typing import TYPE_CHECKING
+
 try:
     import numpy as np
     import soundfile as sf
 
     _AUDIO_DEPS = True
 except ImportError:
-    np = None
-    sf = None
+    if not TYPE_CHECKING:
+        np = None
+        sf = None
     _AUDIO_DEPS = False
 
 try:
     from korshmer.audio_file import AudioFile
 except ImportError:
-    AudioFile = None
+    if not TYPE_CHECKING:
+        AudioFile = None
 
 from korshmer.plugins.base import AudioEffectPlugin, PluginParam
 

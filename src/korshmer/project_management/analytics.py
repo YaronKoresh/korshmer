@@ -9,7 +9,7 @@ class AnalyticsManager:
         self.base_dir = Path(base_dir)
         self.analytics_dir = self.base_dir / "saved_data" / "analytics"
         self.session_start = datetime.now()
-        self.action_log = []
+        self.action_log: list[dict[str, Any]] = []
 
         self._ensure_directories()
 
@@ -30,7 +30,7 @@ class AnalyticsManager:
         return (datetime.now() - self.session_start).total_seconds()
 
     def get_action_stats(self) -> dict[str, Any]:
-        action_counts = {}
+        action_counts: dict[str, int] = {}
         for entry in self.action_log:
             action = entry["action"]
             action_counts[action] = action_counts.get(action, 0) + 1

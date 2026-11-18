@@ -124,5 +124,7 @@ class Ducker:
         if vo.size:
             m = min(n, vo.size)
             mixed[:m] += vo[:m]
-        out = np.clip(np.rint(mixed), -32768, 32767).astype("<i2").tobytes()
+        out: bytes = (
+            np.clip(np.rint(mixed), -32768, 32767).astype("<i2").tobytes()
+        )
         return out + original[n * 2 :]

@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from korshmer.core.di_container import DIContainer as Container
 from korshmer.event_bus import Event, EventBus
 
@@ -6,7 +8,8 @@ try:
 
     _WORKER_AVAILABLE = True
 except ImportError:
-    WorkerThread = None
+    if not TYPE_CHECKING:
+        WorkerThread = None
     _WORKER_AVAILABLE = False
 
 

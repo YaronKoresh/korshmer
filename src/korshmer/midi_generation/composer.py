@@ -122,6 +122,9 @@ SONG_QUIET_GAIN = 1.0
 LAYER_ENERGY_FLOOR = 0.35
 PHRASE_BARS = 4
 PHRASE_TURNS = (0, 1, 0, 2)
+LAYER_RHYTHM_SECTIONS = ("Break",)
+LAYER_BASS_RHYTHMS = ("syncopated", "sparse", "offbeat")
+LAYER_CHORD_HITS = ([0.0, 0.75], [0.0, 0.25, 0.5, 0.75], [0.0, 0.625])
 PHRASE_RESTS = {"arp": 1, "pluck": 2}
 PICKUP_LENGTH = 0.125
 PICKUP_GAP = 0.03125
@@ -856,13 +859,31 @@ def _bass_pickup(notes, end, bar):
     )
 
 
+def _restrike(notes, start, end):
+    middle = 0.5 * (start + end)
+    again = []
+    for note in notes:
+        if note.start < middle < note.end and note.start >= start:
+            again.append(
+                pretty_midi.Note(note.velocity, note.pitch, middle, note.end)
+            )
+            note.end = middle
+    notes.extend(again)
+
+
 def vary_phrase(inst, role, turn, end, bar):
     if not turn:
         return
     if role in ("chords", "pad"):
         _revoice(inst.notes, turn)
+    if role == "pad" and turn == 2:
+        _restrike(inst.notes, end - bar, end)
     elif role == "bass":
         _bass_pickup(inst.notes, end, bar)
+
+
+def _widened(pool, extra):
+    return tuple(pool) + tuple(x for x in extra if x not in pool)
 
 
 def _turn(phrase_count, layering):
@@ -1080,6 +1101,8 @@ def compose(options, existing=None):
             profile_roles = _ALL
         elif chapter.kind == "Reflection":
             profile_roles = set(profile_roles) - ARC_REFLECTION_MUTED
+        if layering and section.name in LAYER_RHYTHM_SECTIONS:
+            profile_roles = set(profile_roles) | set(RHYTHM_ROLES)
         section.roles = active_roles(profile_roles, user_roles, texture_on)
         section.act = act
         act_starts.setdefault(act, (section.start_bar, section.roles, chapter))
@@ -1149,11 +1172,15 @@ def compose(options, existing=None):
             if kind not in ("break", "intro")
             else _CHORD_HITS[kind]
         )
+        bass_pool = feel.bass
+        if layering:
+            hits_pool = _widened(hits_pool, LAYER_CHORD_HITS)
+            bass_pool = _widened(feel.bass, LAYER_BASS_RHYTHMS)
         hits_variant = variant or occurrence % 2
         opening = _turn(phrase_count, layering)
         bass_rhythm.setdefault(
             (kind, act, variant, opening),
-            _fresh(rng, feel.bass, used_bass)
+            _fresh(rng, bass_pool, used_bass)
             if layering
             else rng.choice(feel.bass),
         )
@@ -1172,7 +1199,7 @@ def compose(options, existing=None):
             phrase_bar = section.start_bar + offset
             bass_key = (kind, act, variant, turn)
             if bass_key not in bass_rhythm:
-                bass_rhythm[bass_key] = _fresh(rng, feel.bass, used_bass)
+                bass_rhythm[bass_key] = _fresh(rng, bass_pool, used_bass)
             hits_key = (kind, act, hits_variant, turn)
             if hits_key not in chord_hits:
                 chord_hits[hits_key] = _fresh(rng, hits_pool, used_hits)
@@ -1269,7 +1296,7 @@ def compose(options, existing=None):
                         _calm_rate(feel.arp_rates)
                         if sung
                         else feel.arp_rates[
-                            (act + variant + turn // 2) % len(feel.arp_rates)
+                            (act + variant + turn) % len(feel.arp_rates)
                         ],
                         shape=ACT_ARP_SHAPES[look % len(ACT_ARP_SHAPES)],
                         **kw,

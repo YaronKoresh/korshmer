@@ -22,7 +22,7 @@ def get_limited_text(
     from PySide6.QtWidgets import QDialog, QInputDialog, QLineEdit, QMessageBox
 
     dialog = QInputDialog(parent)
-    dialog.setInputMode(QInputDialog.TextInput)
+    dialog.setInputMode(QInputDialog.InputMode.TextInput)
     dialog.setWindowTitle(title)
     dialog.setLabelText(label)
     dialog.setTextValue(text)
@@ -30,7 +30,7 @@ def get_limited_text(
     if line_edit is not None:
         limit_line_edit(line_edit, max_length)
 
-    ok = dialog.exec() == QDialog.Accepted
+    ok = dialog.exec() == QDialog.DialogCode.Accepted
     value = dialog.textValue()
     dialog.deleteLater()
 

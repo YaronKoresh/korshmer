@@ -109,7 +109,7 @@ async def export_midi(midi_obj: Any, output_path: Path) -> Path:
         midi_obj.write(str(output_path))
         return output_path
 
-    result = await loop.run_in_executor(None, _export)
+    result: Path = await loop.run_in_executor(None, _export)
     return result
 
 
@@ -128,5 +128,5 @@ async def list_audio_files(
         ]
         return sorted(files)
 
-    result = await loop.run_in_executor(None, _scan_dir)
+    result: list = await loop.run_in_executor(None, _scan_dir)
     return result

@@ -11,7 +11,7 @@ class AudioBlockQueue:
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
         self._capacity = capacity
-        self._items: deque = deque()
+        self._items: deque[tuple[int, int, np.ndarray]] = deque()
         self.generation = 0
 
     def __len__(self) -> int:
@@ -63,7 +63,7 @@ class AudioPrefetcher:
         self._block_frames = block_frames
         self._queue = AudioBlockQueue(capacity)
         self._target = 0
-        self._expected = None
+        self._expected: int | None = None
         self._end_frame = 0
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()

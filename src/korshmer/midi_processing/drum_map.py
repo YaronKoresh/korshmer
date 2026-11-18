@@ -79,7 +79,7 @@ class DrumSample:
     name: str
     midi_note: int
     file_path: str | None = None
-    velocity_layers: list[str] = None
+    velocity_layers: list[str] | None = None
 
     def __post_init__(self):
         if self.velocity_layers is None:
@@ -141,7 +141,7 @@ class DrumMapEditor:
     def __init__(self):
         self.custom_maps: dict[str, dict[int, DrumSample]] = {}
         self.current_map = "GM"
-        self.gm_map = {
+        self.gm_map: dict[int, DrumSample] = {
             note: DrumSample(name, note) for note, name in GM_DRUM_MAP.items()
         }
 

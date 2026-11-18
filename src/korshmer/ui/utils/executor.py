@@ -9,7 +9,7 @@ from korshmer.utils.worker_count import compute_worker_count
 _executor_lock = threading.Lock()
 _executor = None
 _executor_shutdown = False
-_active_futures = []
+_active_futures: list[concurrent.futures.Future] = []
 
 
 def get_executor():

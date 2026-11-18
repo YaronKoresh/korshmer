@@ -43,7 +43,7 @@ class Compressor:
         if audio_data.ndim == 1:
             audio_data = audio_data.reshape(1, -1)
 
-        output = np.zeros_like(audio_data)
+        output: np.ndarray = np.zeros_like(audio_data)
 
         kernels.compress(
             audio_data,
@@ -56,7 +56,8 @@ class Compressor:
         )
 
         if output.shape[0] == 1:
-            return output[0]
+            result: np.ndarray = output[0]
+            return result
         return output
 
 

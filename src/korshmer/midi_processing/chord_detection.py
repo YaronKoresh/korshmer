@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 
 class ChordQuality(Enum):
@@ -388,12 +389,12 @@ class ChordDetector:
         return function_map.get(degree, HarmonicFunction.TONIC)
 
     def detect_modulation(self, chords: list[Chord]) -> list[tuple[int, int]]:
-        modulations = []
+        modulations: list[tuple[int, int]] = []
 
         if len(chords) < 4:
             return modulations
 
-        segments = []
+        segments: list[list[Any]] = []
         for i in range(len(chords) - 3):
             keys = set(self._estimate_keys(chords[i : i + 4]))
             if segments and segments[-1][1] & keys:

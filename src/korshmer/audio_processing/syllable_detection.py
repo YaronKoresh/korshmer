@@ -36,7 +36,8 @@ class SyllableDetector:
         self.fmin, self.fmax = self.VOICE_RANGES.get(voice_type, (80, 2000))
 
     def _remove_dc_offset(self, audio: np.ndarray) -> np.ndarray:
-        return audio - np.mean(audio)
+        result: np.ndarray = audio - np.mean(audio)
+        return result
 
     def _noise_gate(
         self,
@@ -77,7 +78,7 @@ class SyllableDetector:
             envelope += (target - envelope) * step
             smoothed_mask[i] = envelope
 
-        gated_audio = audio * smoothed_mask
+        gated_audio: np.ndarray = audio * smoothed_mask
         return gated_audio
 
     def _smooth_envelope(
@@ -88,9 +89,9 @@ class SyllableDetector:
             y=audio, frame_length=frame_length, hop_length=hop_length
         )[0]
 
-        envelope = scipy_signal.resample(envelope, len(audio))
+        resampled: np.ndarray = scipy_signal.resample(envelope, len(audio))
 
-        return envelope
+        return resampled
 
     def _find_onset_times(self, audio: np.ndarray) -> np.ndarray:
         onset_frames = librosa.onset.onset_detect(

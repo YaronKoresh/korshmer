@@ -231,7 +231,7 @@ class AdvancedQuantizer:
         blend = self.quantize_strength
         quantized += self.grid_offset
         time += self.grid_offset
-        return time * (1 - blend) + quantized * blend
+        return float(time * (1 - blend) + quantized * blend)
 
     def _humanize_time(self, time: float, grid_division: float) -> float:
         beat_duration = 60.0 / self.bpm
@@ -240,7 +240,7 @@ class AdvancedQuantizer:
         max_deviation = grid_size * 0.1
         deviation = np.random.uniform(-max_deviation, max_deviation)
 
-        return time + deviation
+        return float(time + deviation)
 
     def quantize_with_strength_curve(
         self,
@@ -274,7 +274,9 @@ class AdvancedQuantizer:
 
     def _get_beat_position(self, time: float) -> float:
         beat_duration = 60.0 / self.bpm
-        return ((time - self.grid_offset) % beat_duration) / beat_duration
+        return float(
+            ((time - self.grid_offset) % beat_duration) / beat_duration
+        )
 
     def apply_swing(
         self, notes: list[Note], swing_amount: float = 0.5
@@ -349,8 +351,8 @@ class GrooveExtractor:
         beat_duration = 60.0 / self.bpm
         grid_size = beat_duration * reference_grid
 
-        timing_offsets = {}
-        velocity_curve = {}
+        timing_offsets: dict[float, list[float]] = {}
+        velocity_curve: dict[float, list[float]] = {}
 
         for note in notes:
             nearest_grid = round(note.start_time / grid_size) * grid_size
@@ -366,10 +368,11 @@ class GrooveExtractor:
             velocity_curve[grid_position].append(note.velocity / 127.0)
 
         avg_timing = {
-            pos: np.mean(offsets) for pos, offsets in timing_offsets.items()
+            pos: float(np.mean(offsets))
+            for pos, offsets in timing_offsets.items()
         }
         avg_velocity = {
-            pos: np.mean(vels) for pos, vels in velocity_curve.items()
+            pos: float(np.mean(vels)) for pos, vels in velocity_curve.items()
         }
 
         swing = self._estimate_swing(timing_offsets)
@@ -428,7 +431,7 @@ class GrooveExtractor:
         beat_duration = 60.0 / tempo
         grid_size = beat_duration * reference_grid
 
-        timing_offsets = {}
+        timing_offsets: dict[float, list[float]] = {}
         for beat_time in beat_times:
             nearest_grid = float(round(beat_time / grid_size) * grid_size)
             offset = float(beat_time - nearest_grid)

@@ -16,10 +16,12 @@ class RangeEQ:
         if curve_val == 0:
             return pos
         elif curve_val > 0:
-            return pos ** (1.0 + (curve_val / 1.5))
+            weight: float = pos ** (1.0 + (curve_val / 1.5))
+            return weight
         else:
             exponent = 1.0 / (1.0 + (abs(curve_val) / 1.5))
-            return pos**exponent
+            weight = pos**exponent
+            return weight
 
     def _design_peaking_sos(
         self, freq: float, gain_db: float, bw_oct: float
@@ -36,7 +38,8 @@ class RangeEQ:
         a1 = -2 * np.cos(w0)
         a2 = 1 - alpha / A
 
-        return np.array([b0, b1, b2, a0, a1, a2]) / a0
+        result: np.ndarray = np.array([b0, b1, b2, a0, a1, a2]) / a0
+        return result
 
     @passthrough_empty_audio
     def process(
@@ -121,4 +124,5 @@ class RangeEQ:
                 channels.append(signal.sosfilt(full_sos, audio_data[ch]))
             return np.array(channels)
         else:
-            return signal.sosfilt(full_sos, audio_data)
+            result: np.ndarray = signal.sosfilt(full_sos, audio_data)
+            return result

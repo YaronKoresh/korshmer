@@ -26,16 +26,14 @@ def save_audio(
         final_path = f"{base_path}.mp3"
 
         INT16_MAX = np.iinfo(np.int16).max
-        y_scaled = (y * INT16_MAX).astype(np.int16)
+        y_int16 = (y * INT16_MAX).astype(np.int16)
 
-        if y_scaled.ndim == 1:
+        if y_int16.ndim == 1:
             channels = 1
-            y_interleaved = y_scaled
+            y_interleaved = y_int16
         else:
             y_interleaved = np.ascontiguousarray(
-                y_scaled.T
-                if y_scaled.shape[0] < y_scaled.shape[1]
-                else y_scaled
+                y_int16.T if y_int16.shape[0] < y_int16.shape[1] else y_int16
             )
             channels = y_interleaved.shape[1]
 

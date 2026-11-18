@@ -128,7 +128,12 @@ class VoiceLeadingAnalyzer:
                 n1_j = voices[j].get_note_at_time(t1)
                 n2_j = voices[j].get_note_at_time(t2)
 
-                if all(x is not None for x in [n1_i, n2_i, n1_j, n2_j]):
+                if (
+                    n1_i is not None
+                    and n2_i is not None
+                    and n1_j is not None
+                    and n2_j is not None
+                ):
                     interval1 = abs(n1_i - n1_j) % 12
                     interval2 = abs(n2_i - n2_j) % 12
 
@@ -294,9 +299,9 @@ class VoiceLeadingAnalyzer:
                 )
             options.append(nearest)
 
-        best = {0: (0, [])}
+        best: dict[int, tuple[int, list[int]]] = {0: (0, [])}
         for voice_index, voice_options in enumerate(options):
-            step = {}
+            step: dict[int, tuple[int, list[int]]] = {}
             for mask, (movement, pitches) in best.items():
                 for class_index, pitch in enumerate(voice_options):
                     new_mask = mask | (1 << class_index)

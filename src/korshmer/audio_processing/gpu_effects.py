@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 from scipy import signal
 
 from korshmer.exceptions import GPUNotAvailableError
@@ -210,7 +212,7 @@ class OpenCLBackend(GpuBackend):
         )
 
 
-def _try_cuda():
+def _try_cuda() -> GpuBackend | None:
     try:
         return CudaBackend()
     except Exception as exc:
@@ -218,7 +220,7 @@ def _try_cuda():
         return None
 
 
-def _try_opencl():
+def _try_opencl() -> GpuBackend | None:
     try:
         return OpenCLBackend()
     except Exception as exc:
@@ -279,11 +281,12 @@ class GpuEffects:
     def is_gpu(self) -> bool:
         return self._backend.name != "cpu"
 
-    def _run(self, operation, *args):
+    def _run(self, operation: str, *args: Any) -> np.ndarray:
         with self._lock:
             backend = self._backend
         try:
-            return getattr(backend, operation)(*args)
+            result: np.ndarray = getattr(backend, operation)(*args)
+            return result
         except Exception as exc:
             if backend.name == "cpu":
                 raise
@@ -293,10 +296,11 @@ class GpuEffects:
             )
             with self._lock:
                 self._backend = self._cpu
-            return getattr(self._cpu, operation)(*args)
+            result = getattr(self._cpu, operation)(*args)
+            return result
 
     @staticmethod
-    def _as_rows(audio):
+    def _as_rows(audio: npt.ArrayLike) -> npt.NDArray[np.float64]:
         audio = np.asarray(audio, dtype=np.float64)
         if audio.ndim not in (1, 2):
             raise ValueError(
@@ -306,48 +310,63 @@ class GpuEffects:
             raise ValueError("Audio contains NaN or infinite values")
         return audio
 
-    def apply_gain(self, audio, gain_db: float = 0.0) -> np.ndarray:
-        audio = self._as_rows(audio)
-        if audio.size == 0:
-            return audio.copy()
-        return self._run("gain", audio, 10 ** (float(gain_db) / 20.0))
+    def apply_gain(
+        self, audio: npt.ArrayLike, gain_db: float = 0.0
+    ) -> np.ndarray:
+        samples = self._as_rows(audio)
+        if samples.size == 0:
+            empty: np.ndarray = samples.copy()
+            return empty
+        return self._run("gain", samples, 10 ** (float(gain_db) / 20.0))
 
-    def soft_clip(self, audio, drive_db: float = 10.0) -> np.ndarray:
-        audio = self._as_rows(audio)
-        if audio.size == 0:
-            return audio.copy()
-        return self._run("soft_clip", audio, 10 ** (float(drive_db) / 20.0))
+    def soft_clip(
+        self, audio: npt.ArrayLike, drive_db: float = 10.0
+    ) -> np.ndarray:
+        samples = self._as_rows(audio)
+        if samples.size == 0:
+            empty: np.ndarray = samples.copy()
+            return empty
+        return self._run("soft_clip", samples, 10 ** (float(drive_db) / 20.0))
 
     def convolve(
-        self, audio, impulse_response, keep_tail: bool = False
+        self,
+        audio: npt.ArrayLike,
+        impulse_response: npt.ArrayLike,
+        keep_tail: bool = False,
     ) -> np.ndarray:
-        audio = self._as_rows(audio)
+        samples = self._as_rows(audio)
         impulse = np.asarray(impulse_response, dtype=np.float64)
         if impulse.ndim != 1 or impulse.size == 0:
             raise ValueError("Impulse response must be a non-empty 1D array")
         if not np.all(np.isfinite(impulse)):
             raise ValueError("Impulse response contains NaN or infinite values")
-        if audio.size == 0:
-            return audio.copy()
+        if samples.size == 0:
+            empty: np.ndarray = samples.copy()
+            return empty
 
-        rows = np.atleast_2d(audio)
+        rows = np.atleast_2d(samples)
         result = np.asarray(self._run("convolve", rows, impulse))
         if not keep_tail:
             result = result[..., : rows.shape[-1]]
-        if audio.ndim == 1:
-            return result[0]
+        if samples.ndim == 1:
+            first_row: np.ndarray = result[0]
+            return first_row
         return result
 
     def convolution_reverb(
-        self, audio, impulse_response, wet: float = 0.3
+        self,
+        audio: npt.ArrayLike,
+        impulse_response: npt.ArrayLike,
+        wet: float = 0.3,
     ) -> np.ndarray:
         if isinstance(wet, bool) or not 0.0 <= float(wet) <= 1.0:
             raise ValueError(f"Wet mix must be between 0 and 1, got {wet!r}")
-        audio = self._as_rows(audio)
-        if audio.size == 0:
-            return audio.copy()
-        reverberated = self.convolve(audio, impulse_response)
-        return audio * (1.0 - wet) + reverberated * wet
+        samples = self._as_rows(audio)
+        if samples.size == 0:
+            empty: np.ndarray = samples.copy()
+            return empty
+        reverberated = self.convolve(samples, impulse_response)
+        return samples * (1.0 - wet) + reverberated * wet
 
 
 _gpu_effects: GpuEffects | None = None

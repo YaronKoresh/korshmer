@@ -65,6 +65,7 @@ from korshmer.midi.tempo_follow import (
     write_midi,
 )
 from korshmer.midi.transcription_cleanup import (
+    adopt_heard_notes,
     clean_transcription,
     drop_notes_outside_regions,
     level_flux,
@@ -426,6 +427,7 @@ def process_track(
                     model_path = variant_paths[0]
 
                 follow_audio_dynamics = False
+                extra_passes = []
                 if is_drum_stem:
                     progress(
                         trans_prog + 0.02,
@@ -518,6 +520,7 @@ def process_track(
                         if len(results) == 1
                         else merge_note_variants(results)
                     )
+                    extra_passes = results[1:]
                     progress(
                         trans_prog + 0.15,
                         desc=f"AI Transcription complete: {stem_name}",
@@ -526,6 +529,24 @@ def process_track(
                 arr_prog = trans_prog + (total_range / num_stems * 0.25)
                 progress(arr_prog, desc=f"Arranging: {stem_name}...")
                 drum_check = "drum" in stem_name.lower()
+                pitch_level = None
+                if not drum_check:
+                    try:
+                        import librosa
+
+                        stem_audio, stem_rate = librosa.load(
+                            s_path, sr=22050, mono=True
+                        )
+                        level, level_fps = pitch_band_level(
+                            stem_audio, stem_rate
+                        )
+                        pitch_level = (level, level_fps, level_flux(level))
+                        adopt_heard_notes(m_dat, extra_passes, level, level_fps)
+                    except Exception as exc:
+                        print(
+                            f"Pitch level check skipped: {exc}",
+                            file=sys.stderr,
+                        )
                 if music_regions:
                     drop_notes_outside_regions(m_dat, music_regions)
                 if not drum_check and song_loud_db is not None:
@@ -551,16 +572,8 @@ def process_track(
                         options=options_for_cleanup(stem_name, cleanup_options),
                         onsets=stem_onsets,
                     )
-                    try:
-                        import librosa
-
-                        stem_audio, stem_rate = librosa.load(
-                            s_path, sr=22050, mono=True
-                        )
-                        level, level_fps = pitch_band_level(
-                            stem_audio, stem_rate
-                        )
-                        flux = level_flux(level)
+                    if pitch_level is not None:
+                        level, level_fps, flux = pitch_level
                         for inst in m_dat.instruments:
                             merge_unattacked_splits(
                                 inst, flux, level_fps, level=level
@@ -568,11 +581,6 @@ def process_track(
                             merge_sustained_splits(
                                 inst, level, level_fps, flux=flux
                             )
-                    except Exception as exc:
-                        print(
-                            f"Joining split notes skipped: {exc}",
-                            file=sys.stderr,
-                        )
                 if (
                     not drum_check
                     and scale_type != "Auto (Detect)"

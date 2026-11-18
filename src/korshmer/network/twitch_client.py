@@ -12,6 +12,7 @@ import time
 from collections import deque
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from korshmer.network.circuit_breaker import CircuitBreaker
 from korshmer.utils.audit_log import OUTCOME_DENIED, OUTCOME_FAILED, audit
@@ -226,7 +227,7 @@ class TwitchClient:
         self._connect = connect or _default_connect
         self._limiter = rate_limiter or RateLimiter()
         self._breaker = breaker or CircuitBreaker("twitch")
-        self._sock = None
+        self._sock: Any = None
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._connected = False

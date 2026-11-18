@@ -1,4 +1,5 @@
 import random
+from typing import Any
 
 import numpy as np
 import pretty_midi
@@ -403,7 +404,7 @@ class StyleTransfer:
         self.style_features = {}
 
     def extract_style_features(self, midi_data: pretty_midi.PrettyMIDI) -> dict:
-        features = {
+        features: dict[str, Any] = {
             "avg_velocity": [],
             "note_density": 0,
             "pitch_range": [127, 0],

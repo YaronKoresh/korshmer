@@ -683,6 +683,9 @@ PITCH_FLUX_PARTIALS = (0, 12, 19)
 REATTACK_MIN_RISE_DB = 2.0
 REATTACK_BEFORE_S = (0.1, 0.02)
 REATTACK_AFTER_S = 0.08
+ADOPT_APART_S = 0.1
+ADOPT_WITHIN_DB = 10.0
+ADOPT_FLOOR_DB = -30.0
 
 
 def pitch_band_level(audio, sample_rate):
@@ -703,6 +706,48 @@ def pitch_band_level(audio, sample_rate):
     )
     level = librosa.amplitude_to_db(spectrum, ref=np.max)
     return level, sample_rate / PITCH_FLUX_HOP
+
+
+def _apart(note, others):
+    return all(
+        note.start >= other.end + ADOPT_APART_S
+        or other.start >= note.end + ADOPT_APART_S
+        for other in others
+    )
+
+
+def _heard_in(note, level, frames_per_second):
+    row = note.pitch - PITCH_FLUX_LOWEST
+    first = int(note.start * frames_per_second)
+    last = max(first + 1, int(note.end * frames_per_second))
+    span = level[:, first:last]
+    if not 0 <= row < level.shape[0] or span.size == 0:
+        return False
+    loudest = float(span.max(axis=0).mean())
+    own = float(span[row].mean())
+    return own >= ADOPT_FLOOR_DB and own >= loudest - ADOPT_WITHIN_DB
+
+
+def adopt_heard_notes(midi, variants, level, frames_per_second):
+    pitched = [inst for inst in midi.instruments if not inst.is_drum]
+    if not pitched:
+        return 0
+    known = _by_pitch(_all_notes(midi))
+    adopted = []
+    for other in variants:
+        for note in sorted(_all_notes(other), key=lambda n: n.start):
+            if not _apart(note, known.get(note.pitch, ())):
+                continue
+            if not _heard_in(note, level, frames_per_second):
+                continue
+            copy = pretty_midi.Note(
+                note.velocity, note.pitch, note.start, note.end
+            )
+            adopted.append(copy)
+            known.setdefault(note.pitch, []).append(copy)
+    pitched[0].notes.extend(adopted)
+    pitched[0].notes.sort(key=lambda n: (n.start, n.pitch))
+    return len(adopted)
 
 
 def level_flux(level):

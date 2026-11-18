@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Concatenate, ParamSpec, TypeVar
 
 from korshmer import __version__
 from korshmer.project_management.file_io_log import logged_file_op
@@ -59,7 +59,8 @@ RESERVED_FOLDERS = frozenset(
     }
 )
 
-F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
+R = TypeVar("R")
 
 
 class ReadWriteLock:
@@ -103,9 +104,11 @@ class ReadWriteLock:
                 self._cond.notify_all()
 
 
-def _read_locked(method: F) -> F:
+def _read_locked(
+    method: Callable[Concatenate[Any, P], R],
+) -> Callable[Concatenate[Any, P], R]:
     @wraps(method)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
         self._state_lock.acquire_read()
         try:
             return method(self, *args, **kwargs)
@@ -115,9 +118,11 @@ def _read_locked(method: F) -> F:
     return wrapper
 
 
-def _write_locked(method: F) -> F:
+def _write_locked(
+    method: Callable[Concatenate[Any, P], R],
+) -> Callable[Concatenate[Any, P], R]:
     @wraps(method)
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
         self._state_lock.acquire_write()
         try:
             return method(self, *args, **kwargs)
@@ -141,7 +146,7 @@ class ProjectManager:
         self.current_project_path: Path | None = None
         self.current_project_data: dict[str, Any] = {}
         self.auto_backup_interval = 300
-        self.last_backup_time = 0
+        self.last_backup_time: float = 0
         self.last_load_backup: Path | None = None
         self.backup_enabled = True
         self.max_backups = 10
@@ -375,7 +380,7 @@ class ProjectManager:
         return None
 
     def _load_compressed(self, project_path: Path) -> dict[str, Any] | None:
-        project_data = load_compressed(
+        project_data: dict[str, Any] = load_compressed(
             project_path,
             self.base_dir / "temp",
             self.base_dir / "saved_data" / "assets",
@@ -385,7 +390,7 @@ class ProjectManager:
         return project_data
 
     def _load_uncompressed(self, project_path: Path) -> dict[str, Any] | None:
-        project_data = load_uncompressed(project_path)
+        project_data: dict[str, Any] = load_uncompressed(project_path)
         self.current_project_path = project_path
         self.current_project_data = project_data
         return project_data

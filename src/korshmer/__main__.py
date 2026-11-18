@@ -84,6 +84,9 @@ setup_event_loop()
 initialize_logging()
 
 
+UNSAVED_SONG_FILE = "Unsaved song.kproj"
+
+
 class MainWindow(
     QMainWindow,
     UiMixin,
@@ -328,12 +331,24 @@ class MainWindow(
         self.recovery_timer.timeout.connect(self._save_recovery_state)
         self.recovery_timer.start(30000)
 
+    def _recovery_song_path(self):
+        return (
+            self.project_manager.current_project_path
+            or self._song_home()
+            or self.project_manager.saved_data_dir / UNSAVED_SONG_FILE
+        )
+
     def _save_recovery_state(self):
-        if self.project_manager.current_project_path:
-            try:
-                self.project_manager.save_recovery_state()
-            except Exception as e:
-                logging.error(f"Failed to save recovery state: {e}")
+        saved = self.project_manager.current_project_path
+        if not saved and not self._editor_has_content():
+            return
+        if QApplication.mouseButtons() != Qt.NoButton:
+            return
+        try:
+            self._capture_song(self._recovery_song_path())
+            self.project_manager.save_recovery_state()
+        except Exception as e:
+            logging.error(f"Failed to save recovery state: {e}")
 
     def _check_auto_recovery(self):
         recovery_data = self.project_manager.enable_auto_recovery()
@@ -356,6 +371,10 @@ class MainWindow(
                         self.project_manager.current_project_path = Path(
                             project_path
                         )
+                    self._apply_song(
+                        self.project_manager.current_project_data,
+                        self._recovery_song_path(),
+                    )
                     logging.info("Project recovered from auto-recovery file")
                     QMessageBox.information(
                         self,
@@ -544,6 +563,7 @@ Help:
         if self.obs_client is not None:
             self.obs_client.stop()
         self._stop_background_threads()
+        self.project_manager.clear_recovery_state()
         super().closeEvent(event)
 
     def paintEvent(self, event):

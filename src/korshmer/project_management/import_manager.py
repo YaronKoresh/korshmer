@@ -1,5 +1,6 @@
 import logging
 import subprocess
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -201,7 +202,7 @@ class ImportManager:
             output_name = f"{video_path.stem}_{timestamp}.{output_format}"
             output_path = output_dir / output_name
 
-            cmd = [
+            cmd: list[str | Path] = [
                 "ffmpeg",
                 "-i",
                 video_path,
@@ -252,7 +253,7 @@ class ImportManager:
         self,
         directory: Path,
         recursive: bool = True,
-        file_extensions: list[str] | None = None,
+        file_extensions: Sequence[str] | None = None,
         auto_organize: bool = True,
     ) -> list[Path]:
         if not is_safe_path(directory):
@@ -287,7 +288,7 @@ class ImportManager:
         if not pack_path.exists():
             return {}
 
-        analysis = {
+        analysis: dict[str, Any] = {
             "name": pack_path.name,
             "path": str(pack_path),
             "total_files": 0,
@@ -339,7 +340,7 @@ class ImportManager:
     def get_import_stats(self) -> dict[str, Any]:
         total_files = 0
         total_size = 0
-        file_types = {}
+        file_types: dict[str, int] = {}
 
         for file_path in self.imports_dir.rglob("*"):
             if file_path.is_file():

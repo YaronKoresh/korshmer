@@ -99,12 +99,13 @@ def ensure_directories():
             ensure_directory(d)
         except Exception as e:
             failures.append((d, e))
-    for d, e in failures:
+    for d, error in failures:
         if logging.getLogger().hasHandlers():
-            logging.error(f"Could not create directory {d}: {e}")
+            logging.error(f"Could not create directory {d}: {error}")
         else:
             print(
-                f"Error: Could not create directory {d}: {e}", file=sys.stderr
+                f"Error: Could not create directory {d}: {error}",
+                file=sys.stderr,
             )
 
 

@@ -20,6 +20,8 @@ MIN_TUNING_CONCENTRATION = 0.3
 MAX_STATE_COST = 2.5
 GLIDE_SECONDS = 0.09
 WOBBLE_SECONDS = 0.12
+SCOOP_SECONDS = 0.1
+SCOOP_RATIO = 2.0
 LEVEL_FRAME_LENGTH = 512
 DIP_DB = 10.0
 MIN_LEVEL_DB = -60.0
@@ -42,6 +44,7 @@ class VocalMelodyOptions:
     max_level_drop_db: float = 30.0
     min_voiced_prob: float = 0.02
     loud_voice_db: float = 12.0
+    legato_gap_s: float = 0.12
     speech_gate: bool = True
     gate_window_s: float = 3.0
     gate_run_s: float = 0.25
@@ -76,6 +79,7 @@ class VocalMelodyOptions:
             self.min_voiced_prob, "Minimum voiced probability", 0, 1
         )
         validate_effect_number(self.loud_voice_db, "Loud voice range", 0, 120)
+        validate_effect_number(self.legato_gap_s, "Legato gap", 0, 2)
         validate_effect_number(self.gate_window_s, "Gate window", 0.5, 20)
         validate_effect_number(self.gate_run_s, "Gate run length", 0.05, 5)
         validate_effect_number(self.gate_tolerance, "Gate tolerance", 0.1, 6)
@@ -307,6 +311,38 @@ def _join_wobbles(spans, hop_s):
     return joined
 
 
+def _absorb_scoops(spans, hop_s):
+    kept = []
+    for span in spans:
+        if kept:
+            first, last, pitch = kept[-1]
+            begin, end, other = span
+            short, long = sorted((last - first, end - begin))
+            if (
+                begin == last
+                and abs(other - pitch) == 1
+                and short * hop_s <= SCOOP_SECONDS
+                and long >= SCOOP_RATIO * short
+            ):
+                steady = pitch if last - first >= end - begin else other
+                kept[-1] = (first, end, steady)
+                continue
+        kept.append(span)
+    return kept
+
+
+def _sing_through(notes, max_gap_s):
+    joined = []
+    for note, following in zip(notes, [*notes[1:], None], strict=True):
+        gap = following.start - note.end if following is not None else None
+        if gap is not None and 0 < gap <= max_gap_s:
+            note = VocalNote(
+                note.start, following.start, note.pitch, velocity=note.velocity
+            )
+        joined.append(note)
+    return joined
+
+
 def _velocity(level, reference, drop):
     return int(
         round(
@@ -330,6 +366,7 @@ def _notes_from_pitch(f0, probability, rms, options):
     ]
     spans = _confident_or_loud(spans, probability, db, options)
     spans = _join_wobbles(spans, hop_s)
+    spans = _absorb_scoops(spans, hop_s)
     if options.speech_gate and spans:
         share = singing_share(smooth, hop_s, options)
         spans = [
@@ -358,7 +395,7 @@ def _notes_from_pitch(f0, probability, rms, options):
                 velocity=_velocity(level, reference, options.max_level_drop_db),
             )
         )
-    return notes
+    return _sing_through(notes, options.legato_gap_s)
 
 
 def transcribe_vocal_melody(

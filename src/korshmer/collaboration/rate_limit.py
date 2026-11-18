@@ -7,6 +7,12 @@ from collections.abc import Callable
 
 
 class TokenBucket:
+    rate: float
+    burst: int
+    _clock: Callable[[], float]
+    _tokens: float
+    _last: float
+
     def __init__(
         self,
         rate: float,
