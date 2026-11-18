@@ -1,7 +1,13 @@
 from dataclasses import dataclass
 
+import librosa
 import numpy as np
-from scipy.ndimage import maximum_filter1d, minimum_filter1d, uniform_filter1d
+from scipy.ndimage import (
+    maximum_filter1d,
+    minimum_filter1d,
+    uniform_filter,
+    uniform_filter1d,
+)
 
 from korshmer.audio_processing.validation import validate_sample_rate
 from korshmer.audio_processing.vocal_cleanup import (
@@ -25,6 +31,19 @@ PHRASE_SPREAD_GOAL_DB = 6.0
 PHRASE_SPREAD_TOLERANCE_DB = 0.5
 MAX_PHRASE_RIDE_DB = 6.0
 OFFSET_GOAL = 2e-3
+NOISE_GOAL_DB = -40.0
+NOISE_TOLERANCE_DB = 0.5
+PAUSE_GAP_DB = 15.0
+PAUSE_PERCENTILE = 2.0
+STEADY_NOISE_RANGE_DB = 4.0
+MAX_NOISE_CUT_DB = 18.0
+NOISE_MARGIN = 2.0
+NOISE_SMOOTHING = (3, 7)
+OVER_NOTES_GOAL_DB = 3.0
+OVER_NOTES_TOLERANCE_DB = 0.5
+MAX_LIFT_OVER_NOTES_DB = 6.0
+NOTES_SILENT_DB = -70.0
+MAIN_BAND_SHARES = (0.1, 0.9)
 LIMITER_LOOKAHEAD_S = 0.005
 LIMITER_RELEASE_S = 0.08
 MAX_PASSES = 4
@@ -34,6 +53,8 @@ LEVEL = "level"
 PEAK = "peak"
 PHRASES = "phrase spread"
 OFFSET = "offset"
+NOISE = "noise in pauses"
+OVER_NOTES = "over the notes"
 
 
 @dataclass(frozen=True)
@@ -83,32 +104,107 @@ def _phrase_spread(levels):
     return float(np.percentile(levels, 90) - np.percentile(levels, 10))
 
 
-def measure(data, sample_rate):
+def _pause_frames(levels):
+    return levels <= np.percentile(levels, PAUSE_PERCENTILE)
+
+
+def _noise_db(mono, level):
+    if mono.shape[0] < N_FFT or level <= SILENT_DB:
+        return SILENT_DB
+    levels = frame_levels_db(mono)
+    quiet = levels[_pause_frames(levels)]
+    if quiet.max() - quiet.min() > STEADY_NOISE_RANGE_DB:
+        return SILENT_DB
+    noise = 10.0 * np.log10(np.mean(10.0 ** (quiet / 10.0))) - level
+    if noise > -PAUSE_GAP_DB:
+        return SILENT_DB
+    return max(SILENT_DB, float(noise))
+
+
+def _fitted(music, length):
+    notes = np.zeros(length, dtype=np.float32)
+    if music is not None:
+        heard = np.asarray(music, dtype=np.float32)[:length]
+        notes[: heard.shape[0]] = heard
+    return notes
+
+
+def _spectra(mono, notes, sounding):
+    clip = np.abs(librosa.stft(mono, n_fft=N_FFT, hop_length=HOP_LENGTH)) ** 2
+    song = np.abs(librosa.stft(notes, n_fft=N_FFT, hop_length=HOP_LENGTH)) ** 2
+    frames = min(clip.shape[1], sounding.shape[0])
+    chosen = sounding[:frames]
+    return clip[:, :frames][:, chosen].mean(axis=1), song[:, :frames][
+        :, chosen
+    ].mean(axis=1)
+
+
+def notes_levels(mono, music):
+    if music is None or mono.shape[0] < N_FFT:
+        return None
+    notes = _fitted(music, mono.shape[0])
+    levels = frame_levels_db(mono)
+    sounding = active_frames(levels)
+    if not np.any(sounding):
+        return None
+    heard = frame_levels_db(notes)[sounding]
+    level = 10.0 * np.log10(np.mean(10.0 ** (heard / 10.0)))
+    if level <= NOTES_SILENT_DB:
+        return None
+    clip, song = _spectra(mono, notes, sounding)
+    share = np.cumsum(clip) / max(float(clip.sum()), 1e-30)
+    low, high = np.searchsorted(share, MAIN_BAND_SHARES)
+    band = slice(int(low), int(max(high, low + 1)) + 1)
+    over = 10.0 * np.log10(
+        max(float(clip[band].sum()), 1e-30)
+        / max(float(song[band].sum()), 1e-30)
+    )
+    return float(level), float(over)
+
+
+def measure(data, sample_rate, music=None):
     audio = np.asarray(data, dtype=np.float32)
     mono = _mono(audio)
     level = active_level_db(audio)
+    level = SILENT_DB if level is None else level
     _centres, phrases = (
         _phrase_levels(mono, sample_rate)
         if mono.shape[0] >= N_FFT
         else (np.array([]), np.array([]))
     )
-    return {
-        LEVEL: SILENT_DB if level is None else level,
+    found = {
+        LEVEL: level,
         PEAK: _decibels(np.max(np.abs(audio))) if audio.size else SILENT_DB,
         PHRASES: _phrase_spread(phrases),
         OFFSET: float(np.max(np.abs(np.mean(audio, axis=0))))
         if audio.size
         else 0.0,
+        NOISE: _noise_db(mono, level),
     }
+    beside_notes = notes_levels(mono, music)
+    if beside_notes is not None:
+        found[OVER_NOTES] = beside_notes[1]
+    return found
 
 
-def goals():
-    return {
-        LEVEL: level_goal_db(),
+def goals(before=None, music_level=None):
+    level = level_goal_db()
+    wanted = {
+        LEVEL: level,
         PEAK: PEAK_LIMIT_DB,
         PHRASES: PHRASE_SPREAD_GOAL_DB,
         OFFSET: OFFSET_GOAL,
+        NOISE: NOISE_GOAL_DB,
     }
+    if before is not None and music_level is not None and OVER_NOTES in before:
+        level = max(level, music_level + float(VOCAL_ABOVE_MIDI_DB))
+        at_level = before[OVER_NOTES] + level - before[LEVEL]
+        lift = min(
+            MAX_LIFT_OVER_NOTES_DB, max(0.0, OVER_NOTES_GOAL_DB - at_level)
+        )
+        wanted[LEVEL] = level + lift
+        wanted[OVER_NOTES] = OVER_NOTES_GOAL_DB
+    return wanted
 
 
 def meets(name, value, goal):
@@ -118,7 +214,40 @@ def meets(name, value, goal):
         return value <= goal + PEAK_TOLERANCE_DB
     if name == PHRASES:
         return value <= goal + PHRASE_SPREAD_TOLERANCE_DB
+    if name == OVER_NOTES:
+        return value >= goal - OVER_NOTES_TOLERANCE_DB
+    if name == NOISE:
+        return value <= goal + NOISE_TOLERANCE_DB
     return value <= goal
+
+
+def _quieter_pauses(audio, cut_db):
+    mono = _mono(audio)
+    spectrum = np.abs(librosa.stft(mono, n_fft=N_FFT, hop_length=HOP_LENGTH))
+    quiet = _pause_frames(frame_levels_db(mono))[: spectrum.shape[1]]
+    noise = spectrum[:, : quiet.shape[0]][:, quiet].mean(axis=1, keepdims=True)
+    floor = 10.0 ** (-min(float(cut_db), MAX_NOISE_CUT_DB) / 20.0)
+    steady = uniform_filter(spectrum, size=NOISE_SMOOTHING, mode="nearest")
+    kept = 1.0 - (NOISE_MARGIN * noise / np.maximum(steady, 1e-12)) ** 2
+    gain = np.maximum(np.sqrt(np.maximum(kept, 0.0)), floor)
+    wide = audio[:, np.newaxis] if audio.ndim == 1 else audio
+    cleaned = np.stack(
+        [
+            librosa.istft(
+                librosa.stft(
+                    np.ascontiguousarray(wide[:, channel]),
+                    n_fft=N_FFT,
+                    hop_length=HOP_LENGTH,
+                )
+                * gain,
+                hop_length=HOP_LENGTH,
+                length=wide.shape[0],
+            )
+            for channel in range(wide.shape[1])
+        ],
+        axis=1,
+    ).astype(np.float32)
+    return cleaned[:, 0] if audio.ndim == 1 else cleaned
 
 
 def _without_offset(audio):
@@ -174,20 +303,28 @@ def _at_level(audio, sample_rate, goal):
     return audio
 
 
-def improve(data, sample_rate):
+def improve(data, sample_rate, music=None):
     sample_rate = validate_sample_rate(sample_rate)
     audio = np.nan_to_num(
         np.asarray(data, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
     )
-    wanted = goals()
-    before = measure(audio, sample_rate)
+    before = measure(audio, sample_rate, music)
     if before[LEVEL] <= SILENT_DB:
         return audio, []
+    beside_notes = notes_levels(_mono(audio), music)
+    wanted = goals(before, None if beside_notes is None else beside_notes[0])
     met = {name: meets(name, before[name], wanted[name]) for name in wanted}
     if all(met.values()):
         return audio, _readings(before, wanted, before, met)
     if not met[OFFSET]:
         audio = _without_offset(audio)
+    for _ in range(MAX_PASSES):
+        noise = measure(audio, sample_rate)[NOISE]
+        if meets(NOISE, noise, wanted[NOISE]):
+            break
+        audio = _quieter_pauses(
+            audio, noise - wanted[NOISE] + NOISE_TOLERANCE_DB
+        )
     for _ in range(MAX_PASSES):
         spread = measure(audio, sample_rate)[PHRASES]
         if meets(PHRASES, spread, wanted[PHRASES]):
@@ -195,7 +332,8 @@ def improve(data, sample_rate):
         audio = _evened_phrases(audio, sample_rate)
     audio = _at_level(audio, sample_rate, wanted[LEVEL])
     audio = np.asarray(audio, dtype=np.float32)
-    return audio, _readings(before, wanted, measure(audio, sample_rate), met)
+    after = measure(audio, sample_rate, music)
+    return audio, _readings(before, wanted, after, met)
 
 
 def _readings(before, wanted, after, met):
@@ -227,7 +365,7 @@ def summary(readings):
             if not reading.was_reached:
                 parts.append("offset removed")
             continue
-        if reading.name == PHRASES and reading.was_reached:
+        if reading.name in (PHRASES, NOISE) and reading.was_reached:
             continue
         note = "reached" if reading.reached else "not reached"
         parts.append(

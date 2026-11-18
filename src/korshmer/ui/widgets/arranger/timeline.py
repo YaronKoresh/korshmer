@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from korshmer.audio.loader import usable_audio_path
+from korshmer.audio_processing.clip_notes import notes_audio
 from korshmer.audio_processing.effect_chain import (
     apply_effect_chain,
     validate_effect_chain_depth,
@@ -353,6 +354,7 @@ class ArrangerTimeline(QWidget):
         self._pending_waveform_ids = set()
         self._clip_edit_workers = []
         self._clip_edit_files = set()
+        self.notes_audio = notes_audio
         self._saved_clip_files = set()
         layout = QVBoxLayout(self)
 
@@ -895,9 +897,25 @@ class ArrangerTimeline(QWidget):
         steady = self.model.tempo_map is None and self.model.normalized is None
         song_bpm = float(self.model.tempo) if steady else None
 
+        song = self.get_midi_from_editor() if "quality" in steps else None
+        tempo = float(self.piano_roll.tempo)
+        render = self.notes_audio
+        heard = {}
+
+        def notes(sample_rate):
+            if sample_rate not in heard:
+                heard[sample_rate] = render(song, tempo, sample_rate)
+            return heard[sample_rate]
+
         def job(report, cancelled):
             return clip_polish.fix_clip(
-                audio, steps, beats_at, song_bpm, report, cancelled
+                audio,
+                steps,
+                beats_at,
+                song_bpm,
+                report,
+                cancelled,
+                notes=notes if song is not None else None,
             )
 
         return job

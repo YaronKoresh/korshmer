@@ -32,6 +32,7 @@ EARLIER_TAGS = re.compile(
 )
 NOISE_STAGE = "Removing background noise"
 QUALITY_STAGE = "Measuring and improving the level"
+NOTES_STAGE = "Listening to the notes of the song"
 TEMPO_STAGE = "Comparing the tempo with the song"
 STRETCH_STAGE = "Matching the tempo of the song"
 BEAT_STAGE = "Finding the beat"
@@ -161,9 +162,17 @@ def remove_noise_file(path, folder=None):
     )
 
 
-def improve_quality_file(path, folder=None):
+def improve_quality_file(path, folder=None, notes=None, origin=0.0):
+    from korshmer.audio_processing.clip_notes import beside_clip
+
     data, sample_rate = _read(path)
-    improved, readings = clip_level.improve(data, sample_rate)
+    heard = None if notes is None else notes(sample_rate)
+    music = (
+        None
+        if heard is None
+        else beside_clip(heard, sample_rate, origin, data.shape[0])
+    )
+    improved, readings = clip_level.improve(data, sample_rate, music)
     if not readings or clip_level.unchanged(readings):
         return path, readings
     target = fixed_clip_path(path, QUALITY_TAG, folder)
@@ -183,12 +192,13 @@ def match_tempo_file(path, clip_bpm, song_bpm, folder=None):
     return target, matched.shape[1] / sample_rate
 
 
-def _stages(steps, clip, song_bpm):
+def _stages(steps, clip, song_bpm, notes=None):
     paths = 1 + (clip.source_path is not None)
     stages = []
     if NOISE in steps:
         stages += [NOISE_STAGE] * paths
     if QUALITY in steps:
+        stages += [NOTES_STAGE] * (notes is not None)
         stages += [QUALITY_STAGE] * paths
     if ALIGN in steps:
         if song_bpm is not None and clip.source_path is None:
@@ -205,8 +215,9 @@ def fix_clip(
     report=None,
     cancelled=None,
     folder=None,
+    notes=None,
 ):
-    stages = _stages(steps, clip, song_bpm)
+    stages = _stages(steps, clip, song_bpm, notes)
     made = []
     done = 0
 
@@ -229,6 +240,9 @@ def fix_clip(
         for step in (NOISE, QUALITY):
             if step not in steps:
                 continue
+            if step == QUALITY and notes is not None:
+                enter(NOTES_STAGE)
+                notes(sf.info(current["path"]).samplerate)
             for role in ("path", "source"):
                 if current[role] is None:
                     continue
@@ -238,7 +252,10 @@ def fix_clip(
                 else:
                     enter(QUALITY_STAGE)
                     fixed, readings = improve_quality_file(
-                        current[role], folder
+                        current[role],
+                        folder,
+                        notes if role == "path" else None,
+                        clip.start - clip.offset,
                     )
                     if role == "path":
                         result["readings"] = readings
