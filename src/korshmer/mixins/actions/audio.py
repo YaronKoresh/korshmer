@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QWidget
 
 from korshmer.event_bus import Event, publish
 from korshmer.utils.filesystem import is_midi_path
@@ -39,16 +39,30 @@ except ImportError:
 
 
 class AudioActionsMixin(BaseActionsMixin):
-    def run_spectrum_action(self):
+    combo_chord_precision: QComboBox
+
+    def _dialog_parent(self) -> QWidget | None:
+        return self if isinstance(self, QWidget) else None
+
+    def run_spectrum_action(self) -> None:
         path = self._get_selected_file(is_input=None)
         if not path:
             return
 
         if is_midi_path(path):
             QMessageBox.warning(
-                self,
+                self._dialog_parent(),
                 "Error",
                 "Frequency analysis works on Audio files, not MIDI.",
+            )
+            return
+
+        if ImagePreviewDialog is None:
+            QMessageBox.warning(
+                self._dialog_parent(),
+                "Frequency analysis unavailable",
+                "The image preview window could not be loaded, "
+                "so the frequency spectrum cannot be shown.",
             )
             return
 
@@ -62,7 +76,7 @@ class AudioActionsMixin(BaseActionsMixin):
             dlg = ImagePreviewDialog(
                 img_path,
                 title=f"Frequency Analysis: {os.path.basename(path)}",
-                parent=self,
+                parent=self._dialog_parent(),
             )
             dlg.exec()
             try:
@@ -72,7 +86,9 @@ class AudioActionsMixin(BaseActionsMixin):
         else:
             publish(Event.STATUS_UPDATE, text="Error.")
             QMessageBox.critical(
-                self, "Error", "Failed to generate spectrum analysis."
+                self._dialog_parent(),
+                "Error",
+                "Failed to generate spectrum analysis.",
             )
 
     def run_smart_mastering(self):
@@ -89,13 +105,20 @@ class AudioActionsMixin(BaseActionsMixin):
             is_audio=True,
         )
 
-    def run_range_eq_action(self):
+    def run_range_eq_action(self) -> None:
         from korshmer.audio_processors import process_range_eq_file
 
         path = self._get_selected_file(is_input=None)
         if not path:
             return
-        dialog = RangeEQDialog(self)
+        if RangeEQDialog is None:
+            QMessageBox.warning(
+                self._dialog_parent(),
+                "Range EQ unavailable",
+                "The Range EQ options window could not be loaded.",
+            )
+            return
+        dialog = RangeEQDialog(self._dialog_parent())
         if dialog.exec():
             p = dialog.get_params()
             self._run_action(
@@ -123,9 +146,17 @@ class AudioActionsMixin(BaseActionsMixin):
         if hotplug:
             hotplug.reload_mappings()
 
-    def generate_chords_action(self):
+    def generate_chords_action(self) -> None:
         audio_path = self._get_selected_file(is_input=None)
         if not audio_path:
+            return
+
+        if ChordAnalysisThread is None:
+            QMessageBox.warning(
+                self._dialog_parent(),
+                "Chord analysis unavailable",
+                "The chord analysis worker could not be loaded.",
+            )
             return
 
         mode = self.combo_chord_precision.currentText()

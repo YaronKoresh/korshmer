@@ -22,6 +22,23 @@ except ImportError:
 from korshmer.plugins.base import AudioEffectPlugin, PluginParam
 
 
+def _load_audio(audio_path: str) -> "_AudioFile":
+    if AudioFile is None:
+        raise ImportError(
+            "Audio plugins need the 'numpy' and 'soundfile' packages to load audio files."
+        )
+    loaded: _AudioFile = AudioFile.load(audio_path).ensure_2d()
+    return loaded
+
+
+def _soundfile() -> ModuleType:
+    if sf is None:
+        raise ImportError(
+            "Audio plugins need the 'soundfile' package to save audio files."
+        )
+    return sf
+
+
 class ReverbPlugin(AudioEffectPlugin):
     name = "Reverb"
     version = "1.0.0"
@@ -39,13 +56,15 @@ class ReverbPlugin(AudioEffectPlugin):
             ),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import Reverb
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         fx = Reverb(af.sr)
         af.y = fx.process(af.y, **params)
-        sf.write(output_path, af.to_write_format(), af.sr)
+        _soundfile().write(output_path, af.to_write_format(), af.sr)
         return output_path
 
 
@@ -62,13 +81,15 @@ class DelayPlugin(AudioEffectPlugin):
             PluginParam("wet", "Wet Mix", "float", 0.3, 0, 1.0),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import Delay
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         fx = Delay(af.sr)
         af.y = fx.process(af.y, **params)
-        sf.write(output_path, af.to_write_format(), af.sr)
+        _soundfile().write(output_path, af.to_write_format(), af.sr)
         return output_path
 
 
@@ -85,13 +106,15 @@ class ChorusPlugin(AudioEffectPlugin):
             PluginParam("mix", "Mix", "float", 0.5, 0, 1.0),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import Chorus
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         fx = Chorus(af.sr)
         af.y = fx.process(af.y, **params)
-        sf.write(output_path, af.to_write_format(), af.sr)
+        _soundfile().write(output_path, af.to_write_format(), af.sr)
         return output_path
 
 
@@ -109,13 +132,15 @@ class FlangerPlugin(AudioEffectPlugin):
             PluginParam("mix", "Mix", "float", 0.5, 0, 1.0),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import Flanger
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         fx = Flanger(af.sr)
         af.y = fx.process(af.y, **params)
-        sf.write(output_path, af.to_write_format(), af.sr)
+        _soundfile().write(output_path, af.to_write_format(), af.sr)
         return output_path
 
 
@@ -133,13 +158,15 @@ class PhaserPlugin(AudioEffectPlugin):
             PluginParam("mix", "Mix", "float", 0.5, 0, 1.0),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import Phaser
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         fx = Phaser(af.sr)
         af.y = fx.process(af.y, **params)
-        sf.write(output_path, af.to_write_format(), af.sr)
+        _soundfile().write(output_path, af.to_write_format(), af.sr)
         return output_path
 
 
@@ -162,13 +189,15 @@ class TremoloPlugin(AudioEffectPlugin):
             ),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import Tremolo
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         fx = Tremolo(af.sr)
         af.y = fx.process(af.y, **params)
-        sf.write(output_path, af.to_write_format(), af.sr)
+        _soundfile().write(output_path, af.to_write_format(), af.sr)
         return output_path
 
 
@@ -183,13 +212,15 @@ class StereoWidenerPlugin(AudioEffectPlugin):
             PluginParam("width", "Width", "float", 1.5, 0, 3.0),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import StereoWidener
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         fx = StereoWidener(af.sr)
         af.y = fx.process(af.y, **params)
-        sf.write(output_path, af.to_write_format(), af.sr)
+        _soundfile().write(output_path, af.to_write_format(), af.sr)
         return output_path
 
 
@@ -202,7 +233,9 @@ class NormalizePlugin(AudioEffectPlugin):
     def params(cls):
         return []
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import apply_normalize
 
         apply_normalize(audio_path, output_path)
@@ -218,7 +251,9 @@ class ReversePlugin(AudioEffectPlugin):
     def params(cls):
         return []
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import apply_reverse_audio
 
         apply_reverse_audio(audio_path, output_path)
@@ -243,7 +278,9 @@ class FilterPlugin(AudioEffectPlugin):
             PluginParam("cutoff", "Cutoff (Hz)", "float", 1000, 20, 20000),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import apply_filter
 
         apply_filter(audio_path, output_path, **params)
@@ -263,7 +300,9 @@ class NoiseGatePlugin(AudioEffectPlugin):
             ),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import apply_noise_gate
 
         apply_noise_gate(audio_path, output_path, **params)
@@ -283,7 +322,9 @@ class TransientShaperPlugin(AudioEffectPlugin):
             PluginParam("amount", "Amount", "float", 0.5, 0.0, 2.0),
         ]
 
-    def process(self, audio_path, output_path, **params):
+    def process(
+        self, audio_path: str, output_path: str, **params: object
+    ) -> str:
         from korshmer.audio_processing import apply_transient_shaper
 
         apply_transient_shaper(audio_path, output_path, **params)
@@ -302,7 +343,7 @@ class SmartMasteringPlugin(AudioEffectPlugin):
     def process(self, audio_path, output_path, **params):
         from korshmer.audio_processing import SmartMastering, save_audio
 
-        af = AudioFile.load(audio_path).ensure_2d()
+        af = _load_audio(audio_path)
         processor = SmartMastering()
         af.y, _ = processor.process(af.y, af.sr)
         save_audio(path=output_path, y=af.y, sr=af.sr)

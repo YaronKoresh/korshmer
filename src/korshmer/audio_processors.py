@@ -228,7 +228,7 @@ def process_stereo_widen(path, width=1.5):
 MAX_SIMULTANEOUS_NOTES = 128
 REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.25)
 CHORUS_SETTINGS = (3, 0.3, 0.3, 8.0, 0)
-RENDER_TARGET_RMS_DB = -12.0
+RENDER_TARGET_RMS_DB = -16.0
 CC_REVERB_SEND = 91
 CC_CHORUS_SEND = 93
 VOICE_PROGRAMS = frozenset({52, 53, 54, 85})
@@ -246,7 +246,7 @@ def effect_sends(program, is_drum=False):
     return 40, 20
 
 
-RENDER_LIMIT_KNEE = 0.5
+RENDER_LIMIT_KNEE = 0.7
 
 
 KIT_STANDARD = 0

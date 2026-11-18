@@ -1,48 +1,72 @@
 @echo off
-cd /d %~dp0
-cd ..
+setlocal EnableExtensions
+cd /d "%~dp0.."
 
-py .\src\korshmer\download_models.py
-py -m nuitka ^
---file-version=0.6.0 --product-version=0.6.0 ^
+if not exist ".venv\Scripts\activate.bat" (
+    echo [ERROR] The Python environment was not found. Run scripts\install.bat first.
+    goto failed
+)
+call ".venv\Scripts\activate.bat"
+
+python -m nuitka --version >nul 2>nul
+if errorlevel 1 (
+    echo Installing the compiler...
+    python -m pip install "nuitka<=4.3.1"
+    if errorlevel 1 goto failed
+)
+
+set "APP_VERSION="
+for /f "usebackq delims=" %%v in (`python -c "import korshmer; print(korshmer.__version__)"`) do set "APP_VERSION=%%v"
+if not defined APP_VERSION (
+    echo [ERROR] Could not read the application version. Run scripts\install.bat first.
+    goto failed
+)
+
+echo Downloading the models...
+python src\korshmer\download_models.py
+if errorlevel 1 goto failed
+
+set "EXTRA_DATA="
+if exist "models\" set "EXTRA_DATA=%EXTRA_DATA% --include-data-dir=models=models"
+if exist "fluidsynth\" set "EXTRA_DATA=%EXTRA_DATA% --include-raw-dir=fluidsynth=fluidsynth"
+if exist "assets\icon.ico" set "EXTRA_DATA=%EXTRA_DATA% --windows-icon-from-ico=assets\icon.ico"
+if not exist "fluidsynth\" echo [WARNING] The fluidsynth folder is missing, so the built program will have no instrument sounds.
+
+echo Compiling KORSHMER %APP_VERSION%. This can take a long time...
+python -m nuitka ^
+--mode=standalone ^
+--python-flag=-m ^
+--file-version=%APP_VERSION% ^
+--product-version=%APP_VERSION% ^
 --assume-yes-for-downloads ^
 --company-name="Yaron Koresh" ^
 --copyright="Copyright (c) 2025 Yaron Koresh" ^
 --deployment ^
 --enable-plugin=pyside6 ^
---file-description="Korshmer is a next-generation audio workstation (DAW), combining studio production, live performance, and score editing capabilities in one interface." ^
---include-data-dir=models=models ^
---include-data-dir=fluidsynth=fluidsynth ^
---include-module=doctest ^
---include-module=pdb ^
---include-module=unittest ^
+--file-description="KORSHMER audio workstation" ^
 --include-package-data=numba ^
+--include-package-data=basic_pitch ^
+--include-package-data=demucs ^
+--include-package-data=librosa ^
 --include-package=basic_pitch ^
 --include-package=demucs ^
 --include-package=librosa ^
---include-package=madmom ^
 --include-package=onnxruntime ^
---include-package=sklearn.cluster ^
+--include-package=sklearn ^
 --include-package=soundfile ^
---jobs=6 ^
+--jobs=%NUMBER_OF_PROCESSORS% ^
 --lto=yes ^
 --module-parameter=numba-disable-jit=yes ^
 --module-parameter=torch-disable-jit=yes ^
---no-pyi-file ^
 --nofollow-import-to=absl ^
---nofollow-import-to=aifc ^
 --nofollow-import-to=astunparse ^
 --nofollow-import-to=azure ^
 --nofollow-import-to=basic_pitch.command_line_interface ^
 --nofollow-import-to=basic_pitch.train ^
---nofollow-import-to=bdb ^
 --nofollow-import-to=boto ^
 --nofollow-import-to=boto3 ^
 --nofollow-import-to=botocore ^
---nofollow-import-to=bz2 ^
 --nofollow-import-to=celery ^
---nofollow-import-to=cProfile ^
---nofollow-import-to=curses ^
 --nofollow-import-to=cv2 ^
 --nofollow-import-to=cython ^
 --nofollow-import-to=dask ^
@@ -50,49 +74,26 @@ py -m nuitka ^
 --nofollow-import-to=demucs.evaluate ^
 --nofollow-import-to=demucs.grids ^
 --nofollow-import-to=demucs.propagate ^
---nofollow-import-to=demucs.remote ^
 --nofollow-import-to=demucs.repitch ^
 --nofollow-import-to=demucs.solver ^
 --nofollow-import-to=demucs.train ^
---nofollow-import-to=distutils ^
 --nofollow-import-to=docutils ^
---nofollow-import-to=email ^
 --nofollow-import-to=flax ^
---nofollow-import-to=ftplib ^
 --nofollow-import-to=gast ^
 --nofollow-import-to=gi ^
 --nofollow-import-to=google.cloud ^
 --nofollow-import-to=gradio ^
 --nofollow-import-to=h5py ^
---nofollow-import-to=html ^
---nofollow-import-to=http.server ^
 --nofollow-import-to=huggingface_hub ^
---nofollow-import-to=imaplib ^
 --nofollow-import-to=IPython ^
 --nofollow-import-to=jax ^
 --nofollow-import-to=jaxlib ^
 --nofollow-import-to=keras ^
 --nofollow-import-to=kombu ^
 --nofollow-import-to=librosa.display ^
---nofollow-import-to=librosa.util.files ^
---nofollow-import-to=lzma ^
---nofollow-import-to=madmom.conftest ^
---nofollow-import-to=madmom.visualization ^
---nofollow-import-to=matplotlib ^
---nofollow-import-to=matplotlib.backends ^
---nofollow-import-to=matplotlib.pyplot ^
---nofollow-import-to=mpmath ^
---nofollow-import-to=nntplib ^
---nofollow-import-to=numpy.distutils ^
---nofollow-import-to=numpy.f2py ^
 --nofollow-import-to=onnxruntime.quantization ^
 --nofollow-import-to=onnxruntime.transformers ^
---nofollow-import-to=optparse ^
 --nofollow-import-to=pandas ^
---nofollow-import-to=PIL ^
---nofollow-import-to=poplib ^
---nofollow-import-to=profile ^
---nofollow-import-to=pydoc ^
 --nofollow-import-to=pygments ^
 --nofollow-import-to=PySide6.QtBluetooth ^
 --nofollow-import-to=PySide6.QtCharts ^
@@ -126,108 +127,48 @@ py -m nuitka ^
 --nofollow-import-to=PySide6.QtWebEngineWidgets ^
 --nofollow-import-to=PySide6.QtWebSockets ^
 --nofollow-import-to=PySide6.QtXml ^
---nofollow-import-to=quopri ^
 --nofollow-import-to=regex ^
 --nofollow-import-to=rsa ^
 --nofollow-import-to=s3transfer ^
 --nofollow-import-to=safetensors ^
---nofollow-import-to=scipy.constants ^
---nofollow-import-to=scipy.integrate._ivp ^
---nofollow-import-to=scipy.integrate._lebedev ^
---nofollow-import-to=scipy.integrate._ode ^
---nofollow-import-to=scipy.integrate._odepack ^
---nofollow-import-to=scipy.integrate.lsoda ^
---nofollow-import-to=scipy.integrate.vode ^
---nofollow-import-to=scipy.io.arff ^
---nofollow-import-to=scipy.io.harwell_boeing ^
---nofollow-import-to=scipy.io.idl ^
---nofollow-import-to=scipy.io.matlab ^
---nofollow-import-to=scipy.io.mmio ^
---nofollow-import-to=scipy.io.netcdf ^
---nofollow-import-to=scipy.misc ^
---nofollow-import-to=scipy.notebook ^
---nofollow-import-to=scipy.odr ^
---nofollow-import-to=scipy.optimize._differentialevolution ^
---nofollow-import-to=scipy.optimize._dual_annealing ^
---nofollow-import-to=scipy.optimize._highs* ^
---nofollow-import-to=scipy.optimize._linprog* ^
---nofollow-import-to=scipy.optimize._shgo* ^
---nofollow-import-to=scipy.optimize._trustregion* ^
---nofollow-import-to=scipy.spatial._geometric_slerp ^
---nofollow-import-to=scipy.spatial._spherical_voronoi ^
---nofollow-import-to=scipy.spatial.transform ^
---nofollow-import-to=scipy.stats.mstats ^
---nofollow-import-to=setuptools ^
---nofollow-import-to=sklearn.calibration ^
---nofollow-import-to=sklearn.datasets ^
---nofollow-import-to=sklearn.decomposition ^
---nofollow-import-to=sklearn.dummy ^
---nofollow-import-to=sklearn.ensemble ^
---nofollow-import-to=sklearn.experimental ^
---nofollow-import-to=sklearn.feature_extraction ^
---nofollow-import-to=sklearn.feature_selection ^
---nofollow-import-to=sklearn.gaussian_process ^
---nofollow-import-to=sklearn.impute ^
---nofollow-import-to=sklearn.inspection ^
---nofollow-import-to=sklearn.linear_model ^
---nofollow-import-to=sklearn.manifold ^
---nofollow-import-to=sklearn.metrics ^
---nofollow-import-to=sklearn.model_selection ^
---nofollow-import-to=sklearn.neighbors ^
---nofollow-import-to=sklearn.neural_network ^
---nofollow-import-to=sklearn.preprocessing ^
---nofollow-import-to=sklearn.random_projection ^
---nofollow-import-to=sklearn.svm ^
---nofollow-import-to=sklearn.tree ^
---nofollow-import-to=smtplib ^
---nofollow-import-to=socketserver ^
---nofollow-import-to=sqlite3 ^
---nofollow-import-to=sunau ^
---nofollow-import-to=sympy ^
---nofollow-import-to=telnetlib ^
 --nofollow-import-to=tensorboard ^
 --nofollow-import-to=tensorboard_plugin_wit ^
 --nofollow-import-to=tensorflow ^
 --nofollow-import-to=tensorflow_estimator ^
 --nofollow-import-to=tensorflow_intel ^
 --nofollow-import-to=tensorflow_probability ^
---nofollow-import-to=timeit ^
 --nofollow-import-to=tkinter ^
 --nofollow-import-to=tokenizers ^
---nofollow-import-to=torch.autograd.profiler ^
---nofollow-import-to=torch.backends.quantized ^
---nofollow-import-to=torch.distributed ^
---nofollow-import-to=torch.distributions ^
---nofollow-import-to=torch.nn.intrinsic ^
---nofollow-import-to=torch.nn.qat ^
---nofollow-import-to=torch.nn.quantized ^
---nofollow-import-to=torch.onnx ^
---nofollow-import-to=torch.utils.benchmark ^
---nofollow-import-to=torch.utils.bottleneck ^
---nofollow-import-to=torch.utils.cpp_extension ^
---nofollow-import-to=torch.utils.mobile_optimizer ^
 --nofollow-import-to=torch.utils.tensorboard ^
 --nofollow-import-to=tornado ^
---nofollow-import-to=tqdm ^
---nofollow-import-to=trace ^
---nofollow-import-to=tracemalloc ^
 --nofollow-import-to=transformers ^
---nofollow-import-to=uu ^
---nofollow-import-to=wave ^
 --nofollow-import-to=wrapt ^
---nofollow-import-to=xmlrpc ^
 --nofollow-import-to=zmq ^
---nofollow-import-to=zoneinfo ^
 --noinclude-default-mode=warning ^
 --output-dir=build ^
 --output-filename=korshmer.exe ^
 --product-name="KORSHMER" ^
 --python-flag=no_asserts ^
 --python-flag=no_docstrings ^
---python-flag=no_site ^
 --python-flag=no_warnings ^
---standalone ^
 --windows-console-mode=disable ^
---windows-icon-from-ico=assets\icon.ico ^
-.\src\korshmer\korshmer.PY
+%EXTRA_DATA% ^
+src\korshmer
+if errorlevel 1 goto failed
+
+if not exist "build\korshmer.dist\korshmer.exe" (
+    echo [ERROR] The compiler finished but build\korshmer.dist\korshmer.exe was not created.
+    goto failed
+)
+
+echo.
+echo [SUCCESS] KORSHMER %APP_VERSION% was built in build\korshmer.dist
+call ".venv\Scripts\deactivate.bat"
 pause
+exit /b 0
+
+:failed
+echo.
+echo [BUILD FAILED] See the messages above.
+pause
+exit /b 1

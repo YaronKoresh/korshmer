@@ -16,32 +16,22 @@ def full_path(*p) -> str:
     )
 
 
-def exist(*p) -> bool:
-    return Path(os.path.join(*[str(_p).strip() for _p in p])).exists()
-
-
-def is_directory(*p):
-    return Path(os.path.join(*[str(_p).strip() for _p in p])).is_dir()
-
-
-def copy(src, dst):
-    if is_directory(full_path(src)):
-        shutil.copytree(
-            str(src),
-            str(dst),
-            symlinks=False,
-            ignore_dangling_symlinks=True,
-        )
+def copy_transcription_model(model_path, target_dir):
+    model = Path(str(model_path))
+    target = Path(str(target_dir))
+    target.mkdir(parents=True, exist_ok=True)
+    if model.is_dir():
+        shutil.copytree(model, target / model.name, dirs_exist_ok=True)
+    elif model.is_file():
+        shutil.copy(model, target / model.name)
     else:
-        shutil.copy(str(src), str(dst))
+        raise FileNotFoundError(f"Transcription model not found: {model}")
+    return target / model.name
 
 
 def download_models():
     current_dir = os.path.dirname(__file__)
     models_dir = full_path(current_dir, "..", "..", "models")
-
-    if exist(models_dir):
-        return
 
     os.makedirs(models_dir, exist_ok=True)
     print(f"Downloading models to: {models_dir}")
@@ -61,14 +51,8 @@ def download_models():
         print("Vocal model not downloaded; it is fetched when first used.")
 
     print(f"Basic Pitch model path found at: {ICASSP_2022_MODEL_PATH}")
-    bp_outpath = full_path(models_dir, "hub", "checkpoints")
-    copy(
-        full_path(ICASSP_2022_MODEL_PATH, "saved_model.pb"),
-        full_path(bp_outpath, "saved_model.pb"),
-    )
-    copy(
-        full_path(ICASSP_2022_MODEL_PATH, "variables"),
-        full_path(bp_outpath, "variables"),
+    copy_transcription_model(
+        ICASSP_2022_MODEL_PATH, full_path(models_dir, "hub", "checkpoints")
     )
     print("All models prepared properly.")
 

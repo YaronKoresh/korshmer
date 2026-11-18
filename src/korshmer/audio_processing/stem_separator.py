@@ -26,8 +26,25 @@ class _StemModel(Protocol):
     def to(self, device: str) -> object: ...
 
 
+class _StemTensor(Protocol):
+    def cpu(self) -> "_StemTensor": ...
+
+    def numpy(self) -> np.ndarray: ...
+
+
+class _SeparatedSources(Protocol):
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+    def __getitem__(self, index: tuple[int, int]) -> _StemTensor: ...
+
+
+class _InputTensor(Protocol):
+    def to(self, device: str) -> object: ...
+
+
 get_model: Callable[[str], _StemModel] | None
-apply_model: Callable[..., object] | None
+apply_model: Callable[..., _SeparatedSources] | None
 try:
     from demucs.apply import apply_model
     from demucs.pretrained import get_model
@@ -38,13 +55,20 @@ except ImportError:
 
 DEFAULT_SAMPLE_RATE = 44100
 
+_MISSING_DEPENDENCIES_MESSAGE = (
+    "StemSeparator requires the 'torch' and 'demucs' packages to be installed."
+)
+
 
 class StemSeparator:
-    def __init__(self, model_name="htdemucs", device=None, require_gpu=False):
+    def __init__(
+        self,
+        model_name: str = "htdemucs",
+        device: str | None = None,
+        require_gpu: bool = False,
+    ) -> None:
         if torch is None or get_model is None or apply_model is None:
-            raise ImportError(
-                "StemSeparator requires the 'torch' and 'demucs' packages to be installed."
-            )
+            raise ImportError(_MISSING_DEPENDENCIES_MESSAGE)
         self._thread_state = threading.local()
         self.device = get_device_manager().select_device(
             device, require_gpu=require_gpu
@@ -65,7 +89,11 @@ class StemSeparator:
 
     @measure("audio.stem_separation")
     def separate(
-        self, audio, sample_rate=44100, stems=4, progress_callback=None
+        self,
+        audio: np.ndarray,
+        sample_rate: int = 44100,
+        stems: int = 4,
+        progress_callback: Callable[[int], object] | None = None,
     ) -> dict[str, np.ndarray]:
         self.last_sample_rate = sample_rate
 
@@ -73,9 +101,7 @@ class StemSeparator:
             audio = np.stack([audio, audio])
 
         if torch is None:
-            raise ImportError(
-                "StemSeparator requires the 'torch' and 'demucs' packages to be installed."
-            )
+            raise ImportError(_MISSING_DEPENDENCIES_MESSAGE)
         audio_tensor = torch.from_numpy(audio).float()
 
         if audio_tensor.dim() == 2:
@@ -111,7 +137,9 @@ class StemSeparator:
 
         return stems_dict
 
-    def _apply(self, audio_tensor):
+    def _apply(self, audio_tensor: _InputTensor) -> _SeparatedSources:
+        if torch is None or apply_model is None:
+            raise ImportError(_MISSING_DEPENDENCIES_MESSAGE)
         with torch.no_grad():
             return apply_model(
                 self.model,
@@ -119,13 +147,20 @@ class StemSeparator:
                 device=self.device,
             )
 
-    def set_model(self, model_name):
+    def set_model(self, model_name: str) -> None:
         validate_stem_model_name(model_name)
+        if get_model is None:
+            raise ImportError(_MISSING_DEPENDENCIES_MESSAGE)
         self.model_name = model_name
         self.model = get_model(model_name)
         self.model.to(self.device)
 
-    def export_stems(self, stems_dict, output_dir, format="wav") -> None:
+    def export_stems(
+        self,
+        stems_dict: dict[str, np.ndarray],
+        output_dir: str,
+        format: str = "wav",
+    ) -> None:
         os.makedirs(output_dir, exist_ok=True)
 
         supported_formats = {"wav", "flac", "mp3", "ogg"}

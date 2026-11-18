@@ -24,11 +24,6 @@ SAVED_DATA_ONLY_MESSAGE = (
 
 
 SONG_FILTER = "KORSHMER Project (*.kproj)"
-NEW_SONG_QUESTION = (
-    "Start a new song?\n\n"
-    "The editor will be emptied. Save the current song first if you want "
-    "to keep it."
-)
 UNSAVED_QUESTION = (
     "This song has changes that are not saved.\n\n"
     "Save keeps them. Discard closes without saving."
@@ -159,15 +154,8 @@ class ProjectManagementActionsMixin:
                     self, "Invalid Song Name", INVALID_NAME_MESSAGE
                 )
                 return
-            if self._editor_has_content():
-                answer = QMessageBox.question(
-                    self,
-                    "New Song",
-                    NEW_SONG_QUESTION,
-                    QMessageBox.Yes | QMessageBox.No,
-                )
-                if answer != QMessageBox.Yes:
-                    return
+            if not self.confirm_unsaved_changes():
+                return
             templates = self.project_manager.list_templates()
             template = None
             if templates:
@@ -268,6 +256,8 @@ class ProjectManagementActionsMixin:
         return True
 
     def load_project_action(self):
+        if not self.confirm_unsaved_changes():
+            return
         project_path, _ = QFileDialog.getOpenFileName(
             self,
             "Load Project",

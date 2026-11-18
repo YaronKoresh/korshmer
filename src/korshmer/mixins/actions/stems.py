@@ -287,5 +287,7 @@ class StemsActionsMixin:
                 QMessageBox.Yes | QMessageBox.No,
             )
             if answer == QMessageBox.Yes:
+                if not self.confirm_unsaved_changes():
+                    return False
                 return self.open_song_file(saved)
         return self.load_session_into_editor(session)
