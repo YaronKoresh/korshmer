@@ -202,7 +202,7 @@ class TestClipLane:
         assert roll.undo()
         assert not roll.model.clips[0].muted
 
-    def test_set_tempo_rescales_notes_but_not_clips(self):
+    def test_set_tempo_keeps_notes_and_clips_on_the_same_beats(self):
         roll = InteractivePianoRoll()
         track = roll.model.add_track("Lead")
         note = roll.model.add_note(track.id, 60, 1.0, 0.5)
@@ -210,8 +210,9 @@ class TestClipLane:
         roll.load_model()
         roll.set_tempo(60.0)
         assert abs(roll.model.notes_by_id()[note.id].start - 2.0) < 1e-9
-        assert clip.start == 1.0
-        assert abs(clip_items(roll)[0].x() - 100.0) < 1e-6
+        assert clip.start == 2.0
+        assert clip.duration == 1.0
+        assert abs(clip_items(roll)[0].x() - 200.0) < 1e-6
         assert abs(note_items(roll)[0].x() - 200.0) < 1e-6
 
 

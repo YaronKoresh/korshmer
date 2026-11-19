@@ -9,6 +9,10 @@ from korshmer.ui.viewmodels.editor_vm import clamp_velocity
 from korshmer.ui.viewmodels.piano_roll_vm import NoteData
 from korshmer.utils.midi_loading import load_pretty_midi
 
+RECORDINGS_FOLDER = "Recordings"
+EXPORTS_FOLDER = "Exports"
+CLIPS_FOLDER = "Clips"
+
 
 class ArrangerViewModel:
     def __init__(self):
@@ -52,11 +56,25 @@ class ArrangerViewModel:
         pm.instruments.append(inst)
         return pm
 
+    def song_subfolder(self, name):
+        home = getattr(self, "song_folder", None)
+        if not home:
+            return str(DATA_DIR)
+        folder = os.path.join(str(home), name)
+        os.makedirs(folder, exist_ok=True)
+        return folder
+
     def recording_filename(self):
-        return os.path.join(DATA_DIR, f"Rec_{int(time.time())}.wav")
+        return os.path.join(
+            self.song_subfolder(RECORDINGS_FOLDER),
+            f"Rec_{int(time.time())}.wav",
+        )
 
     def export_midi_filename(self):
-        return os.path.join(DATA_DIR, f"Editor_{int(time.time())}.mid")
+        return os.path.join(
+            self.song_subfolder(EXPORTS_FOLDER),
+            f"Editor_{int(time.time())}.mid",
+        )
 
     def ensure_midi_suffix(self, path):
         if not path:

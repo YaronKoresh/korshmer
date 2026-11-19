@@ -23,10 +23,6 @@ from korshmer.project_management.project_loader import (
     load_compressed,
     load_uncompressed,
 )
-from korshmer.project_management.project_migration import (
-    migrate_project_data,
-    validate_project_effects_chain,
-)
 from korshmer.project_management.project_recovery import (
     clear_recovery_file,
     load_recovery_file,
@@ -40,21 +36,22 @@ from korshmer.project_management.validators.project_validator import (
     is_safe_name,
     is_valid_new_name,
     resolve_inside,
+    validate_project_effects_chain,
 )
 from korshmer.utils.filesystem import is_safe_path
 
 SONG_SUFFIX = ".kproj"
+VERSIONS_FOLDER = "Versions"
+BACKUPS_FOLDER = "Backups"
 RESERVED_FOLDERS = frozenset(
     {
         "analytics",
         "assets",
-        "backups",
         "exports",
         "imports",
         "logs",
         "plugins",
         "projects",
-        "snapshots",
         "templates",
     }
 )
@@ -137,9 +134,7 @@ class ProjectManager:
         self.base_dir = Path(base_dir)
         self.saved_data_dir = self.base_dir / "saved_data"
         self.projects_dir = self.base_dir / "saved_data" / "projects"
-        self.backups_dir = self.base_dir / "saved_data" / "backups"
         self.templates_dir = self.base_dir / "saved_data" / "templates"
-        self.snapshots_dir = self.base_dir / "saved_data" / "snapshots"
 
         self._state_lock = ReadWriteLock()
         self._ensure_directories()
@@ -156,11 +151,22 @@ class ProjectManager:
     def _ensure_directories(self):
         for directory in [
             self.projects_dir,
-            self.backups_dir,
             self.templates_dir,
-            self.snapshots_dir,
         ]:
             directory.mkdir(parents=True, exist_ok=True)
+
+    def _beside_song(self, folder_name: str) -> Path | None:
+        if self.current_project_path is None:
+            return None
+        return Path(self.current_project_path).parent / folder_name
+
+    @property
+    def snapshots_dir(self) -> Path | None:
+        return self._beside_song(VERSIONS_FOLDER)
+
+    @property
+    def backups_dir(self) -> Path | None:
+        return self._beside_song(BACKUPS_FOLDER)
 
     def is_path_within_saved_data(self, path) -> bool:
         return resolve_inside(self.saved_data_dir, path) is not None
@@ -413,9 +419,11 @@ class ProjectManager:
                 self.current_project_path = project_path
 
         try:
+            backups_dir = Path(project_path).parent / BACKUPS_FOLDER
+            backups_dir.mkdir(parents=True, exist_ok=True)
             create_backup_file(
                 project_path,
-                self.backups_dir,
+                backups_dir,
                 self.max_backups,
                 save_backup,
             )
@@ -432,8 +440,12 @@ class ProjectManager:
             return False
 
         try:
+            versions_dir = (
+                Path(self.current_project_path).parent / VERSIONS_FOLDER
+            )
+            versions_dir.mkdir(parents=True, exist_ok=True)
             snapshot_path = snapshot_path_for(
-                self.current_project_path, self.snapshots_dir
+                self.current_project_path, versions_dir
             )
             snapshot_data = build_snapshot_data(
                 self.current_project_data,
@@ -459,7 +471,11 @@ class ProjectManager:
     @_write_locked
     def restore_snapshot(self, snapshot_path: Path) -> bool:
         try:
-            if resolve_inside(self.snapshots_dir, snapshot_path) is None:
+            versions_dir = self.snapshots_dir
+            if (
+                versions_dir is None
+                or resolve_inside(versions_dir, snapshot_path) is None
+            ):
                 logging.error(
                     f"Refusing to restore snapshot outside "
                     f"{self.snapshots_dir}: {snapshot_path}"
@@ -544,8 +560,11 @@ class ProjectManager:
         else:
             pattern = "*_backup_*.kproj"
 
+        folder = self.backups_dir
+        if folder is None or not folder.is_dir():
+            return []
         return sorted(
-            self.backups_dir.glob(pattern),
+            folder.glob(pattern),
             key=lambda x: x.stat().st_mtime,
             reverse=True,
         )
@@ -560,8 +579,11 @@ class ProjectManager:
         else:
             pattern = "*_snapshot_*.kproj"
 
+        folder = self.snapshots_dir
+        if folder is None or not folder.is_dir():
+            return []
         return sorted(
-            self.snapshots_dir.glob(pattern),
+            folder.glob(pattern),
             key=lambda x: x.stat().st_mtime,
             reverse=True,
         )
@@ -716,61 +738,6 @@ class ProjectManager:
 
         except Exception as e:
             logging.error(f"Incremental save failed: {e}")
-            return False
-
-    @_write_locked
-    def migrate_project(
-        self, project_path: Path, target_version: str = __version__
-    ) -> bool:
-        try:
-            project_path = Path(project_path)
-            if not self.is_path_within_saved_data(project_path):
-                logging.error(
-                    f"Refusing to migrate project outside "
-                    f"{self.saved_data_dir}: {project_path}"
-                )
-                return False
-
-            project_data = self.load_project(project_path)
-            if not project_data:
-                return False
-
-            original_version = project_data.get("version", "0.1.0")
-
-            if original_version == target_version:
-                logging.info(f"Project already at version {target_version}")
-                return True
-
-            logging.info(
-                f"Migrating project from {original_version} to {target_version}"
-            )
-
-            migration_backup = project_path.with_suffix(
-                f".{original_version}.backup"
-            )
-            with logged_file_op("Copy project", migration_backup):
-                shutil.copy2(project_path, migration_backup)
-
-            project_data = migrate_project_data(
-                project_data, target_version, migration_backup
-            )
-
-            self.current_project_data = project_data
-            success = self.save_project(project_path)
-
-            if success:
-                logging.info(
-                    f"Project migrated successfully to {target_version}"
-                )
-            else:
-                logging.error("Migration failed, restoring from backup")
-                with logged_file_op("Restore project", project_path):
-                    shutil.copy2(migration_backup, project_path)
-
-            return success
-
-        except Exception as e:
-            logging.error(f"Project migration failed: {e}")
             return False
 
     def _recovery_file(self) -> Path:

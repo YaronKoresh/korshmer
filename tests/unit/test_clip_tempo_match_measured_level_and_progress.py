@@ -317,7 +317,8 @@ def test_a_running_fix_shows_its_steps_and_how_far_it_is(
     stages = [stage for stage, _percent in steps]
     percents = [percent for _stage, percent in steps]
     assert shown_while_running
-    assert stages[0] == "Removing background noise"
+    assert stages[0] == "Looking for separate parts"
+    assert "Removing background noise" in stages
     assert "Measuring and improving the level" in stages
     assert stages[-1] == "Finding the beat"
     assert percents == sorted(percents) and percents[-1] < 100

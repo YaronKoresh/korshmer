@@ -4,10 +4,6 @@ import json
 import pytest
 
 from korshmer.project_management.project_manager import ProjectManager
-from korshmer.project_management.project_migration import (
-    migrate_project_data,
-    needs_migration,
-)
 
 
 @pytest.fixture
@@ -15,23 +11,6 @@ def pm(tmp_path):
     base = tmp_path / "app"
     base.mkdir()
     return ProjectManager(base_dir=str(base))
-
-
-class TestMigrationModule:
-    def test_needs_migration(self):
-        assert needs_migration("0.1.0", "0.5.1") is True
-        assert needs_migration("0.5.1", "0.5.1") is False
-        assert needs_migration("0.6.0", "0.5.1") is False
-
-    def test_migrate_adds_sections(self):
-        data = {"version": "0.1.0", "metadata": {}}
-        out = migrate_project_data(data, "0.5.1", "/tmp/x.backup")
-        assert out["version"] == "0.5.1"
-        assert "ui_settings" in out
-        assert "ai_settings" in out
-        assert "project_management" in out
-        assert out["migration_history"][-1]["from_version"] == "0.1.0"
-        assert out["migration_history"][-1]["backup_path"] == "/tmp/x.backup"
 
 
 class TestBackup:
@@ -79,18 +58,6 @@ class TestRecovery:
         assert not recovery_file.exists()
 
 
-class TestMigrateProjectIntegration:
-    def test_migrate_old_project(self, pm):
-        pm.create_project("Song")
-        path = pm.projects_dir / "Song.kproj"
-        pm.current_project_data["version"] = "0.1.0"
-        pm.save_project(path)
-        assert pm.migrate_project(path, target_version="0.5.1") is True
-        data = pm.load_project(path)
-        assert data["version"] == "0.5.1"
-        assert "migration_history" in data
-
-
 class TestLoadWithFallback:
     def _corrupt_with_backup(self, pm):
         pm.create_project("Song")
@@ -122,19 +89,3 @@ class TestLoadWithFallback:
         pm.save_project(path)
         assert pm.load_project_with_fallback(path) is not None
         assert pm.last_load_backup is None
-
-
-class TestMigrationMalformedSections:
-    @pytest.mark.parametrize("metadata", ["x", None, 5, ["bpm"]])
-    def test_non_object_metadata_does_not_crash(self, metadata):
-        data = {"version": "0.1.0", "metadata": metadata}
-        out = migrate_project_data(data, "0.5.1", "/tmp/x.backup")
-        assert out["version"] == "0.5.1"
-        assert out["metadata"] == metadata
-        assert out["theory_settings"]["global_bpm"] == 120
-
-    @pytest.mark.parametrize("history", ["x", None, 5, {"a": 1}])
-    def test_non_list_migration_history_is_replaced(self, history):
-        data = {"version": "0.5.1", "migration_history": history}
-        out = migrate_project_data(data, "0.5.1", "/tmp/x.backup")
-        assert len(out["migration_history"]) == 1

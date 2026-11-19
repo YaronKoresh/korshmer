@@ -643,6 +643,33 @@ class ArrangerTimeline(QWidget):
         except AudioFormatError as e:
             QMessageBox.warning(self, "Audio Clip", str(e))
 
+    def set_song_folder(self, folder):
+        self.vm.song_folder = str(folder) if folder else None
+
+    def keep_clips_in(self, song_folder):
+        from korshmer.project_management.song_folder import kept_in_song
+
+        self.piano_roll.sync_model_from_scene()
+        self.set_song_folder(song_folder)
+        moved = 0
+        for clip in self.model.clips:
+            kept = kept_in_song(clip.path, song_folder)
+            moved += kept != clip.path
+            clip.path = kept
+            if clip.source is not None:
+                clip.source = (
+                    kept_in_song(clip.source[0], song_folder),
+                    *clip.source[1:],
+                )
+        return moved
+
+    def missing_clip_names(self):
+        return [
+            clip.name
+            for clip in self.model.clips
+            if not os.path.isfile(clip.path)
+        ]
+
     def clear_editor(self):
         self.wait_for_waveforms()
         self.model.snapshot()
@@ -907,8 +934,14 @@ class ArrangerTimeline(QWidget):
                 heard[sample_rate] = render(song, tempo, sample_rate)
             return heard[sample_rate]
 
+        fix = (
+            clip_polish.fix_clip_parts
+            if set(steps) == {"noise", "quality", "align"}
+            else clip_polish.fix_clip
+        )
+
         def job(report, cancelled):
-            return clip_polish.fix_clip(
+            return fix(
                 audio,
                 steps,
                 beats_at,
@@ -1011,21 +1044,17 @@ class ArrangerTimeline(QWidget):
             return tempo_map.seconds_at(tempo_map.beats_at(clip.start) + beats)
         return clip.start + beats * 60.0 / float(self.model.tempo)
 
-    def _on_clip_edit_ready(self, clip_id, label, result):
-        from korshmer.audio_processing import clip_level
-
-        self._clip_edit_files.update(result.get("made", ()))
-        self.piano_roll.sync_model_from_scene()
-        clip = self.model.clip_by_id(clip_id)
-        if clip is None:
-            self._drop_unused_clip_files()
-            return
+    def _fixed_clip_start(self, clip, result):
         start = clip.start
         if result.get("shift"):
             start = self._shifted_clip_start(clip, result["shift"])
             if start < 0.0:
                 start = self._shifted_clip_start(clip, result["shift"] + 1.0)
-        moved = abs(start - clip.start) >= CLIP_MOVE_TOLERANCE_S
+        return start
+
+    def _clip_fix_notes(self, result, seconds, moved):
+        from korshmer.audio_processing import clip_level
+
         notes = []
         if "readings" in result:
             notes.append(clip_level.summary(result["readings"]))
@@ -1035,9 +1064,60 @@ class ArrangerTimeline(QWidget):
                     *result["tempo"]
                 )
             )
-        placement = self._clip_placement_text(result, start - clip.start, moved)
+        placement = self._clip_placement_text(result, seconds, moved)
         if placement:
             notes.append(placement)
+        return notes
+
+    def _replace_with_parts(self, clip, label, result):
+        from korshmer.audio_processing import clip_level
+
+        self.model.snapshot()
+        self.model.remove_clip(clip.id)
+        said = []
+        for number, fixed in enumerate(result["parts"], 1):
+            readings = fixed.get("readings")
+            improved = bool(readings) and not clip_level.unchanged(readings)
+            part = self.model.add_clip(
+                fixed["path"],
+                start=fixed["start"],
+                name=f"{clip.name} {number}",
+                kind=clip.kind,
+                gain=1.0 if improved else clip.gain,
+            )
+            part.color = clip.color
+            part.muted = clip.muted
+            start = self._fixed_clip_start(part, fixed)
+            moved = abs(start - part.start) >= CLIP_MOVE_TOLERANCE_S
+            notes = self._clip_fix_notes(fixed, start - part.start, moved)
+            part.start = start
+            self._queue_waveform(part)
+            said.append(f"part {number}: " + "; ".join(notes))
+        self.piano_roll.load_model()
+        self._start_visible_waveforms()
+        self._on_model_changed()
+        self._drop_unused_clip_files()
+        self._refresh_clip_edit_bar()
+        self.clip_edit_status.emit(
+            f"{label}: '{clip.name}' was split into {len(said)} parts and "
+            "each was fixed on its own. " + " | ".join(said)
+        )
+
+    def _on_clip_edit_ready(self, clip_id, label, result):
+        from korshmer.audio_processing import clip_level
+
+        self._clip_edit_files.update(result.get("made", ()))
+        self.piano_roll.sync_model_from_scene()
+        clip = self.model.clip_by_id(clip_id)
+        if clip is None:
+            self._drop_unused_clip_files()
+            return
+        if "parts" in result:
+            self._replace_with_parts(clip, label, result)
+            return
+        start = self._fixed_clip_start(clip, result)
+        moved = abs(start - clip.start) >= CLIP_MOVE_TOLERANCE_S
+        notes = self._clip_fix_notes(result, start - clip.start, moved)
         new_path = result["path"]
         if new_path == clip.path and not moved:
             self.clip_edit_status.emit(

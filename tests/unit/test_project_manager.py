@@ -10,9 +10,7 @@ class TestProjectManagerInit:
         with tempfile.TemporaryDirectory() as tmpdir:
             pm = ProjectManager(tmpdir)
             assert pm.projects_dir.exists()
-            assert pm.backups_dir.exists()
             assert pm.templates_dir.exists()
-            assert pm.snapshots_dir.exists()
 
     def test_init_sets_base_dir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -88,20 +86,6 @@ class TestSaveAndLoadProject:
             assert loaded is not None
             assert loaded["name"] == "Roundtrip Test"
             assert loaded["version"] == __version__
-
-
-class TestMigrateProject:
-    def test_migrate_default_target_version(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            pm = ProjectManager(tmpdir)
-            import inspect
-
-            sig = inspect.signature(pm.migrate_project)
-            default = sig.parameters["target_version"].default
-            assert default == __version__, (
-                f"migrate_project default target {default!r} "
-                f"should be {__version__!r}"
-            )
 
 
 class TestConcurrentProjectAccess:

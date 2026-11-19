@@ -242,18 +242,10 @@ class TestSnapshots:
         assert pm.list_snapshots("../../../outside") == []
 
 
-class TestRepairAndMigrate:
+class TestRepair:
     def test_repair_outside_saved_data_refused(self, workspace):
         tmp_path, pm = workspace
         outside = tmp_path / "broken.kproj"
         outside.write_bytes(b"not a zip")
         assert pm.repair_project(outside) is False
         assert not (tmp_path / "broken.kproj.backup").exists()
-
-    def test_migrate_outside_saved_data_refused(self, workspace):
-        tmp_path, pm = workspace
-        outside = tmp_path / "old.kproj"
-        with zipfile.ZipFile(outside, "w") as zf:
-            zf.writestr("manifest.json", '{"name": "old", "version": "0.1.0"}')
-        assert pm.migrate_project(outside) is False
-        assert _outside_entries(tmp_path) == ["old.kproj"]

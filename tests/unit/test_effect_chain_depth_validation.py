@@ -89,22 +89,6 @@ class TestProjectEffectsChainDepth:
 
         assert constants.MAX_EFFECT_CHAIN_DEPTH == 16
 
-    def test_migration_keeps_sixteen(self):
-        from korshmer.project_management.project_migration import (
-            migrate_project_data,
-        )
-
-        out = migrate_project_data(self._data(16), "0.5.1", "b")
-        assert len(out["audio_processing"]["effects_chain"]) == 16
-
-    def test_migration_rejects_seventeen(self):
-        from korshmer.project_management.project_migration import (
-            migrate_project_data,
-        )
-
-        with pytest.raises(ValueError, match="16"):
-            migrate_project_data(self._data(17), "0.5.1", "b")
-
     def test_load_rejects_seventeen(self, tmp_path):
         import json
 

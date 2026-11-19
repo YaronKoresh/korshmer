@@ -36,6 +36,12 @@ NOTES_STAGE = "Listening to the notes of the song"
 TEMPO_STAGE = "Comparing the tempo with the song"
 STRETCH_STAGE = "Matching the tempo of the song"
 BEAT_STAGE = "Finding the beat"
+PARTS_STAGE = "Looking for separate parts"
+MIN_PART_GAP_S = 3.0
+MIN_PART_S = 0.3
+PART_EDGE_S = 0.05
+PART_BELOW_LOUDEST_DB = 40.0
+PART_FRAME = 1024
 
 
 class ClipFixCancelled(Exception):
@@ -299,6 +305,106 @@ def _align(clip, current, result, beats_at, song_bpm, enter, kept, folder):
     result["shift"], result["anchor"] = clip_beat_shift(
         data, sample_rate, beats_at, clip.start, offset, duration
     )
+
+
+def clip_parts(data, sample_rate, offset=0.0, duration=None):
+    mono = _kept_part(data, sample_rate, offset, duration)
+    if mono.shape[0] < PART_FRAME:
+        return []
+    levels = librosa.feature.rms(
+        y=mono, frame_length=PART_FRAME, hop_length=PART_FRAME, center=False
+    )[0]
+    loudest = float(levels.max())
+    if loudest <= SILENCE_LEVEL:
+        return []
+    heard = np.flatnonzero(
+        levels >= loudest * 10.0 ** (-PART_BELOW_LOUDEST_DB / 20.0)
+    )
+    frame = PART_FRAME / sample_rate
+    spans = []
+    for index in heard:
+        begin, end = index * frame, (index + 1) * frame
+        if spans and begin - spans[-1][1] < MIN_PART_GAP_S:
+            spans[-1][1] = end
+        else:
+            spans.append([begin, end])
+    whole = mono.shape[0] / sample_rate
+    return [
+        (
+            float(offset) + max(0.0, begin - PART_EDGE_S),
+            float(offset) + min(whole, end + PART_EDGE_S),
+        )
+        for begin, end in spans
+        if end - begin >= MIN_PART_S
+    ]
+
+
+def fix_clip_parts(
+    clip,
+    steps,
+    beats_at,
+    song_bpm=None,
+    report=None,
+    cancelled=None,
+    folder=None,
+    notes=None,
+):
+    def whole():
+        return fix_clip(
+            clip, steps, beats_at, song_bpm, report, cancelled, folder, notes
+        )
+
+    if clip.source_path is not None:
+        return whole()
+    if report is not None:
+        report(PARTS_STAGE, 0, 1)
+    data, sample_rate = _read(clip.path)
+    spans = clip_parts(data, sample_rate, clip.offset, clip.duration)
+    if len(spans) < 2:
+        return whole()
+    made = []
+    parts = []
+    try:
+        for number, (begin, end) in enumerate(spans, 1):
+            cut = fixed_clip_path(clip.path, f"part{number}", folder)
+            first, last = int(begin * sample_rate), int(end * sample_rate)
+            _write(cut, data[first:last], sample_rate)
+            made.append(cut)
+            piece = ClipAudio(cut, clip.start + begin - clip.offset)
+
+            def part_report(stage, done, total, number=number):
+                if report is not None:
+                    report(
+                        f"Part {number} of {len(spans)}: {stage}",
+                        (number - 1) * total + done,
+                        len(spans) * total,
+                    )
+
+            fixed = fix_clip(
+                piece,
+                steps,
+                beats_at,
+                song_bpm,
+                part_report,
+                cancelled,
+                folder,
+                notes,
+            )
+            fixed["start"] = piece.start
+            made.extend(fixed["made"])
+            if fixed["path"] != cut:
+                _remove([cut])
+                made.remove(cut)
+            parts.append(fixed)
+    except Exception:
+        _remove(made)
+        raise
+    return {
+        "steps": tuple(steps),
+        "path": clip.path,
+        "parts": parts,
+        "made": made,
+    }
 
 
 def _remove(paths):

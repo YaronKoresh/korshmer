@@ -494,6 +494,40 @@ class TempoNormalizeError(ValueError):
         )
 
 
+def _stretch_notes(notes, factor):
+    for note in notes:
+        note.start *= factor
+        note.duration = max(MIN_NOTE_DURATION, note.duration * factor)
+
+
+def _move_clips(clips, factor):
+    for clip in clips:
+        clip.start *= factor
+
+
+def _stretched_normalized(normalized, factor):
+    if normalized is None:
+        return None
+    return {
+        "map": normalized["map"].stretched(factor),
+        "bpm": normalized["bpm"] / factor,
+        "tempo": normalized["tempo"] / factor,
+    }
+
+
+def _stretched_state(state, factor):
+    tracks, notes, clips, tempo_map, normalized = state
+    _stretch_notes(notes, factor)
+    _move_clips(clips, factor)
+    return (
+        tracks,
+        notes,
+        clips,
+        tempo_map.stretched(factor) if tempo_map is not None else None,
+        _stretched_normalized(normalized, factor),
+    )
+
+
 def _clip_source(value):
     try:
         path, start, duration = value
@@ -754,15 +788,21 @@ class EditorModel:
             return
         if self.tempo_map is not None:
             self.tempo_map = self.tempo_map.stretched(factor)
-        if self.normalized is not None:
-            self.normalized = {
-                "map": self.normalized["map"].stretched(factor),
-                "bpm": self.normalized["bpm"] / factor,
-                "tempo": self.normalized["tempo"] / factor,
-            }
-        for note in self.notes:
-            note.start *= factor
-            note.duration = max(MIN_NOTE_DURATION, note.duration * factor)
+        self.normalized = _stretched_normalized(self.normalized, factor)
+        _stretch_notes(self.notes, factor)
+
+    def follow_tempo(self, ratio):
+        factor = float(ratio)
+        if factor <= 0 or abs(factor - 1.0) < 1e-9:
+            return
+        self.scale_note_times(factor)
+        _move_clips(self.clips, factor)
+        self._undo_stack = [
+            _stretched_state(state, factor) for state in self._undo_stack
+        ]
+        self._redo_stack = [
+            _stretched_state(state, factor) for state in self._redo_stack
+        ]
 
     def copy_notes(self, note_ids):
         selected = self._selected_notes(note_ids)

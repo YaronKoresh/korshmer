@@ -101,6 +101,7 @@ def test_backup_is_logged(manager, project_base, caplog):
 def test_old_backup_deletion_is_logged(manager, project_base, caplog):
     assert manager.save_project(project_base)
     backups_dir = manager.backups_dir
+    backups_dir.mkdir(parents=True, exist_ok=True)
     old = backups_dir / "demo_backup_20000101_000000.kproj"
     old.write_bytes(b"x")
     manager.max_backups = 1

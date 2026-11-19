@@ -324,6 +324,14 @@ class EditorActionsMixin:
             ),
         )
 
+    def _song_exports_folder(self):
+        vm = getattr(getattr(self, "arranger", None), "vm", None)
+        if vm is not None and getattr(vm, "song_folder", None):
+            return vm.song_subfolder("Exports")
+        export_dir = os.path.join(DATA_DIR, "Exports")
+        os.makedirs(export_dir, exist_ok=True)
+        return export_dir
+
     def export_editor_mix_action(self):
         from korshmer.audio_processors import render_editor_mix
         from korshmer.workers.midi_preview import MidiPreviewThread
@@ -349,8 +357,7 @@ class EditorActionsMixin:
                 "Only audio clips will be exported.",
             )
 
-        export_dir = os.path.join(DATA_DIR, "Exports")
-        os.makedirs(export_dir, exist_ok=True)
+        export_dir = self._song_exports_folder()
         default_name = f"EditorMix_{time.strftime('%Y%m%d_%H%M%S')}.wav"
         save_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -437,8 +444,7 @@ class EditorActionsMixin:
             )
             return
 
-        export_dir = os.path.join(DATA_DIR, "Exports")
-        os.makedirs(export_dir, exist_ok=True)
+        export_dir = self._song_exports_folder()
         default_name = f"MusicClip_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
         save_path, _ = QFileDialog.getSaveFileName(
             self,

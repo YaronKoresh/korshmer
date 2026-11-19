@@ -6,12 +6,16 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
-from korshmer import __version__
 from korshmer.event_bus import Event, publish
 from korshmer.project_management.project_backup import snapshot_choices
 from korshmer.project_management.project_manager import (
     SONG_SUFFIX,
     is_valid_new_name,
+)
+from korshmer.project_management.song_folder import (
+    opened_editor,
+    own_song_path,
+    stored_editor,
 )
 from korshmer.project_management.validators.project_validator import (
     INVALID_NAME_MESSAGE,
@@ -45,22 +49,6 @@ def saved_song_in(folder):
         reverse=True,
     )
     return songs[0] if songs else None
-
-
-def with_found_clips(editor, folder):
-    folder = Path(str(folder))
-    editor = dict(editor)
-    clips = []
-    for clip in editor.get("clips") or []:
-        clip = dict(clip)
-        path = str(clip.get("path", ""))
-        if path and not os.path.isfile(path):
-            matches = sorted(folder.rglob(os.path.basename(path)))
-            if matches:
-                clip["path"] = str(matches[0])
-        clips.append(clip)
-    editor["clips"] = clips
-    return editor
 
 
 class ProjectManagementActionsMixin:
@@ -119,7 +107,9 @@ class ProjectManagementActionsMixin:
         data.setdefault("name", Path(song_path).stem)
         arranger = getattr(self, "arranger", None)
         if arranger is not None and hasattr(arranger, "to_project_dict"):
-            data["editor"] = arranger.to_project_dict()
+            data["editor"] = stored_editor(
+                arranger.to_project_dict(), Path(song_path).parent
+            )
         session = getattr(self, "current_session", None)
         folder = str(getattr(session, "output_dir", "") or "")
         data["session_dir"] = (
@@ -140,8 +130,26 @@ class ProjectManagementActionsMixin:
         arranger = getattr(self, "arranger", None)
         if arranger is None or not isinstance(editor, dict):
             return False
-        arranger.load_project_dict(with_found_clips(editor, folder))
+        arranger.load_project_dict(opened_editor(editor, folder))
+        if hasattr(arranger, "set_song_folder"):
+            arranger.set_song_folder(
+                folder
+                if song_path == self.project_manager.current_project_path
+                else None
+            )
         self._mark_song_saved()
+        missing = (
+            arranger.missing_clip_names()
+            if hasattr(arranger, "missing_clip_names")
+            else []
+        )
+        if missing:
+            QMessageBox.warning(
+                self,
+                "Missing Audio",
+                "The audio of these clips was not found in the song folder: "
+                + ", ".join(missing),
+            )
         if hasattr(self, "_show_editor_tab"):
             self._show_editor_tab()
         return True
@@ -180,6 +188,10 @@ class ProjectManagementActionsMixin:
             arranger = getattr(self, "arranger", None)
             if arranger is not None and hasattr(arranger, "clear_editor"):
                 arranger.clear_editor()
+            if arranger is not None and hasattr(arranger, "set_song_folder"):
+                arranger.set_song_folder(
+                    self.project_manager.song_path_for(name).parent
+                )
             self._mark_song_saved()
             publish(
                 Event.STATUS_UPDATE,
@@ -187,10 +199,24 @@ class ProjectManagementActionsMixin:
             )
 
     def _save_song_to(self, song_path):
-        song_path = Path(song_path).with_suffix(SONG_SUFFIX)
+        song_path = own_song_path(
+            song_path, self.project_manager.saved_data_dir, SONG_SUFFIX
+        )
         if not self.project_manager.is_path_within_saved_data(song_path):
             QMessageBox.warning(self, "Safety Error", SAVED_DATA_ONLY_MESSAGE)
             return False
+        arranger = getattr(self, "arranger", None)
+        if arranger is not None and hasattr(arranger, "keep_clips_in"):
+            try:
+                song_path.parent.mkdir(parents=True, exist_ok=True)
+                arranger.keep_clips_in(song_path.parent)
+            except OSError as problem:
+                QMessageBox.warning(
+                    self,
+                    "Save Failed",
+                    f"The audio clips could not be copied into the song: {problem}",
+                )
+                return False
         self._capture_song(song_path)
         if not self.project_manager.save_project(song_path):
             QMessageBox.warning(self, "Save Failed", "Failed to save project")
@@ -478,32 +504,3 @@ class ProjectManagementActionsMixin:
         )
 
         QMessageBox.information(self, "Project Statistics", msg)
-
-    def migrate_project_action(self):
-        if not self.project_manager.current_project_path:
-            QMessageBox.warning(
-                self, "No Project", "No project is currently open"
-            )
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Migrate Project",
-            "This will migrate the current project to version "
-            f"{__version__}.\nA backup will be created. Continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-
-        if reply == QMessageBox.Yes:
-            success = self.project_manager.migrate_project(
-                self.project_manager.current_project_path, __version__
-            )
-            if success:
-                QMessageBox.information(
-                    self, "Migration Complete", "Project migrated successfully"
-                )
-            else:
-                QMessageBox.warning(
-                    self, "Migration Failed", "Failed to migrate project"
-                )

@@ -1,7 +1,7 @@
 import re
 from pathlib import Path
 
-from korshmer.constants import RESERVED_WINDOWS_NAMES
+from korshmer.constants import MAX_EFFECT_CHAIN_DEPTH, RESERVED_WINDOWS_NAMES
 from korshmer.utils.audit_log import OUTCOME_DENIED, audit
 
 MAX_FILESYSTEM_NAME_LENGTH = 255
@@ -77,3 +77,15 @@ def resolve_inside(base, candidate) -> Path | None:
         )
         return None
     return resolved
+
+
+def validate_project_effects_chain(project_data) -> None:
+    if not isinstance(project_data, dict):
+        return
+    audio = project_data.get("audio_processing")
+    chain = audio.get("effects_chain") if isinstance(audio, dict) else None
+    if isinstance(chain, list) and len(chain) > MAX_EFFECT_CHAIN_DEPTH:
+        raise ValueError(
+            f"Project effects chain depth must be at most "
+            f"{MAX_EFFECT_CHAIN_DEPTH} effects, got {len(chain)}"
+        )

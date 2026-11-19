@@ -43,9 +43,19 @@ class TestSanitizeSearchQuery:
         assert sanitize_search_query(12345) == ""
 
 
+def _manager_with_open_song(base):
+    pm = ProjectManager(base)
+    pm.current_project_path = (
+        pm.saved_data_dir / "Open song" / "Open song.kproj"
+    )
+    pm.backups_dir.mkdir(parents=True)
+    pm.snapshots_dir.mkdir(parents=True)
+    return pm
+
+
 class TestListBackupsGlobEscaping:
     def test_bracket_name_matches_only_itself(self, tmp_path):
-        pm = ProjectManager(base_dir=str(tmp_path))
+        pm = _manager_with_open_song(str(tmp_path))
         (pm.backups_dir / "Song [Remix]_backup_1.kproj").write_text("")
         (pm.backups_dir / "Song R_backup_1.kproj").write_text("")
 
@@ -55,7 +65,7 @@ class TestListBackupsGlobEscaping:
 
     @skip_on_windows_star
     def test_star_name_matches_only_itself(self, tmp_path):
-        pm = ProjectManager(base_dir=str(tmp_path))
+        pm = _manager_with_open_song(str(tmp_path))
         (pm.backups_dir / "a*_backup_1.kproj").write_text("")
         (pm.backups_dir / "abc_backup_1.kproj").write_text("")
 
@@ -66,7 +76,7 @@ class TestListBackupsGlobEscaping:
 
 class TestListSnapshotsGlobEscaping:
     def test_bracket_name_matches_only_itself(self, tmp_path):
-        pm = ProjectManager(base_dir=str(tmp_path))
+        pm = _manager_with_open_song(str(tmp_path))
         (pm.snapshots_dir / "Song [Remix]_snapshot_1.kproj").write_text("")
         (pm.snapshots_dir / "Song R_snapshot_1.kproj").write_text("")
 
@@ -76,7 +86,7 @@ class TestListSnapshotsGlobEscaping:
 
     @skip_on_windows_star
     def test_star_name_matches_only_itself(self, tmp_path):
-        pm = ProjectManager(base_dir=str(tmp_path))
+        pm = _manager_with_open_song(str(tmp_path))
         (pm.snapshots_dir / "a*_snapshot_1.kproj").write_text("")
         (pm.snapshots_dir / "abc_snapshot_1.kproj").write_text("")
 
@@ -89,7 +99,7 @@ class TestCleanupOldBackupsDoesNotTouchOtherProjects:
     def test_cleanup_for_bracket_name_leaves_other_project_backups(
         self, tmp_path
     ):
-        pm = ProjectManager(base_dir=str(tmp_path))
+        pm = _manager_with_open_song(str(tmp_path))
 
         for i in range(11):
             (pm.backups_dir / f"Song R_backup_{i:02d}.kproj").write_text("")
@@ -108,7 +118,7 @@ class TestCleanupOldBackupsDoesNotTouchOtherProjects:
 
 class TestListWithoutArgumentUnchanged:
     def test_list_backups_no_arg_returns_all(self, tmp_path):
-        pm = ProjectManager(base_dir=str(tmp_path))
+        pm = _manager_with_open_song(str(tmp_path))
         (pm.backups_dir / "ProjA_backup_1.kproj").write_text("")
         (pm.backups_dir / "ProjB_backup_1.kproj").write_text("")
 
@@ -116,7 +126,7 @@ class TestListWithoutArgumentUnchanged:
         assert len(result) == 2
 
     def test_list_snapshots_no_arg_returns_all(self, tmp_path):
-        pm = ProjectManager(base_dir=str(tmp_path))
+        pm = _manager_with_open_song(str(tmp_path))
         (pm.snapshots_dir / "ProjA_snapshot_1.kproj").write_text("")
         (pm.snapshots_dir / "ProjB_snapshot_1.kproj").write_text("")
 

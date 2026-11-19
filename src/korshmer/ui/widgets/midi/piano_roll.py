@@ -658,7 +658,9 @@ class InteractivePianoRoll(QGraphicsView):
                 )
                 item.grid_x = new_beat_width
 
-        self.model.scale_note_times(ratio)
+        self.model.follow_tempo(ratio)
+        for clip_id in self._clip_items:
+            self.refresh_clip(clip_id)
         self.vm.tempo_map = getattr(self.model, "tempo_map", None)
         self.model.grid_offset = self.vm.grid_offset
         for item in self._note_items.values():

@@ -23,7 +23,6 @@ from korshmer.mixins.actions import project_management as song_actions
 from korshmer.mixins.actions.project_management import (
     ProjectManagementActionsMixin,
     saved_song_in,
-    with_found_clips,
 )
 from korshmer.mixins.actions.stems import StemsActionsMixin
 from korshmer.mixins.pages.main import (
@@ -215,7 +214,7 @@ def test_a_new_song_gets_its_own_folder_beside_converted_songs(tmp_path):
 
 def test_a_song_cannot_take_the_name_of_an_internal_folder(tmp_path):
     manager = ProjectManager(tmp_path)
-    assert manager.song_path_for("Backups") is None
+    assert manager.song_path_for("Templates") is None
     assert manager.song_path_for("../escape") is None
     assert manager.start_song("projects") is None
 
@@ -235,14 +234,18 @@ def test_loading_a_song_folder_offers_the_saved_edit(tmp_path):
     assert len(later.arranger.model.notes) == 2
 
 
-def test_a_moved_song_folder_still_finds_its_audio(tmp_path):
-    (tmp_path / "Stems").mkdir()
+def test_clips_stored_inside_a_song_are_found_after_its_folder_moves(tmp_path):
+    from korshmer.project_management.song_folder import opened_editor
+
     moved = tmp_path / "Stems" / "vocals.wav"
+    moved.parent.mkdir()
     moved.write_bytes(b"x")
-    editor = {"clips": [{"path": "/old/place/Stems/vocals.wav", "name": "V"}]}
-    found = with_found_clips(editor, tmp_path)
+    editor = {
+        "clips": [{"path": os.path.join("Stems", "vocals.wav"), "name": "V"}]
+    }
+    found = opened_editor(editor, tmp_path)
     assert found["clips"][0]["path"] == str(moved)
-    assert editor["clips"][0]["path"] == "/old/place/Stems/vocals.wav"
+    assert editor["clips"][0]["path"] == os.path.join("Stems", "vocals.wav")
 
 
 def test_editor_buttons_wrap_instead_of_overlapping():

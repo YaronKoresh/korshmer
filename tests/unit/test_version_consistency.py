@@ -73,12 +73,3 @@ class TestNoHardcodedVersionStrings:
             "project_manager.py still contains hardcoded 0.6.0"
         )
         assert "__version__" in content
-
-    def test_migration_action_uses_dynamic_version(self):
-        content = self._read_py_file(
-            SRC_DIR / "mixins" / "actions" / "project_management.py"
-        )
-        assert '"0.6.0"' not in content, (
-            "project_management action still contains hardcoded 0.6.0"
-        )
-        assert "__version__" in content

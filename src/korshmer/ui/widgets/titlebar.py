@@ -25,7 +25,6 @@ MORE_MENU = (
     ("Check Song Files", "check_integrity_action"),
     ("Song Statistics", "project_stats_action"),
     ("Manage Samples", "manage_assets_action"),
-    ("Update an Old Song File", "migrate_project_action"),
 )
 HELP_MENU = (
     ("Find a Tool…", "focus_tool_finder"),
