@@ -632,8 +632,12 @@ def test_fixing_an_audio_clip_automatically_cleans_improves_and_aligns_it_in_one
 
     clip = timeline.model.clip_by_id(clip.id)
     assert clip.path != original
-    assert clip.start == pytest.approx(1.88, abs=0.04)
-    assert (clip.offset, clip.duration) == pytest.approx((1.0, 7.0))
+    first_click = clip.start - clip.offset + 2.0 + 0.12
+    assert first_click / BEAT_SECONDS == pytest.approx(
+        round(first_click / BEAT_SECONDS), abs=0.1
+    )
+    assert clip.offset >= 1.0
+    assert clip.duration <= 7.0
 
     timeline.undo()
     restored = timeline.model.clip_by_id(clip.id)

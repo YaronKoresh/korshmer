@@ -1247,18 +1247,25 @@ class ArrangerTimeline(QWidget):
         if "parts" in result:
             self._replace_with_parts(clip, label, result)
             return
+        trimmed = "trim" in result
+        if trimmed:
+            self.model.snapshot()
+            clip.trim(*result["trim"])
         start = self._fixed_clip_start(clip, result)
         moved = abs(start - clip.start) >= CLIP_MOVE_TOLERANCE_S
         notes = self._clip_fix_notes(result, start - clip.start, moved)
+        if trimmed:
+            notes.insert(0, "silence at its ends was trimmed off")
         new_path = result["path"]
-        if new_path == clip.path and not moved:
+        if new_path == clip.path and not moved and not trimmed:
             self.clip_edit_status.emit(
                 f"{label}: nothing changed in '{clip.name}': "
                 + "; ".join(notes)
             )
             self._refresh_clip_edit_bar()
             return
-        self.model.snapshot()
+        if not trimmed:
+            self.model.snapshot()
         if new_path != clip.path:
             clip.path = new_path
             clip.waveform = []

@@ -9,14 +9,11 @@ from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 from korshmer.event_bus import Event, publish
 from korshmer.project_management.project_backup import snapshot_choices
 from korshmer.project_management.project_manager import (
-    BACKUPS_FOLDER,
     SONG_SUFFIX,
-    VERSIONS_FOLDER,
     is_valid_new_name,
 )
 from korshmer.project_management.song_folder import (
     conversion_kept_in_song,
-    history_kept_in_song,
     opened_editor,
     own_song_path,
     stored_editor,
@@ -134,7 +131,6 @@ class ProjectManagementActionsMixin:
         arranger = getattr(self, "arranger", None)
         if arranger is None or not isinstance(editor, dict):
             return False
-        self._keep_history_in(song_path)
         arranger.load_project_dict(opened_editor(editor, folder))
         if hasattr(arranger, "set_song_folder"):
             arranger.set_song_folder(
@@ -216,15 +212,6 @@ class ProjectManagementActionsMixin:
             arranger.repoint_clips(old_folder, kept)
         self.current_session = StemSession.find(kept)
 
-    def _keep_history_in(self, song_path):
-        shared = self.project_manager.saved_data_dir
-        history_kept_in_song(
-            song_path, shared / "snapshots", VERSIONS_FOLDER, "snapshot"
-        )
-        history_kept_in_song(
-            song_path, shared / "backups", BACKUPS_FOLDER, "backup"
-        )
-
     def _save_song_to(self, song_path):
         song_path = own_song_path(
             song_path, self.project_manager.saved_data_dir, SONG_SUFFIX
@@ -249,7 +236,6 @@ class ProjectManagementActionsMixin:
         if not self.project_manager.save_project(song_path):
             QMessageBox.warning(self, "Save Failed", "Failed to save project")
             return False
-        self._keep_history_in(song_path)
         publish(
             Event.STATUS_UPDATE,
             text=f"Song saved: {song_path.name} in {song_path.parent.name}",

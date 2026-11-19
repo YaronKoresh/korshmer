@@ -41,10 +41,17 @@ SAME_TEMPO_SHARE = 1e-4
 SLOWEST_FOLLOW = 0.5
 FASTEST_FOLLOW = 2.0
 PARTS_STAGE = "Looking for separate parts"
-MIN_PART_GAP_S = 3.0
+MIN_PART_GAP_S = 1.5
 MIN_PART_S = 0.3
 PART_EDGE_S = 0.05
 PART_BELOW_LOUDEST_DB = 40.0
+PART_SILENT_DB = -120.0
+PART_LOUD_PERCENTILE = 98.0
+PART_PAUSE_PERCENTILE = 10.0
+PART_STEADY_PAUSE_DB = 8.0
+PART_MIN_CONTRAST_DB = 20.0
+PART_RISE_OVER_PAUSE_DB = 8.0
+MIN_TRIM_S = 0.1
 PART_FRAME = 1024
 
 
@@ -320,36 +327,70 @@ def _align(clip, current, result, beats_at, song_bpm, enter, kept, folder):
     )
 
 
-def clip_parts(data, sample_rate, offset=0.0, duration=None):
-    mono = _kept_part(data, sample_rate, offset, duration)
-    if mono.shape[0] < PART_FRAME:
-        return []
+def _frame_levels_db(mono):
     levels = librosa.feature.rms(
         y=mono, frame_length=PART_FRAME, hop_length=PART_FRAME, center=False
     )[0]
-    loudest = float(levels.max())
-    if loudest <= SILENCE_LEVEL:
-        return []
-    heard = np.flatnonzero(
-        levels >= loudest * 10.0 ** (-PART_BELOW_LOUDEST_DB / 20.0)
+    return 20.0 * np.log10(np.maximum(levels, 10.0 ** (PART_SILENT_DB / 20.0)))
+
+
+def _sound_threshold_db(levels):
+    loud = float(np.percentile(levels, PART_LOUD_PERCENTILE))
+    lowest = loud - PART_BELOW_LOUDEST_DB
+    pauses = np.maximum(
+        levels[levels <= np.percentile(levels, PART_PAUSE_PERCENTILE)], lowest
     )
-    frame = PART_FRAME / sample_rate
+    floor = float(np.max(pauses))
+    steady = floor - float(np.min(pauses)) <= PART_STEADY_PAUSE_DB
+    if not steady or loud - floor < PART_MIN_CONTRAST_DB:
+        return lowest
+    return floor + min(PART_RISE_OVER_PAUSE_DB, (loud - floor) / 2.0)
+
+
+def _sound_spans(heard, frame):
     spans = []
-    for index in heard:
+    for index in np.flatnonzero(heard):
         begin, end = index * frame, (index + 1) * frame
         if spans and begin - spans[-1][1] < MIN_PART_GAP_S:
             spans[-1][1] = end
         else:
             spans.append([begin, end])
+    return [span for span in spans if span[1] - span[0] >= MIN_PART_S]
+
+
+def clip_parts(data, sample_rate, offset=0.0, duration=None):
+    mono = _kept_part(data, sample_rate, offset, duration)
+    if mono.shape[0] < PART_FRAME:
+        return []
+    levels = _frame_levels_db(mono)
+    if float(levels.max()) <= 20.0 * np.log10(SILENCE_LEVEL):
+        return []
+    heard = levels > _sound_threshold_db(levels)
     whole = mono.shape[0] / sample_rate
     return [
         (
             float(offset) + max(0.0, begin - PART_EDGE_S),
             float(offset) + min(whole, end + PART_EDGE_S),
         )
-        for begin, end in spans
-        if end - begin >= MIN_PART_S
+        for begin, end in _sound_spans(heard, PART_FRAME / sample_rate)
     ]
+
+
+def _fix_trimmed(clip, span, length, whole, options):
+    begin, end = span
+    kept_end = length if clip.duration is None else clip.offset + clip.duration
+    if begin - clip.offset < MIN_TRIM_S and kept_end - end < MIN_TRIM_S:
+        return whole()
+    trimmed = ClipAudio(
+        clip.path,
+        clip.start + begin - clip.offset,
+        begin,
+        end - begin,
+        clip.source_path,
+    )
+    result = fix_clip(trimmed, *options)
+    result["trim"] = (trimmed.start, trimmed.start + end - begin)
+    return result
 
 
 def fix_clip_parts(
@@ -373,6 +414,14 @@ def fix_clip_parts(
         report(PARTS_STAGE, 0, 1)
     data, sample_rate = _read(clip.path)
     spans = clip_parts(data, sample_rate, clip.offset, clip.duration)
+    if len(spans) == 1:
+        return _fix_trimmed(
+            clip,
+            spans[0],
+            data.shape[0] / sample_rate,
+            whole,
+            (steps, beats_at, song_bpm, report, cancelled, folder, notes),
+        )
     if len(spans) < 2:
         return whole()
     made = []

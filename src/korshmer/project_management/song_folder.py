@@ -1,5 +1,4 @@
 import filecmp
-import glob
 import os
 import shutil
 from pathlib import Path
@@ -49,24 +48,6 @@ def conversion_kept_in_song(session_folder, song_folder):
             ignore=shutil.ignore_patterns("*.kproj", "Versions", "Backups"),
         )
     return str(target)
-
-
-def history_kept_in_song(song_path, shared_folder, folder_name, marker):
-    shared_folder = Path(shared_folder)
-    if not shared_folder.is_dir():
-        return 0
-    song_path = Path(song_path)
-    pattern = f"{glob.escape(song_path.stem)}_{marker}_*{song_path.suffix}"
-    moved = 0
-    for found in sorted(shared_folder.glob(pattern)):
-        target_folder = song_path.parent / folder_name
-        target_folder.mkdir(parents=True, exist_ok=True)
-        target = target_folder / found.name
-        if not target.exists():
-            with logged_file_op("Move into song", target):
-                shutil.move(str(found), str(target))
-            moved += 1
-    return moved
 
 
 def _inside(path, folder):

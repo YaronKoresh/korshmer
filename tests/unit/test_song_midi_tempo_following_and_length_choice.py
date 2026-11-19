@@ -389,36 +389,6 @@ def test_a_song_saved_inside_its_conversion_folder_is_not_copied(
     assert list(converted.glob("*.kproj"))
 
 
-def test_earlier_versions_and_backups_from_the_shared_folders_move_into_the_song(
-    qapp, tmp_path
-):
-    studio = _Studio(tmp_path / "app")
-    shared = studio.project_manager.saved_data_dir
-    for folder, name in (
-        ("snapshots", "Ballad_snapshot_20260101_000000.kproj"),
-        ("snapshots", "Other_snapshot_20260101_000000.kproj"),
-        ("backups", "Ballad_backup_20260101_000000.kproj"),
-    ):
-        (shared / folder).mkdir(parents=True, exist_ok=True)
-        (shared / folder / name).write_bytes(b"x")
-    song = studio.project_manager.song_path_for("Ballad")
-
-    assert studio._save_song_to(song)
-
-    assert (
-        song.parent / "Versions" / "Ballad_snapshot_20260101_000000.kproj"
-    ).is_file()
-    assert (
-        song.parent / "Backups" / "Ballad_backup_20260101_000000.kproj"
-    ).is_file()
-    assert (
-        shared / "snapshots" / "Other_snapshot_20260101_000000.kproj"
-    ).is_file()
-    assert [
-        path.name for path in studio.project_manager.list_snapshots("Ballad")
-    ] == ["Ballad_snapshot_20260101_000000.kproj"]
-
-
 def test_the_length_is_shown_and_typed_as_minutes_and_seconds(qapp):
     picker = LengthPicker(0.5, 120.0, 3.0)
 

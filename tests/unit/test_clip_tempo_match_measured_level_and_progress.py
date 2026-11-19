@@ -322,9 +322,9 @@ def test_a_running_fix_shows_its_steps_and_how_far_it_is(
     assert shown_while_running
     assert stages[0] == "Starting"
     assert "Looking for separate parts" in stages
-    assert "Removing background noise" in stages
-    assert "Measuring and improving the level" in stages
-    assert stages[-1] == "Finding the beat"
+    assert any("Removing background noise" in stage for stage in stages)
+    assert any("Measuring and improving the level" in stage for stage in stages)
+    assert stages[-1].endswith("Finding the beat")
     assert percents == sorted(percents) and percents[-1] < 100
     assert not timeline.clip_edit_bar.isVisible()
 
@@ -372,8 +372,8 @@ def test_a_full_automatic_fix_leaves_no_half_finished_files_behind(
     timeline.fix_clip_automatically(clip.id)
     _finish(timeline)
 
-    final = timeline.model.clip_by_id(clip.id).path
-    assert [str(path) for path in fixed_files.iterdir()] == [final]
+    used = sorted(clip.path for clip in timeline.model.clips)
+    assert sorted(str(path) for path in fixed_files.iterdir()) == used
 
 
 def test_a_fixed_file_is_removed_once_no_step_back_can_reach_it(
