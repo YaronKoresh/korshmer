@@ -10,6 +10,9 @@ from korshmer.midi_generation import (
     genre_feel,
     genres,
     hooks,
+    moods,
+    seeds,
+    slides,
     song_match,
 )
 from korshmer.midi_generation.korshmer_schema import (
@@ -90,6 +93,27 @@ STRUCTURES = {
     ],
     "Build & Drop": ["Intro", "Build", "Drop", "Break", "Drop", "Outro"],
     "Journey (A-B-A)": ["Intro", "A", "B", "A", "Break", "B", "Outro"],
+    "Chorus First": [
+        "Intro",
+        "Chorus",
+        "Verse",
+        "Chorus",
+        "Break",
+        "Verse",
+        "Chorus",
+        "Outro",
+    ],
+    "Verse, Build & Drop": [
+        "Intro",
+        "Verse",
+        "Build",
+        "Drop",
+        "Break",
+        "Build",
+        "Drop",
+        "Outro",
+    ],
+    "Two Parts (A-A-B)": ["Intro", "A", "A", "B", "Break", "A", "B", "Outro"],
     "Loop": ["Loop"],
 }
 
@@ -142,6 +166,26 @@ STYLE_STRUCTURES = {
     "Phonk": "Build & Drop",
 }
 
+STYLE_STRUCTURE_POOLS = {
+    "Pop": ("Verse / Chorus", "Verse / Chorus", "Chorus First"),
+    "Rock": ("Verse / Chorus", "Verse / Chorus", "Chorus First"),
+    "Hip-Hop": ("Verse / Chorus", "Chorus First", "Verse / Chorus"),
+    "EDM": ("Build & Drop", "Verse, Build & Drop", "Build & Drop"),
+    "Phonk": ("Build & Drop", "Verse, Build & Drop", "Build & Drop"),
+    "Lo-Fi": ("Journey (A-B-A)", "Two Parts (A-A-B)", "Journey (A-B-A)"),
+    "Jazz": ("Journey (A-B-A)", "Two Parts (A-A-B)", "Journey (A-B-A)"),
+}
+REGISTER_TURNS = (-2, 0, 0, 2)
+BAND_ROLES = ("bass", "chords", "pad", "arp", "pluck")
+RISING_SECTIONS = ("Build",)
+RISE_FROM = 0.78
+LIGHT_SECTIONS = ("Verse", "A")
+LIGHT_HAT_STEPS = 10
+LIGHT_KICKS = 2
+MOOD_DRAWS = 3
+FEEL_DRAWS = 2
+SONG_FILLS = 2
+
 _ALL = set(ROLE_KEYS)
 SECTION_PROFILES = {
     "Intro": (0.3, (4, 8), {"pad", "chords", "arp", "melody"}, "intro"),
@@ -161,6 +205,41 @@ SECTION_PROFILES = {
     "Loop": (0.8, (8,), _ALL, "verse"),
 }
 _BODY_NAMES = ("Verse", "Chorus", "A", "B", "Build", "Drop")
+_VERSE_ROLES = (
+    {"drums", "bass", "chords", "pad", "melody"},
+    {"drums", "bass", "chords", "pad", "melody"},
+    {"drums", "bass", "chords", "melody", "pluck"},
+    {"drums", "bass", "pad", "melody", "arp"},
+)
+SECTION_ROLE_OPTIONS = {
+    "Intro": (
+        {"pad", "chords", "arp", "melody"},
+        {"pad", "chords", "arp", "melody"},
+        {"pad", "melody", "arp"},
+        {"chords", "melody", "arp", "pluck"},
+        {"drums", "bass", "pad", "arp"},
+    ),
+    "Verse": _VERSE_ROLES,
+    "A": _VERSE_ROLES,
+    "Break": (
+        {"pad", "chords", "melody", "arp"},
+        {"pad", "chords", "melody", "arp"},
+        {"pad", "melody", "arp", "counter"},
+        {"chords", "pad", "arp", "pluck"},
+    ),
+    "Build": (
+        {"drums", "bass", "chords", "arp", "pad"},
+        {"drums", "bass", "chords", "arp", "pad"},
+        {"drums", "bass", "chords", "arp", "pad", "melody"},
+        {"drums", "bass", "pad", "arp", "pluck"},
+    ),
+    "Outro": (
+        {"pad", "chords", "melody"},
+        {"pad", "chords", "melody"},
+        {"pad", "melody", "arp"},
+        {"drums", "bass", "chords", "pad"},
+    ),
+}
 
 _TRANSITIONS = {
     0: (3, 4, 5, 1, 2),
@@ -216,7 +295,7 @@ class ComposeOptions:
     style: str = AUTO_STYLE
     structure: str = AUTO_STRUCTURE
     mood: str = "Auto"
-    seed: int | None = None
+    seed: int | str | None = None
     roles: tuple = DEFAULT_ROLES
     texture_batches: int = 0
     mode: str = "New song"
@@ -261,6 +340,7 @@ class Composition:
     hook: object = None
     tracks: list = field(default_factory=list)
     style: str = ""
+    seed: int | None = None
 
 
 def validate_options(options):
@@ -287,6 +367,7 @@ def validate_options(options):
         raise ValueError(f"Unknown mood: {options.mood}")
     if options.mode not in MODES:
         raise ValueError(f"Unknown mode: {options.mode}")
+    seeds.seed_number(options.seed)
     song_match.validate_match(options.match)
     song_match.validate_offset(options.grid_offset)
     unknown = [r for r in options.roles if r not in ROLE_KEYS]
@@ -477,6 +558,71 @@ def structure_for(style):
     return STYLE_STRUCTURES.get(style, DEFAULT_STRUCTURE)
 
 
+def structures_for(style):
+    return STYLE_STRUCTURE_POOLS.get(style, (structure_for(style),))
+
+
+def plan_song_bars(rng, total_bars, structure):
+    spare = total_bars % PHRASE_BARS
+    whole = max(PHRASE_BARS, total_bars - spare)
+    sections = plan_sections(rng, whole, structure)
+    sections[-1].bars += total_bars - whole
+    return sections
+
+
+def plan_roles(rng):
+    return {
+        name: rng.choice(options)
+        for name, options in SECTION_ROLE_OPTIONS.items()
+    }
+
+
+def light_pattern(pattern, fixed):
+    light = {pitch: list(steps) for pitch, steps in pattern.items()}
+    for pitch, steps in light.items():
+        if pitch != engine._KICK and len(steps) > LIGHT_HAT_STEPS:
+            light[pitch] = [s for s in steps if s % 2 == 0]
+    kicks = light.get(engine._KICK, [])
+    if not fixed and len(kicks) > LIGHT_KICKS:
+        light[engine._KICK] = kicks[:-1]
+    return light
+
+
+def rise(notes, start, end, low=RISE_FROM):
+    span = end - start
+    if span <= 0:
+        return
+    for note in notes:
+        along = min(1.0, max(0.0, (note.start - start) / span))
+        _scale_velocity(note, low + (1.0 - low) * along)
+
+
+def mood_progression(rng, style, kind, minor, intervals, leaning):
+    drawn = [
+        genre_feel.progression_for(rng, style, kind, minor=minor)
+        for _ in range(MOOD_DRAWS)
+    ]
+    return moods.pick_by_mood(
+        drawn,
+        lambda chords: moods.progression_brightness(intervals, chords),
+        leaning,
+    )
+
+
+def _act_state(rng, style, feel, mood):
+    mood_feel = moods.mood_for(mood)
+    fills = list(feel.fills or (feel.fill,))
+    rng.shuffle(fills)
+    return {
+        "pattern": make_drum_pattern(rng, style),
+        "seventh": rng.random() < feel.seventh + mood_feel.seventh,
+        "fill": rng.choice(mood_feel.fills),
+        "fills": fills[:SONG_FILLS],
+        "pads": [rng.choice(mood_feel.pads) for _ in range(SONG_FILLS)],
+        "mood": mood,
+    }
+
+
 def plan_sections(rng, total_bars, structure):
     names = list(STRUCTURES[structure])
     if len(names) == 1 or total_bars < 16:
@@ -650,15 +796,14 @@ def _new_instrument(role, program=0):
 
 
 def _breathe(out, lo, hi):
-    others = [
-        n
+    others = sum(
+        1
         for role, voices in out.items()
         if role not in ARC_BREATH_ROLES
         for voice in voices.values()
-        for n in voice.notes
-        if n.start < hi and n.end > lo
-    ]
-    if not others:
+        if any(n.start < hi and n.end > lo for n in voice.notes)
+    )
+    if others < MIN_ACTIVE_ROLES:
         return
     for role in ARC_BREATH_ROLES:
         for voice in out.get(role, {}).values():
@@ -991,12 +1136,16 @@ def compose(options, existing=None):
         options.style, bpm, options.scale, existing if layering else None
     )
     song_gains = None
-    rng = random.Random(options.seed)
+    seed = seeds.seed_number(options.seed)
+    if seed is None:
+        seed = seeds.fresh_seed()
+    rng = random.Random(seed)
+    song = random.Random(rng.getrandbits(64))
     bar = 240.0 / bpm
     total_bars = (
         bars_for_minutes(options.minutes, bpm)
         if options.bars is None
-        else whole_routines(options.bars)
+        else validate_bars(options.bars)
     )
     user_roles = tuple(r for r in _PRIORITY if r in options.roles)
     texture_on = options.texture_batches > 0
@@ -1045,9 +1194,12 @@ def compose(options, existing=None):
         song_gains = song_bar_gains(existing, bar, total_bars, sections)
     else:
         structure = options.structure
+        drawn_structure = song.choice(structures_for(style))
         if structure == AUTO_STRUCTURE:
-            structure = structure_for(style)
-        sections = plan_sections(rng, total_bars, structure)
+            structure = drawn_structure
+        sections = plan_song_bars(rng, total_bars, structure)
+    section_roles = plan_roles(song)
+    register_turn = song.choice(REGISTER_TURNS)
     minor_like = _is_minor_like(options.scale)
     feel = genre_feel.feel_for(style)
     home_shift = 0
@@ -1099,14 +1251,9 @@ def compose(options, existing=None):
     answers.name = ANSWER_NAME
     chord_hits = {}
     melody_seed = {}
-    acts = {
-        0: {
-            "pattern": make_drum_pattern(rng, style),
-            "seventh": rng.random() < feel.seventh,
-            "fill": rng.choice((4, 4, 8)),
-            "mood": base_mood,
-        }
-    }
+    told = {}
+    phrases = hooks.phrase_plan(song, feel.phrases)
+    acts = {0: _act_state(rng, style, feel, base_mood)}
     out = {}
     bar_roots = [0] * total_bars
     bar_chords = [None] * total_bars
@@ -1126,6 +1273,8 @@ def compose(options, existing=None):
         ]
         act = section.start_bar // ACT_BARS
         chapter = arc[act]
+        if not layering:
+            profile_roles = section_roles.get(section.name, profile_roles)
         if chapter.kind == "Climax":
             profile_roles = _ALL
         elif chapter.kind == "Reflection":
@@ -1144,20 +1293,24 @@ def compose(options, existing=None):
         variant = occurrence if layering else 0
         act = chapter.theme
         if act not in acts:
-            acts[act] = {
-                "pattern": make_drum_pattern(rng, style),
-                "seventh": rng.random() < feel.seventh,
-                "fill": rng.choice((4, 4, 8)),
-                "mood": (
-                    rng.choice(mood_pool)
-                    if options.mood == "Auto"
-                    else options.mood
-                ),
-            }
+            acts[act] = _act_state(
+                rng,
+                style,
+                feel,
+                rng.choice(mood_pool)
+                if options.mood == "Auto"
+                else options.mood,
+            )
         state = acts[act]
+        mood_feel = moods.mood_for(state["mood"])
         if (kind, act) not in progressions:
-            drawn = genre_feel.progression_for(
-                rng, style, kind, minor=minor_like
+            drawn = mood_progression(
+                rng,
+                style,
+                kind,
+                minor_like,
+                SCALES[chapter.scale],
+                mood_feel.harmony,
             )
             progressions[(kind, act)] = (
                 vary_progression(rng, drawn) if act else drawn
@@ -1207,26 +1360,42 @@ def compose(options, existing=None):
             bass_pool = _widened(feel.bass, LAYER_BASS_RHYTHMS)
         hits_variant = variant or occurrence % 2
         opening = _turn(phrase_count, layering)
+        bass_variant = variant if layering else occurrence % 2
         bass_rhythm.setdefault(
-            (kind, act, variant, opening),
+            (kind, act, bass_variant, opening),
             _fresh(rng, bass_pool, used_bass)
             if layering
-            else rng.choice(feel.bass),
+            else moods.pick_by_mood(
+                [rng.choice(feel.bass) for _ in range(FEEL_DRAWS)],
+                engine.BASS_BUSYNESS.__getitem__,
+                mood_feel.bass,
+            ),
         )
         chord_hits.setdefault(
             (kind, act, hits_variant, opening),
             _fresh(rng, hits_pool, used_hits)
             if layering
-            else rng.choice(hits_pool),
+            else moods.pick_by_mood(
+                [rng.choice(hits_pool) for _ in range(MOOD_DRAWS)],
+                len,
+                mood_feel.hits,
+            ),
         )
+        section_lo = (start_bar + section.start_bar) * bar
+        section_hi = section_lo + section.bars * bar
+        groove = state["pattern"]
+        if section.name in LIGHT_SECTIONS and not occurrence and not layering:
+            groove = light_pattern(groove, style in _FIXED_GROOVES)
         melody_seed.setdefault((kind, act), rng.randrange(1 << 30))
+        retold = 0 if layering else told.get((kind, act), 0)
+        told[(kind, act)] = retold + 1
         sect_seed = rng.randrange(1 << 30)
         for index, (offset, length) in enumerate(
             _phrases(section.bars, layering)
         ):
             turn = _turn(phrase_count, layering)
             phrase_bar = section.start_bar + offset
-            bass_key = (kind, act, variant, turn)
+            bass_key = (kind, act, bass_variant, turn)
             if bass_key not in bass_rhythm:
                 bass_rhythm[bass_key] = _fresh(rng, bass_pool, used_bass)
             hits_key = (kind, act, hits_variant, turn)
@@ -1256,9 +1425,11 @@ def compose(options, existing=None):
                 if sung and role == "pluck":
                     continue
                 if role == "drums":
-                    pattern = state["pattern"]
+                    pattern = groove
                     fill_bars = state["fill"] if variant % 2 == 0 else 4
-                    fill = feel.fill
+                    fill = state["fills"][
+                        (occurrence + index) % len(state["fills"])
+                    ]
                     if layering:
                         pattern = _layer_pattern(
                             rng, style, layer_patterns, (act, kind, turn)
@@ -1274,11 +1445,12 @@ def compose(options, existing=None):
                         start_bar=start_bar + phrase_bar,
                         pattern=pattern,
                         fill_bars=fill_bars,
-                        velocity_scale=feel.drum_vel,
+                        velocity_scale=feel.drum_vel
+                        * (1.0 if layering else mood_feel.drums),
                         variation=(
                             ACT_DRUM_VARIATION
                             if act or variant or layering
-                            else 0.0
+                            else mood_feel.kick_variation
                         ),
                         ghosts=feel.ghosts,
                         fill=fill,
@@ -1297,7 +1469,7 @@ def compose(options, existing=None):
                         rhythm="riff" if riff else bass_rhythm[bass_key],
                         riff=riff,
                         kick_steps=(
-                            state["pattern"].get(engine._KICK)
+                            groove.get(engine._KICK)
                             if feel.bass_on_kicks and not layering
                             else None
                         ),
@@ -1325,6 +1497,9 @@ def compose(options, existing=None):
                         octave=ACT_PAD_OCTAVES[
                             (act + variant) % len(ACT_PAD_OCTAVES)
                         ],
+                        shape="triad"
+                        if layering
+                        else state["pads"][occurrence % SONG_FILLS],
                         **kw,
                     )
                 elif role == "arp":
@@ -1390,11 +1565,14 @@ def compose(options, existing=None):
                         ctx,
                         mood=state["mood"],
                         lift=ARC_CLIMAX_LIFT if chapter.kind == "Climax" else 0,
+                        turn=register_turn,
+                        register_mood=base_mood,
+                        phrases=phrases,
                         hook=hook,
                         kind="chorus" if section.name == "Loop" else kind,
                         final=closing,
                         style=style,
-                        **{**kw, "seed": melody_seed[(kind, act)]},
+                        **{**kw, "seed": melody_seed[(kind, act)] + retold},
                     )
                 else:
                     continue
@@ -1406,6 +1584,12 @@ def compose(options, existing=None):
                         (start_bar + phrase_bar + length) * bar,
                         bar,
                     )
+                if not layering:
+                    if role in BAND_ROLES:
+                        for note in inst.notes:
+                            _scale_velocity(note, mood_feel.band)
+                    if section.name in RISING_SECTIONS and role != "drums":
+                        rise(inst.notes, section_lo, section_hi)
                 program = (
                     chapter.kit
                     if role == "drums"
@@ -1508,12 +1692,16 @@ def compose(options, existing=None):
         modulus = DEFAULT_MODULUS
         if tracks >= MAX_TRACKS:
             _count, modulus = plan_schema(total_bars)
+        texture_bars = whole_routines(max(total_bars, PHRASE_BARS))
+        spare = texture_bars - total_bars
+        bar_energy += bar_energy[-1:] * spare
+        bar_roots = bar_roots + bar_roots[-1:] * spare
         texture = compose_routine_tracks(
             rng,
             root_idx,
             pent,
             bpm,
-            total_bars,
+            texture_bars,
             tracks,
             modulus,
             existing_tracks=options.existing_tracks + len(instruments),
@@ -1526,7 +1714,7 @@ def compose(options, existing=None):
             bar_roots=bar_roots,
         )
         texture = [i for i in texture if not (song_has_drums and i.is_drum)]
-        if last_bar is not None:
+        if last_bar is not None or spare:
             for inst in texture:
                 _clip_notes(inst, song_start, song_end)
             texture = [i for i in texture if i.notes]
@@ -1536,6 +1724,14 @@ def compose(options, existing=None):
             for note in inst.notes:
                 note.start += layer_offset
                 note.end += layer_offset
+    slides.add_bass_slides(
+        out.get("bass", {}).values(),
+        style,
+        options.seed,
+        sections,
+        bar,
+        start_bar * bar + layer_offset,
+    )
     return Composition(
         instruments,
         sections,
@@ -1546,4 +1742,5 @@ def compose(options, existing=None):
         hook,
         merge_by_instrument(instruments),
         style,
+        seed,
     )

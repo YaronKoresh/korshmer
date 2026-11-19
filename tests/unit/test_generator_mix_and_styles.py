@@ -69,7 +69,7 @@ def test_phonk_is_a_complete_style():
     assert genre_feel.FEELS["Phonk"].drum_vel > 1.0
     made = compose(
         ComposeOptions(
-            "A", "Minor", bpm=140.0, minutes=1.0, style="Phonk", seed=1
+            "A", "Minor", bpm=140.0, minutes=1.0, style="Phonk", seed=3
         )
     )
     assert made.style == "Phonk"

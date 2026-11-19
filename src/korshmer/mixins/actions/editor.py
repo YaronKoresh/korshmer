@@ -216,14 +216,14 @@ class EditorActionsMixin:
         return tuple(key for key, box in boxes.items() if box.isChecked())
 
     def _generator_seed(self):
-        spin = getattr(self, "spin_gen_seed", None)
-        if spin is None:
-            return None
-        value = int(spin.value())
-        if value <= 0:
-            value = int(time.time() * 1000) % 100000
-            spin.setValue(value)
-        return value
+        field = getattr(self, "spin_gen_seed", None)
+        return None if field is None else field.seed()
+
+    def _generator_seed_label(self, used):
+        field = getattr(self, "spin_gen_seed", None)
+        if field is not None and field.seed() == used:
+            return field.label()
+        return str(used)
 
     def run_midi_generator(self):
         try:
@@ -289,7 +289,7 @@ class EditorActionsMixin:
         result.instruments = instruments
         stamp = time.strftime("%Y%m%d_%H%M%S")
         path = os.path.join(
-            _layers_dir(), f"Generated_{stamp}_seed{options.seed}.mid"
+            _layers_dir(), f"Generated_{stamp}_seed{composition.seed}.mid"
         )
         try:
             result.write(path)
@@ -320,7 +320,9 @@ class EditorActionsMixin:
             Event.STATUS_UPDATE,
             text=(
                 f"Generated {len(instruments)} tracks, "
-                f"{composition.total_bars} bars (seed {options.seed}){parts}"
+                f"{composition.total_bars} bars "
+                f"(seed {self._generator_seed_label(composition.seed)})"
+                f"{parts}"
             ),
         )
 

@@ -44,9 +44,15 @@ def test_the_same_number_of_bars_lasts_longer_at_a_slower_tempo():
     assert slow == pytest.approx(2.0 * fast, rel=0.1)
 
 
-def test_a_bar_count_between_groups_of_four_is_rounded_up_to_the_next_group():
-    assert _song(13).total_bars == 16
-    assert _song(17).total_bars == 20
+@pytest.mark.parametrize("bars", [5, 6, 7, 13, 17, 30, 47, 63])
+def test_a_bar_count_between_groups_of_four_is_created_exactly(bars):
+    song = _song(bars)
+    bar_seconds = BEATS_PER_BAR * 60.0 / 120.0
+
+    assert song.total_bars == bars
+    assert sum(section.bars for section in song.sections) == bars
+    assert _last_note_end(song) <= bars * bar_seconds + 1e-6
+    assert _last_note_end(song) > (bars - 1) * bar_seconds
 
 
 @pytest.mark.parametrize("bars", [0, 3, 5000, 12.5, "many", True])

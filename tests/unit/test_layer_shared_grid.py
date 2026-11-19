@@ -30,6 +30,7 @@ from korshmer.midi_generation import (
 from korshmer.mixins.actions import editor as editor_module
 from korshmer.mixins.actions.editor import EditorActionsMixin
 from korshmer.mixins.actions.stems import StemsActionsMixin
+from korshmer.ui.widgets.material.seed_box import SeedBox
 from tests.unit.test_estimate_grid import circular, groove
 
 BPM = 118.4
@@ -144,8 +145,7 @@ class GeneratorHost(EditorActionsMixin):
         self.spin_bpm = QDoubleSpinBox()
         self.spin_bpm.setRange(20, 300)
         self.spin_bpm.setValue(BPM)
-        self.spin_gen_seed = QSpinBox()
-        self.spin_gen_seed.setRange(0, 99999)
+        self.spin_gen_seed = SeedBox()
         self.spin_gen_seed.setValue(7)
         self.spin_gen_bars = QSpinBox()
         self.spin_gen_bars.setRange(4, 2048)

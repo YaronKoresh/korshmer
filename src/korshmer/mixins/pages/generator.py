@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QScrollArea,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -24,6 +23,7 @@ from korshmer.ui.widgets.material.adaptive import FlowLayout
 from korshmer.ui.widgets.material.button import HelpButton, MaterialButton
 from korshmer.ui.widgets.material.card import MaterialCard
 from korshmer.ui.widgets.material.length_box import BarsPicker
+from korshmer.ui.widgets.material.seed_box import SeedBox
 
 
 class GeneratorPageMixin:
@@ -86,9 +86,7 @@ class GeneratorPageMixin:
         self.combo_gen_style.addItems(list(composer.STYLE_CHOICES))
         self.combo_gen_mood = QComboBox()
         self.combo_gen_mood.addItems(list(composer.MOODS))
-        self.spin_gen_seed = QSpinBox()
-        self.spin_gen_seed.setRange(0, 99999)
-        self.spin_gen_seed.setSpecialValueText("Random")
+        self.spin_gen_seed = SeedBox()
         self.combo_gen_mode.currentTextChanged.connect(
             self._update_generator_mode_fields
         )

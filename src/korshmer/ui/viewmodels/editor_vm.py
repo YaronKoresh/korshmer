@@ -8,6 +8,14 @@ import pretty_midi
 
 from korshmer.constants import NOTE_NAMES
 from korshmer.midi.tempo_map import TempoMap
+from korshmer.utils.bend_range import (
+    DEFAULT_BEND_RANGE,
+    bend_range_of,
+    bends_clash,
+    clamp_bend,
+    clamp_bend_range,
+    set_bend_range,
+)
 from korshmer.utils.instrument_names import sanitize_instrument_name
 from korshmer.utils.tempo import BPM_DECIMALS, validate_bpm
 from korshmer.utils.track_layout import (
@@ -197,6 +205,18 @@ def clamp_track_gain(gain):
     return max(0.0, min(MAX_TRACK_GAIN, value))
 
 
+def _bend_points(bends):
+    points = []
+    for entry in bends or ():
+        try:
+            time, value = entry
+            points.append([max(0.0, float(time)), clamp_bend(value)])
+        except (TypeError, ValueError):
+            continue
+    points.sort(key=lambda point: point[0])
+    return points
+
+
 class TrackModel:
     __slots__ = (
         "id",
@@ -208,6 +228,8 @@ class TrackModel:
         "solo",
         "visible",
         "gain",
+        "bends",
+        "bend_range",
     )
 
     def __init__(
@@ -221,6 +243,8 @@ class TrackModel:
         solo=False,
         visible=True,
         gain=1.0,
+        bends=(),
+        bend_range=DEFAULT_BEND_RANGE,
     ):
         self.id = int(track_id)
         self.name = str(name)
@@ -231,6 +255,8 @@ class TrackModel:
         self.solo = bool(solo)
         self.visible = bool(visible)
         self.gain = clamp_track_gain(gain)
+        self.bends = _bend_points(bends)
+        self.bend_range = clamp_bend_range(bend_range)
 
     def instrument_label(self):
         return instrument_name(self.program, self.is_drum)
@@ -246,12 +272,16 @@ class TrackModel:
             self.solo,
             self.visible,
             self.gain,
+            self.bends,
+            self.bend_range,
         )
 
     def to_dict(self):
         return {
             "id": self.id,
             "gain": self.gain,
+            "bends": [list(point) for point in self.bends],
+            "bend_range": self.bend_range,
             "name": self.name,
             "program": self.program,
             "is_drum": self.is_drum,
@@ -273,6 +303,8 @@ class TrackModel:
             data.get("solo", False),
             data.get("visible", True),
             data.get("gain", 1.0),
+            data.get("bends") or (),
+            data.get("bend_range", DEFAULT_BEND_RANGE),
         )
 
 
@@ -505,6 +537,12 @@ def _stretch_notes(notes, factor):
         note.duration = max(MIN_NOTE_DURATION, note.duration * factor)
 
 
+def _stretch_bends(tracks, factor):
+    for track in tracks:
+        for point in track.bends:
+            point[0] *= factor
+
+
 def _move_clips(clips, factor):
     for clip in clips:
         clip.start *= factor
@@ -523,6 +561,7 @@ def _stretched_normalized(normalized, factor):
 def _stretched_state(state, factor):
     tracks, notes, clips, tempo_map, normalized = state
     _stretch_notes(notes, factor)
+    _stretch_bends(tracks.values(), factor)
     _move_clips(clips, factor)
     return (
         tracks,
@@ -808,6 +847,7 @@ class EditorModel:
             self.tempo_map = self.tempo_map.stretched(factor)
         self.normalized = _stretched_normalized(self.normalized, factor)
         _stretch_notes(self.notes, factor)
+        _stretch_bends(self.tracks.values(), factor)
 
     def follow_tempo(self, ratio):
         factor = float(ratio)
@@ -990,16 +1030,29 @@ class EditorModel:
             if not c.muted and (c.solo or not any_solo) and c.path
         ]
 
-    def track_for_instrument(self, program, is_drum):
+    def track_for_instrument(self, program, is_drum, joining=None):
         for track in self.tracks.values():
             if (
                 track.visible
                 and not track.muted
                 and track.is_drum == bool(is_drum)
                 and (is_drum or track.program == int(program))
+                and (joining is None or self._bends_allow(track, *joining))
             ):
                 return track
         return None
+
+    def _bends_allow(self, track, spans, bends, bend_range):
+        if not bends and not track.bends:
+            return True
+        if bends and track.bends and bend_range != track.bend_range:
+            return False
+        return not bends_clash(
+            [(n.start, n.end) for n in self.notes_for_track(track.id)],
+            track.bends,
+            spans,
+            bends,
+        )
 
     def load_midi(
         self, pm, replace=True, name_prefix=None, merge_instruments=False
@@ -1013,8 +1066,16 @@ class EditorModel:
         created = []
         instruments = list(getattr(pm, "instruments", None) or [])
         for inst in instruments:
+            spans = [(convert(n.start), convert(n.end)) for n in inst.notes]
+            bends = [
+                [max(0.0, convert(b.time)), clamp_bend(b.pitch)]
+                for b in getattr(inst, "pitch_bends", None) or ()
+            ]
+            bend_range = bend_range_of(inst) if bends else DEFAULT_BEND_RANGE
             track = (
-                self.track_for_instrument(inst.program, inst.is_drum)
+                self.track_for_instrument(
+                    inst.program, inst.is_drum, (spans, bends, bend_range)
+                )
                 if merge_instruments
                 else None
             )
@@ -1029,11 +1090,15 @@ class EditorModel:
                     program=int(inst.program),
                     is_drum=bool(inst.is_drum),
                 )
-            for note in inst.notes:
-                start, end = convert(note.start), convert(note.end)
+            for note, (start, end) in zip(inst.notes, spans, strict=True):
                 self.add_note(
                     track.id, note.pitch, start, end - start, note.velocity
                 )
+            if bends:
+                track.bends = sorted(
+                    track.bends + bends, key=lambda point: point[0]
+                )
+                track.bend_range = bend_range
             if track not in created:
                 created.append(track)
         return created
@@ -1082,6 +1147,13 @@ class EditorModel:
                         end=end,
                     )
                 )
+            if track.bends:
+                inst.pitch_bends = [
+                    pretty_midi.PitchBend(value, time)
+                    for time, value in track.bends
+                ]
+                if track.bend_range != DEFAULT_BEND_RANGE:
+                    set_bend_range(inst, track.bend_range)
             pm.instruments.append(inst)
         pm.instruments = merge_by_instrument(
             pm.instruments, keep_shared_names=True
@@ -1094,6 +1166,9 @@ class EditorModel:
             end = float(convert(note.end))
             note.start = start
             note.duration = max(MIN_NOTE_DURATION, end - start)
+        for track in self.tracks.values():
+            for point in track.bends:
+                point[0] = max(0.0, float(convert(point[0])))
         self.grid_offset = max(0.0, float(convert(self.grid_offset)))
         self._undo_stack.clear()
         self._redo_stack.clear()

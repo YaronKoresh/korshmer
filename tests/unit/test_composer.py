@@ -23,6 +23,7 @@ from korshmer.midi_generation.composer import (
     make_progression,
     plan_sections,
     structure_for,
+    structures_for,
     validate_options,
 )
 from korshmer.midi_generation.engine import SONG_STYLES
@@ -387,15 +388,24 @@ def test_style_structures_name_known_styles_and_structures():
 
 
 @pytest.mark.parametrize("style", SONG_STYLES)
-def test_auto_structure_plans_the_structure_of_the_style(style):
-    auto = compose(_opts(style=style, minutes=3))
-    chosen = compose(
-        _opts(style=style, minutes=3, structure=structure_for(style))
-    )
-
-    names = [s.name for s in auto.sections]
-    assert names == [s.name for s in chosen.sections]
-    assert len(names) > 1
+def test_auto_structure_plans_one_of_the_structures_of_the_style(style):
+    assert structure_for(style) in structures_for(style)
+    for seed in range(1, 7):
+        auto = compose(_opts(style=style, minutes=3, seed=seed))
+        names = [s.name for s in auto.sections]
+        planned = [
+            [
+                s.name
+                for s in compose(
+                    _opts(
+                        style=style, minutes=3, seed=seed, structure=structure
+                    )
+                ).sections
+            ]
+            for structure in dict.fromkeys(structures_for(style))
+        ]
+        assert names in planned
+        assert len(names) > 1
 
 
 def test_auto_structure_differs_between_edm_and_pop():

@@ -1302,6 +1302,11 @@ class ArrangerTimeline(QWidget):
             return "it is silent, so it stayed where it was"
         if not moved:
             return "it is already on the beat"
+        if anchor == clip_polish.ON_NEIGHBOUR:
+            return (
+                f"it is too short to read a beat from, so it moved "
+                f"{seconds:+.3f} s together with the part next to it"
+            )
         if anchor == clip_polish.ON_FIRST_SOUND:
             return (
                 f"it has no steady beat, so its first sound was moved "

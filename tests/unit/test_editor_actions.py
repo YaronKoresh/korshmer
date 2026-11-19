@@ -9,6 +9,7 @@ if not QApplication.instance():
     QApplication(sys.argv)
 
 from korshmer.mixins.actions.editor import EditorActionsMixin
+from korshmer.ui.widgets.material.seed_box import SeedBox
 
 
 class FakeSlider:
@@ -63,8 +64,7 @@ class Host(EditorActionsMixin):
         self.slider_quantize = FakeSlider(50)
         self.slider_human_time = FakeSlider(5)
         self.slider_human_vel = FakeSlider(12)
-        self.spin_gen_seed = QSpinBox()
-        self.spin_gen_seed.setRange(0, 99999)
+        self.spin_gen_seed = SeedBox()
         self.gen_role_boxes = {}
 
 
@@ -142,12 +142,13 @@ class TestEditorOperations:
 
 
 class TestGeneratorHelpers:
-    def test_seed_zero_picks_random_positive_seed(self, host):
+    def test_seed_zero_asks_for_a_fresh_seed_and_leaves_the_field_empty(
+        self, host
+    ):
         host.spin_gen_seed.setValue(0)
-        seed = host._generator_seed()
-        assert isinstance(seed, int)
-        assert seed > 0
-        assert host.spin_gen_seed.value() == seed
+        assert host._generator_seed() is None
+        assert host.spin_gen_seed.value() == 0
+        assert host.spin_gen_seed.text() == ""
 
     def test_seed_value_is_respected(self, host):
         host.spin_gen_seed.setValue(42)

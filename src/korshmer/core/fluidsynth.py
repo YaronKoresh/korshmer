@@ -260,6 +260,7 @@ class FluidSynth:
         l.fluid_synth_noteoff.argtypes = [c_void_p, c_int, c_int]
         l.fluid_synth_cc.argtypes = [c_void_p, c_int, c_int, c_int]
         l.fluid_synth_pitch_bend.argtypes = [c_void_p, c_int, c_int]
+        l.fluid_synth_pitch_wheel_sens.argtypes = [c_void_p, c_int, c_int]
         l.fluid_synth_program_change.argtypes = [c_void_p, c_int, c_int]
         l.fluid_synth_bank_select.argtypes = [c_void_p, c_int, c_int]
         l.fluid_synth_program_select.argtypes = [
@@ -386,6 +387,12 @@ class FluidSynth:
         channel = validate_channel(channel)
         val = validate_pitch_bend(val)
         self._lib.fluid_synth_pitch_bend(self.synth, channel, val)
+
+    def pitch_wheel_sens(self, channel, semitones):
+        channel = validate_channel(channel)
+        self._lib.fluid_synth_pitch_wheel_sens(
+            self.synth, channel, int(semitones)
+        )
 
     def program_change(self, channel, program):
         self._lib.fluid_synth_program_change(self.synth, channel, program)

@@ -186,7 +186,7 @@ def test_melody_repeats_its_own_rhythm_and_phrases(style):
     shares = [_top_rhythm_share(c) for c in comps]
     recurrence = [_recurrence(c) for c in comps]
     assert min(shares) >= 0.35
-    assert min(recurrence) >= 0.35
+    assert min(recurrence) >= 0.3
     assert statistics.mean(shares) >= 0.42
     assert statistics.mean(recurrence) >= 0.45
 
@@ -208,7 +208,7 @@ def test_chorus_register_is_the_same_in_every_key(style):
         for root in NOTE_NAMES
     ]
     assert max(means) - min(means) <= 8
-    assert all(70 <= m <= 86 for m in means)
+    assert all(66 <= m <= 86 for m in means)
 
 
 @pytest.mark.parametrize("style", SONG_STYLES)

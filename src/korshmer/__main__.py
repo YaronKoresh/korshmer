@@ -920,6 +920,7 @@ Help:
             )
             new_inst.notes = copy.deepcopy(inst.notes)
             new_inst.control_changes = copy.deepcopy(inst.control_changes)
+            new_inst.pitch_bends = copy.deepcopy(inst.pitch_bends)
             play_midi.instruments.append(new_inst)
 
         notes_count = sum(len(i.notes) for i in play_midi.instruments)

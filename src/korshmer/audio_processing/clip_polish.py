@@ -52,6 +52,11 @@ PART_STEADY_PAUSE_DB = 8.0
 PART_MIN_CONTRAST_DB = 20.0
 PART_RISE_OVER_PAUSE_DB = 8.0
 MIN_TRIM_S = 0.1
+PART_MIN_HISS_CONTRAST_DB = 6.0
+PART_HISS_FLATNESS = 0.1
+PART_TONE_SHARE_OF_HISS = 0.5
+SHORT_PART_S = 2.0
+ON_NEIGHBOUR = "nearby part"
 PART_FRAME = 1024
 
 
@@ -334,7 +339,26 @@ def _frame_levels_db(mono):
     return 20.0 * np.log10(np.maximum(levels, 10.0 ** (PART_SILENT_DB / 20.0)))
 
 
-def _sound_threshold_db(levels):
+def _frame_flatness(mono):
+    return librosa.feature.spectral_flatness(
+        y=mono, n_fft=PART_FRAME, hop_length=PART_FRAME, center=False
+    )[0]
+
+
+def _hiss_between_tones(levels, flatness, pause, loud):
+    frames = min(levels.shape[0], flatness.shape[0])
+    levels, flatness = levels[:frames], flatness[:frames]
+    quiet = flatness[levels <= pause]
+    sounding = flatness[levels >= loud - PART_RISE_OVER_PAUSE_DB]
+    if quiet.size == 0 or sounding.size == 0:
+        return False
+    hiss = float(np.median(quiet))
+    return hiss >= PART_HISS_FLATNESS and float(np.median(sounding)) <= (
+        hiss * PART_TONE_SHARE_OF_HISS
+    )
+
+
+def _sound_threshold_db(levels, flatness=None):
     loud = float(np.percentile(levels, PART_LOUD_PERCENTILE))
     lowest = loud - PART_BELOW_LOUDEST_DB
     pauses = np.maximum(
@@ -342,9 +366,18 @@ def _sound_threshold_db(levels):
     )
     floor = float(np.max(pauses))
     steady = floor - float(np.min(pauses)) <= PART_STEADY_PAUSE_DB
-    if not steady or loud - floor < PART_MIN_CONTRAST_DB:
+    contrast = loud - floor
+    if not steady:
         return lowest
-    return floor + min(PART_RISE_OVER_PAUSE_DB, (loud - floor) / 2.0)
+    if contrast >= PART_MIN_CONTRAST_DB:
+        return floor + min(PART_RISE_OVER_PAUSE_DB, contrast / 2.0)
+    if (
+        flatness is not None
+        and contrast >= PART_MIN_HISS_CONTRAST_DB
+        and _hiss_between_tones(levels, flatness, floor, loud)
+    ):
+        return floor + contrast / 2.0
+    return lowest
 
 
 def _sound_spans(heard, frame):
@@ -365,7 +398,7 @@ def clip_parts(data, sample_rate, offset=0.0, duration=None):
     levels = _frame_levels_db(mono)
     if float(levels.max()) <= 20.0 * np.log10(SILENCE_LEVEL):
         return []
-    heard = levels > _sound_threshold_db(levels)
+    heard = levels > _sound_threshold_db(levels, _frame_flatness(mono))
     whole = mono.shape[0] / sample_rate
     return [
         (
@@ -391,6 +424,19 @@ def _fix_trimmed(clip, span, length, whole, options):
     result = fix_clip(trimmed, *options)
     result["trim"] = (trimmed.start, trimmed.start + end - begin)
     return result
+
+
+def _short_parts_follow_neighbours(parts):
+    steady = [part for part in parts if part.get("anchor") == ON_PULSE]
+    for part in parts:
+        short = part["seconds"] < SHORT_PART_S
+        if not steady or not short or part.get("anchor") != ON_FIRST_SOUND:
+            continue
+        nearest = min(
+            steady, key=lambda other: abs(other["start"] - part["start"])
+        )
+        part["shift"] = nearest["shift"]
+        part["anchor"] = ON_NEIGHBOUR
 
 
 def fix_clip_parts(
@@ -453,6 +499,7 @@ def fix_clip_parts(
                 notes,
             )
             fixed["start"] = piece.start
+            fixed["seconds"] = end - begin
             made.extend(fixed["made"])
             if fixed["path"] != cut:
                 _remove([cut])
@@ -461,6 +508,7 @@ def fix_clip_parts(
     except Exception:
         _remove(made)
         raise
+    _short_parts_follow_neighbours(parts)
     return {
         "steps": tuple(steps),
         "path": clip.path,

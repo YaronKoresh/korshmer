@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import pretty_midi
 
 from korshmer.constants import GRID_RESOLUTIONS, NOTE_NAMES, SCALES
-from korshmer.midi_generation import genre_feel, hooks
+from korshmer.midi_generation import genre_feel, hooks, moods
 from korshmer.utils.tempo import validate_bpm
 
 PROGRESSION_PRESETS = {
@@ -39,7 +39,7 @@ SONG_STRUCTURES = {
     "Loop (8 bars)": [("Loop", 0.8)],
 }
 
-MELODY_MOODS = ["Uplifting", "Melancholic", "Energetic", "Dreamy"]
+MELODY_MOODS = list(moods.MOOD_FEELS)
 
 _SECTION_KINDS = {
     "Intro": "intro",
@@ -191,8 +191,22 @@ def trim_line(inst):
 _FILL_START = 8
 _FILL_WIPES = {
     "toms": (_KICK, _SNARE, _CLAP, _HAT, _OPEN_HAT),
+    "toms_down": (_KICK, _SNARE, _CLAP, _HAT, _OPEN_HAT),
     "roll": (_SNARE, _CLAP),
+    "push": (_SNARE, _CLAP),
 }
+_FILL_TOMS_DOWN = (
+    (8, _SNARE),
+    (10, genre_feel.HIGH_TOM),
+    (11, genre_feel.HIGH_TOM),
+    (12, genre_feel.MID_TOM),
+    (13, genre_feel.MID_TOM),
+    (14, genre_feel.LOW_TOM),
+    (15, genre_feel.LOW_TOM),
+)
+_FILL_PUSH = (10, 13, 14, 15)
+_FILL_RIM = (13, 14, 15)
+_FILL_TRIPLETS = 6
 _FILL_TOMS = (
     (8, genre_feel.HIGH_TOM),
     (10, genre_feel.HIGH_TOM),
@@ -219,6 +233,23 @@ def _fill_hits(kind):
         ]
     if kind == "hats":
         return [(12 + k * 0.5, _HAT, 50 + k * 8, 0.5) for k in range(8)]
+    if kind == "toms_down":
+        return [
+            (s, p, 86 + i * 5, 1.0) for i, (s, p) in enumerate(_FILL_TOMS_DOWN)
+        ]
+    if kind == "push":
+        return [(s, _SNARE, 82 + i * 8, 1.0) for i, s in enumerate(_FILL_PUSH)]
+    if kind == "rim":
+        return [
+            (s, genre_feel.SIDE_STICK, 60 + i * 9, 1.0)
+            for i, s in enumerate(_FILL_RIM)
+        ]
+    if kind == "triplets":
+        span = 4 / _FILL_TRIPLETS
+        return [
+            (12 + k * span, _HAT, 56 + k * 8, span)
+            for k in range(_FILL_TRIPLETS)
+        ]
     return []
 
 
@@ -443,6 +474,106 @@ def _bass_sub(bar):
     return hits
 
 
+def _bass_octaves(bar):
+    root = bar.pitch()
+    pitches = [root, root + 12] * 3 + [root, bar.approach()]
+    velocities = (100, 82, 92, 82, 98, 82, 92, 86)
+    return [(2 * k, 2, p, velocities[k]) for k, p in enumerate(pitches)]
+
+
+def _bass_push(bar):
+    root = bar.pitch()
+    return [
+        (0, 2, root, 100),
+        (3, 1, root, 84),
+        (4, 2, root, 92),
+        (7, 1, bar.pitch(4), 84),
+        (8, 2, root, 98),
+        (11, 1, root, 84),
+        (12, 2, bar.pitch(4), 90),
+        (14, 2, bar.approach(), 86),
+    ]
+
+
+def _bass_gallop(bar):
+    root = bar.pitch()
+    hits = []
+    for beat in range(4):
+        last = bar.approach() if beat == 3 else root
+        hits.append((beat * 4, 2, root, 104 if beat % 2 == 0 else 96))
+        hits.append((beat * 4 + 2, 1, root, 82))
+        hits.append((beat * 4 + 3, 1, last, 86))
+    return hits
+
+
+def _bass_chug(bar):
+    root = bar.pitch()
+    fifth = bar.pitch(4)
+    pitches = [root, root, root, fifth, root, root, fifth, bar.approach()]
+    velocities = (106, 80, 90, 86, 100, 80, 90, 86)
+    return [(2 * k, 2, p, velocities[k]) for k, p in enumerate(pitches)]
+
+
+def _bass_lazy(bar):
+    middle = bar.pitch(4) if bar.rng.random() < 0.5 else bar.pitch()
+    return [
+        (0, 6, bar.pitch(), 100),
+        (6, 6, middle, 86),
+        (12, 4, bar.approach(), 84),
+    ]
+
+
+def _bass_drop(bar):
+    last = bar.approach() if bar.following != bar.degree else bar.pitch()
+    return [
+        (0, 7, bar.pitch(), 108),
+        (7, 3, bar.pitch() + 12, 92),
+        (10, 6, last, 98),
+    ]
+
+
+def _bass_stutter(bar):
+    last = bar.approach() if bar.following != bar.degree else bar.pitch()
+    return [
+        (0, 3, bar.pitch(), 108),
+        (3, 5, bar.pitch(), 96),
+        (10, 6, last, 100),
+    ]
+
+
+def _bass_two(bar):
+    hits = [(0, 8, bar.pitch(), 96)]
+    if bar.rng.random() < 0.5:
+        hits.append((8, 8, bar.pitch(4), 86))
+    else:
+        hits.append((8, 4, bar.pitch(4), 86))
+        hits.append((12, 4, bar.approach(), 84))
+    return hits
+
+
+def _bass_skip(bar):
+    root = bar.pitch()
+    return [
+        (2, 1, root, 94),
+        (3, 1, root, 84),
+        (6, 2, root + 12, 92),
+        (10, 1, root, 94),
+        (11, 1, root, 84),
+        (14, 2, root, 98),
+    ]
+
+
+def _bass_bounce(bar):
+    root = bar.pitch()
+    return [
+        (2, 2, root, 95),
+        (6, 2, root + 12, 90),
+        (10, 2, root, 95),
+        (14, 1, root + 12, 92),
+        (15, 1, root, 86),
+    ]
+
+
 def _bass_walking(bar):
     pitches = (
         bar.pitch(),
@@ -480,6 +611,38 @@ _BASS_BARS = {
     "sub": _bass_sub,
     "walking": _bass_walking,
     "riff": _bass_riff,
+    "octaves": _bass_octaves,
+    "push": _bass_push,
+    "gallop": _bass_gallop,
+    "chug": _bass_chug,
+    "lazy": _bass_lazy,
+    "drop": _bass_drop,
+    "stutter": _bass_stutter,
+    "two": _bass_two,
+    "skip": _bass_skip,
+    "bounce": _bass_bounce,
+}
+BASS_BUSYNESS = {
+    "sparse": 2,
+    "two": 2,
+    "lazy": 3,
+    "drop": 3,
+    "stutter": 3,
+    "808": 3,
+    "sub": 3,
+    "walking": 4,
+    "offbeat": 4,
+    "syncopated": 5,
+    "bounce": 5,
+    "skip": 6,
+    "eighths": 8,
+    "driving": 8,
+    "octaves": 8,
+    "push": 8,
+    "chug": 8,
+    "riff": 8,
+    "gallop": 12,
+    "pump": 12,
 }
 _SUB_STEPS = (0, 6, 10)
 _SUB_SPACING = 4
@@ -609,7 +772,7 @@ def _shell_voicing(ctx, degree, octave, previous):
 
 def _stack_voicing(ctx, degree, octave, seventh):
     floor = 12 * (octave + 1) - _STACK_DROP
-    steps = (0, 2, 4, 6) if seventh else (0, 2, 4)
+    steps = (0, 2, 6) if seventh else (0, 2, 4)
     chord = _rooted(ctx, degree, octave, steps, floor)
     chord.append(chord[0] + 12)
     return sorted(chord)
@@ -662,20 +825,45 @@ def generate_chords(
     return inst
 
 
-def generate_pad(ctx, seed=None, bars=4, start_bar=0, energy=1.0, octave=3):
+_PAD_HOLD = 1.02
+
+
+def _pad_tones(ctx, degree, octave, shape):
+    root, third, fifth = ctx.triad(degree, octave)
+    if shape == "open":
+        return [root, fifth, third + 12]
+    if shape == "octave":
+        return [root, third, fifth, root + 12]
+    if shape == "low":
+        return [root - 12, root, third, fifth]
+    return [root, third, fifth]
+
+
+def generate_pad(
+    ctx,
+    seed=None,
+    bars=4,
+    start_bar=0,
+    energy=1.0,
+    octave=3,
+    shape="triad",
+):
     rng = _rng(seed)
     inst = _new_inst("Pad", 89)
     bar = ctx.bar
+    strikes = (0.0, 0.5) if shape == "pulse" else (0.0,)
     for b in range(bars):
         t0 = (start_bar + b) * bar
-        for p in ctx.triad(ctx.chord_at(start_bar + b), octave):
-            _note(
-                inst,
-                p,
-                t0,
-                t0 + bar * 1.02,
-                55 + int(25 * energy) + rng.randint(-3, 3),
-            )
+        tones = _pad_tones(ctx, ctx.chord_at(start_bar + b), octave, shape)
+        for at, edge in zip(strikes, [*strikes[1:], _PAD_HOLD], strict=True):
+            for p in tones:
+                _note(
+                    inst,
+                    p,
+                    t0 + at * bar,
+                    t0 + edge * bar,
+                    55 + int(25 * energy) + rng.randint(-3, 3),
+                )
     return inst
 
 
@@ -715,12 +903,6 @@ def generate_arp(
     return inst
 
 
-_MOOD_GATE = {
-    "Uplifting": 1.0,
-    "Melancholic": 1.0,
-    "Energetic": 0.85,
-    "Dreamy": 1.1,
-}
 _CADENCE_GATE = 0.95
 _LEAD_OCTAVE = 4
 _LEAD_SPAN = 6
@@ -729,6 +911,10 @@ _KIND_DROP = {"verse": 8, "intro": 3, "outro": 3, "break": 6, "bridge": 6}
 _CENTER_PULL = 0.3
 _DIATONIC = 7
 _DEGREE_REACH = 3
+_PLAN_STRETCH = 8
+_SNAP_REACH = (0, 1, -1, 2, -2, 3, -3)
+_LEAD_FLOOR = 60
+_LEAD_ROOF = 77
 
 
 @dataclass
@@ -757,12 +943,14 @@ class _Lead:
         tones = {(chord + step) % n for step in (0, 2, 4)}
         near = [
             degree + delta
-            for delta in (0, 1, -1, 2, -2)
+            for delta in _SNAP_REACH
             if (degree + delta) % n in tones
         ]
-        if self.snap_inside:
+        if not near:
+            return degree
+        if self.snap_inside or not self.low <= near[0] <= self.high:
             near = [d for d in near if self.low <= d <= self.high] or near
-        return self.clamp(near[0]) if near else degree
+        return self.clamp(near[0])
 
     def place(self, chord, steps, previous):
         n = len(self.ctx.intervals)
@@ -793,12 +981,27 @@ class _Lead:
         return min(options, key=lambda d: abs(d - previous))
 
 
-def _lead_velocity(rng, energy, onset, length, in_phrase):
+def _lead_velocity(rng, energy, onset, length, in_phrase, mood=0):
     accent = 8 if onset in hooks.STRONG_ONSETS else 0
     if onset % 4 and length >= 2:
         accent += 5
     arc = 6 if in_phrase in (1, 2) else 0
-    return 80 + int(15 * energy) + accent + arc - rng.randint(0, 6)
+    return 80 + mood + int(15 * energy) + accent + arc - rng.randint(0, 6)
+
+
+def mood_register(mood, style):
+    low, high = genre_feel.feel_for(style).hook.room
+    return max(low, min(high, moods.mood_for(mood).register))
+
+
+def lead_register(top, drop, lift, shift):
+    plain = min(top + lift, _LEAD_CEILING) - drop
+    if shift > 0:
+        shifted = min(top + shift, max(top, _LEAD_ROOF))
+    else:
+        shifted = top + shift
+    register = min(shifted + lift, _LEAD_CEILING) - drop
+    return max(register, min(plain, _LEAD_FLOOR))
 
 
 def _lead_for(ctx, register, snap_inside=False):
@@ -822,21 +1025,36 @@ def generate_melody(
     style="Pop",
     final=False,
     lift=0,
+    phrases=None,
+    turn=0,
+    register_mood=None,
 ):
     rng = _rng(seed)
     feel = genre_feel.feel_for(style)
+    mood_feel = moods.mood_for(mood)
     if hook is None:
         hook = hooks.make_hook(rng, style, mood)
-    gate = min(1.0, hook.gate * _MOOD_GATE.get(mood, 1.0))
+    gate = min(1.0, hook.gate * mood_feel.gate)
     inst = _new_inst("Melody", 80)
     bar = ctx.bar
     unit = bar / hooks.STEPS
-    register = hook.register - _KIND_DROP.get(kind, 0) + lift
-    lead = _lead_for(ctx, min(register, _LEAD_CEILING), feel.lead_snaps_inside)
+    register = lead_register(
+        hook.register,
+        _KIND_DROP.get(kind, 0),
+        lift,
+        turn + mood_register(register_mood or mood, style),
+    )
+    lead = _lead_for(ctx, register, feel.lead_snaps_inside)
     previous = lead.mid
     settled = {}
-    for b, role in enumerate(hooks.bar_roles(kind, bars, final, feel.phrases)):
-        plan = hooks.plan_bar(hook, role, rng)
+    plans = {}
+    for b, role in enumerate(
+        hooks.bar_roles(kind, bars, final, phrases or feel.phrases)
+    ):
+        stretch = (role, b // _PLAN_STRETCH)
+        if stretch not in plans:
+            plans[stretch] = hooks.plan_bar(hook, role, rng)
+        plan = plans[stretch]
         t0 = (start_bar + b) * bar
         chord = ctx.chord_at(start_bar + b)
         steps = [s for _, _, s in plan if s is not None]
@@ -865,7 +1083,12 @@ def generate_melody(
                 t0 + onset * unit,
                 t0 + (onset + length * legato) * unit,
                 _lead_velocity(
-                    rng, energy, onset, length, b % hooks.PHRASE_BARS
+                    rng,
+                    energy,
+                    onset,
+                    length,
+                    b % hooks.PHRASE_BARS,
+                    mood_feel.velocity,
                 ),
             )
     return inst

@@ -188,14 +188,33 @@ class TestMergeByInstrument:
 
         assert [(c.number, c.value) for c in changes] == [(11, 100), (64, 127)]
 
-    def test_pitch_bends_follow_the_first_source_that_has_them(self):
+    def test_pitch_bends_follow_the_source_whose_notes_they_do_not_retune(
+        self,
+    ):
+        a = _inst(0, notes=[(60, 0.0, 0.5, 90)])
+        b = _inst(0, notes=[(62, 1.0, 1.5, 90)])
+        b.pitch_bends.append(pretty_midi.PitchBend(1000, 1.1))
+        b.pitch_bends.append(pretty_midi.PitchBend(0, 1.4))
+
+        (merged,) = merge_by_instrument([a, b])
+
+        assert [(p.pitch, p.time) for p in merged.pitch_bends] == [
+            (1000, 1.1),
+            (0, 1.4),
+        ]
+
+    def test_a_source_with_bends_stays_apart_from_notes_it_would_retune(self):
         a = _inst(0, notes=[(60, 0.0, 0.5, 90)])
         b = _inst(0, notes=[(62, 0.0, 0.5, 90)])
         b.pitch_bends.append(pretty_midi.PitchBend(1000, 0.1))
 
-        bends = merge_by_instrument([a, b])[0].pitch_bends
+        tracks = merge_by_instrument([a, b])
 
-        assert [(p.pitch, p.time) for p in bends] == [(1000, 0.1)]
+        assert [[n.pitch for n in t.notes] for t in tracks] == [[60], [62]]
+        assert [[(p.pitch, p.time) for p in t.pitch_bends] for t in tracks] == [
+            [],
+            [(1000, 0.1)],
+        ]
 
     def test_a_kept_name_survives_only_when_every_source_has_it(self):
         voice = _inst(52, name="Vocals", notes=[(60, 0.0, 0.5, 90)])

@@ -38,6 +38,7 @@ from korshmer.constants import DATA_DIR
 from korshmer.core.fluidsynth import FluidSynth
 from korshmer.midi import generate_piano_roll_image
 from korshmer.midi.event_processor import MidiEvent, MidiEventQueue
+from korshmer.utils.bend_range import bend_range_of
 
 _PROC_DIR = os.path.join(DATA_DIR, "Processed_Audio")
 
@@ -337,6 +338,39 @@ def level_render(audio):
     return audio
 
 
+PITCH_BEND_CENTER = 8192
+PITCH_BEND_EVENT = "pitchbend"
+
+
+def _bends_own_their_channel(instrument, batch):
+    if not instrument.pitch_bends:
+        return False
+    if not instrument.is_drum:
+        return True
+    return sum(1 for other in batch if other.is_drum) == 1
+
+
+def _with_pitch_bends(note_events, bends):
+    if not bends:
+        return note_events
+    last = note_events[-1][0]
+    waiting = sorted((b for b in bends if b[0] <= last), key=lambda b: b[0])
+    merged = []
+    at = 0
+    for event in note_events:
+        while at < len(waiting) and (
+            waiting[at][0] < event[0]
+            or (waiting[at][0] == event[0] and event[1] == "noteon")
+        ):
+            time, channel, value = waiting[at]
+            merged.append((time, PITCH_BEND_EVENT, channel, value, 0, -1))
+            at += 1
+        merged.append(event)
+    for time, channel, value in waiting[at:]:
+        merged.append((time, PITCH_BEND_EVENT, channel, value, 0, -1))
+    return merged
+
+
 def _render_with_guitar_amps(instruments, render_batch, sr):
     from korshmer.audio_processing import guitar_amp
 
@@ -404,6 +438,7 @@ def render_midi_to_wav(
                 melodic_ptr = 0
                 note_id = 0
                 events = MidiEventQueue()
+                bends = []
 
                 for inst in instruments_batch:
                     is_drum = inst.is_drum
@@ -424,6 +459,12 @@ def render_midi_to_wav(
                     reverb, chorus = effect_sends(program, is_drum)
                     fs.cc(channel, CC_REVERB_SEND, reverb)
                     fs.cc(channel, CC_CHORUS_SEND, chorus)
+                    if _bends_own_their_channel(inst, instruments_batch):
+                        fs.pitch_wheel_sens(channel, bend_range_of(inst))
+                        bends.extend(
+                            (bend.time, channel, bend.pitch + PITCH_BEND_CENTER)
+                            for bend in inst.pitch_bends
+                        )
                     for note in inst.notes:
                         events.push(
                             MidiEvent(
@@ -449,7 +490,9 @@ def render_midi_to_wav(
 
                 if not len(events):
                     return None
-                ordered_events = events.sorted_events()
+                ordered_events = _with_pitch_bends(
+                    events.sorted_events(), bends
+                )
 
                 audio_left = []
                 audio_right = []
@@ -476,7 +519,9 @@ def render_midi_to_wav(
                         audio_right.append(r)
                         rendered += samples_needed
 
-                    if etype == "noteon":
+                    if etype == PITCH_BEND_EVENT:
+                        fs.pitch_bend(chan, note)
+                    elif etype == "noteon":
                         if active_notes >= MAX_SIMULTANEOUS_NOTES:
                             dropped_ids.add(nid)
                             dropped_count += 1

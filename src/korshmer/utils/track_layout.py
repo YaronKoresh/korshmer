@@ -1,5 +1,6 @@
 import pretty_midi
 
+from korshmer.utils.bend_range import bend_range_of, bends_clash
 from korshmer.utils.instrument_names import sanitize_instrument_name
 
 DRUMS_NAME = "Drums"
@@ -213,13 +214,51 @@ def _merged_controls(sources):
 
 
 def _merged_bends(sources):
+    merged = [
+        pretty_midi.PitchBend(bend.pitch, bend.time)
+        for source in sources
+        for bend in source.pitch_bends
+    ]
+    merged.sort(key=lambda b: b.time)
+    return merged
+
+
+def _spans(inst):
+    return [(n.start, n.end) for n in inst.notes]
+
+
+def _bend_points(inst):
+    return [(b.time, b.pitch) for b in inst.pitch_bends]
+
+
+def _bends_allow_sharing(inst, others):
+    bent = [other for other in others if other.pitch_bends]
+    if not inst.pitch_bends and not bent:
+        return True
+    if inst.pitch_bends and any(
+        bend_range_of(other) != bend_range_of(inst) for other in bent
+    ):
+        return False
+    return not any(
+        bends_clash(
+            _spans(inst), _bend_points(inst), _spans(other), _bend_points(other)
+        )
+        for other in others
+    )
+
+
+def _sharing_groups(sources):
+    if not any(source.pitch_bends for source in sources):
+        return [sources]
+    groups = []
     for source in sources:
-        if source.pitch_bends:
-            return [
-                pretty_midi.PitchBend(bend.pitch, bend.time)
-                for bend in source.pitch_bends
-            ]
-    return []
+        for group in groups:
+            if _bends_allow_sharing(source, group):
+                group.append(source)
+                break
+        else:
+            groups.append([source])
+    return groups
 
 
 def _track_name(sources, is_drum, program, keep_names, keep_shared_names):
@@ -233,29 +272,38 @@ def _track_name(sources, is_drum, program, keep_names, keep_shared_names):
     return instrument_name(program, is_drum)
 
 
+def _merged_track(sources, is_drum, program, keep_names, keep_shared_names):
+    if is_drum:
+        program = max(sources, key=lambda s: len(s.notes)).program
+    track = pretty_midi.Instrument(
+        program=int(program),
+        is_drum=is_drum,
+        name=_track_name(
+            sources, is_drum, program, keep_names, keep_shared_names
+        ),
+    )
+    notes = [
+        pretty_midi.Note(n.velocity, n.pitch, n.start, n.end)
+        for source in sources
+        for n in source.notes
+    ]
+    track.notes = _tidy_notes(notes) if len(sources) > 1 else notes
+    track.control_changes = _merged_controls(sources)
+    track.pitch_bends = _merged_bends(sources)
+    return track
+
+
 def merge_by_instrument(instruments, keep_names=(), keep_shared_names=False):
     groups = {}
     for inst in instruments:
         if inst.notes:
             groups.setdefault(_instrument_key(inst), []).append(inst)
     tracks = []
-    for (is_drum, program), sources in groups.items():
-        if is_drum:
-            program = max(sources, key=lambda s: len(s.notes)).program
-        track = pretty_midi.Instrument(
-            program=int(program),
-            is_drum=is_drum,
-            name=_track_name(
-                sources, is_drum, program, keep_names, keep_shared_names
-            ),
-        )
-        notes = [
-            pretty_midi.Note(n.velocity, n.pitch, n.start, n.end)
-            for source in sources
-            for n in source.notes
-        ]
-        track.notes = _tidy_notes(notes) if len(sources) > 1 else notes
-        track.control_changes = _merged_controls(sources)
-        track.pitch_bends = _merged_bends(sources)
-        tracks.append(track)
+    for (is_drum, program), same_sound in groups.items():
+        for sources in _sharing_groups(same_sound):
+            tracks.append(
+                _merged_track(
+                    sources, is_drum, program, keep_names, keep_shared_names
+                )
+            )
     return tracks
