@@ -214,10 +214,10 @@ def plan_bar(hook, role, rng):
     return _answer(notes, role)
 
 
-def bar_roles(kind, bars, final=False):
+def bar_roles(kind, bars, final=False, phrases=None):
     if bars < 1:
         return []
-    phrases = PHRASES.get(kind, PHRASES["chorus"])
+    phrases = (phrases or {}).get(kind) or PHRASES.get(kind, PHRASES["chorus"])
     roles = [
         phrases[(b // PHRASE_BARS) % len(phrases)][b % PHRASE_BARS]
         for b in range(bars)

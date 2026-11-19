@@ -306,7 +306,7 @@ HELP_TEXTS = {
     "clip": "Audio clip (e.g. separated vocals) placed on the editor timeline. Drag to move, double-click to mute.",
     "midi_generator": "One generator for whole songs, layers and continuations. Sections, roles and the length in minutes all come from the same seed.",
     "generator_mode": "New song builds from nothing. Continue editor starts after the end of the editor and extends its melody. Layer over editor adds new tracks on top of the song in the editor: its length, key, chords and parts (intro, verse, chorus, break) are read from the notes already there. A song that already has drums gets no new drum track. The form of the song and how closely a layer follows the chords of the editor are chosen automatically.",
-    "generator_minutes": "Wanted length. The sections fill it exactly, so a longer length means more sections, not a slower tempo.",
+    "generator_minutes": "Wanted length in minutes and seconds. Press one of the quick lengths, use the arrows for 15-second steps, or type 2:30, 2.5 or 90s. The sections fill it exactly, so a longer length means more sections, not a slower tempo.",
     "generator_roles": "Which instruments are generated. Each role lands on its own editor lane, and every section keeps at least two of them playing.",
     "seed": "Same seed gives the same result. 0 picks a fresh random seed every time.",
     "lane": "Each lane is one instrument track. Click a lane to make it the target for new notes.",

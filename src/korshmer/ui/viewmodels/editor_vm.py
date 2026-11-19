@@ -337,6 +337,7 @@ class ClipModel:
         "color",
         "waveform",
         "source",
+        "tempo_base",
         "offset",
         "length",
     )
@@ -370,6 +371,7 @@ class ClipModel:
         )
         self.waveform = []
         self.source = None
+        self.tempo_base = None
         self.offset = max(0.0, float(offset))
         whole = self.offset + self.duration
         self.length = max(whole, float(length)) if length else whole
@@ -420,6 +422,7 @@ class ClipModel:
         )
         clone.waveform = self.waveform
         clone.source = self.source
+        clone.tempo_base = self.tempo_base
         return clone
 
     def to_dict(self):
@@ -435,6 +438,7 @@ class ClipModel:
             "kind": self.kind,
             "color": self.color,
             "source": list(self.source) if self.source else None,
+            "tempo_base": list(self.tempo_base) if self.tempo_base else None,
             "offset": self.offset,
             "length": self.length,
         }
@@ -443,6 +447,7 @@ class ClipModel:
     def from_dict(cls, data):
         clip = cls._from_dict(data)
         clip.source = _clip_source(data.get("source"))
+        clip.tempo_base = _tempo_base(data.get("tempo_base"))
         return clip
 
     @classmethod
@@ -526,6 +531,19 @@ def _stretched_state(state, factor):
         tempo_map.stretched(factor) if tempo_map is not None else None,
         _stretched_normalized(normalized, factor),
     )
+
+
+def _tempo_base(value):
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    path, bpm = value
+    if not isinstance(path, str) or not path:
+        return None
+    if isinstance(bpm, bool) or not isinstance(bpm, (int, float)):
+        return None
+    if not math.isfinite(bpm) or bpm <= 0:
+        return None
+    return (path, float(bpm))
 
 
 def _clip_source(value):
@@ -1203,7 +1221,44 @@ class EditorModel:
                 used.add(clip.path)
                 if clip.source is not None:
                     used.add(clip.source[0])
+                if clip.tempo_base is not None:
+                    used.add(clip.tempo_base[0])
         return used
+
+    def clips_to_follow_tempo(self, earlier_bpm):
+        if self.tempo_map is not None or self.normalized is not None:
+            return []
+        waiting = []
+        for clip in self.clips:
+            if clip.source is not None:
+                continue
+            if clip.tempo_base is None:
+                recorded = (clip.path, float(earlier_bpm))
+                for earlier in self._earlier_copies(clip.id):
+                    if earlier.path == clip.path and earlier.tempo_base is None:
+                        earlier.tempo_base = recorded
+                clip.tempo_base = recorded
+            waiting.append(clip)
+        return waiting
+
+    def _earlier_copies(self, clip_id):
+        return [
+            clip
+            for state in self._undo_stack + self._redo_stack
+            for clip in state[2]
+            if clip.id == clip_id
+        ]
+
+    def retune_clip(self, clip_id, path, length):
+        current = self.clip_by_id(clip_id)
+        if current is None or current.tempo_base is None:
+            return False
+        for clip in [current, *self._earlier_copies(clip_id)]:
+            if clip.tempo_base == current.tempo_base:
+                clip.path = str(path)
+                clip.rescale(length)
+                clip.waveform = []
+        return True
 
     def snapshot(self):
         self._undo_stack.append(self._capture())

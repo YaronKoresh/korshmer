@@ -15,9 +15,9 @@ from korshmer.utils.tempo import validate_bpm
 
 
 def _layers_dir():
-    out_dir = os.path.join(DATA_DIR, "Processed_MIDI")
-    os.makedirs(out_dir, exist_ok=True)
-    return out_dir
+    from korshmer.project_management.song_folder import midi_folder
+
+    return midi_folder(DATA_DIR)
 
 
 class EditorActionsMixin:

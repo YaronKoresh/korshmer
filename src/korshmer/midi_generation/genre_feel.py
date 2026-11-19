@@ -43,6 +43,15 @@ class GenreFeel:
     stab: bool = False
     riff: bool = False
     arp_rates: tuple = ("1/8", "1/16")
+    accents: dict = field(default_factory=dict)
+    hat_rolls: tuple = ()
+    roll_chance: float = 0.0
+    bass_floor: int = 33
+    bass_on_kicks: bool = False
+    bass_jump: float = 0.0
+    home_modes: tuple = ()
+    phrases: dict = field(default_factory=dict)
+    lead_snaps_inside: bool = False
 
 
 FEELS = {
@@ -336,79 +345,125 @@ FEELS = {
     "Phonk": GenreFeel(
         grooves=(
             {
-                KICK: [0, 3, 6, 10, 12],
-                CLAP: [4, 12],
-                HAT: _SIXTEENTHS,
-                OPEN_HAT: [2, 10],
+                KICK: [0, 6, 10],
+                CLAP: [8],
+                HAT: [0, 2, 4, 6, 8, 10, 12],
+                OPEN_HAT: [14],
             },
             {
-                KICK: [0, 3, 8, 11, 14],
-                CLAP: [4, 12],
-                SNARE: [12],
-                HAT: _SIXTEENTHS,
-                OPEN_HAT: [6, 14],
+                KICK: [0, 3, 10],
+                CLAP: [8],
+                SNARE: [8],
+                HAT: _EVEN,
             },
             {
-                KICK: [0, 2, 6, 8, 10, 14],
-                CLAP: [4, 12],
-                HAT: _SIXTEENTHS,
+                KICK: [0, 7, 11],
+                CLAP: [8],
+                HAT: [0, 2, 3, 4, 6, 8, 10, 11, 12, 14],
+                OPEN_HAT: [6],
             },
         ),
         swing=0.0,
-        progressions=((5, 3, 0, 4), (5, 4, 5, 3), (5, 5, 3, 4)),
-        minor_progressions=((0, 0, 5, 6), (0, 5, 3, 6), (0, 6, 5, 4)),
-        bass=("808", "driving", "808", "syncopated"),
-        chord_hits=([0.0], [0.0, 0.5], [0.0, 0.375, 0.75]),
+        progressions=((0, 0, 5, 6), (0, 0, 0, 5), (0, 5, 0, 6)),
+        minor_progressions=(
+            (0, 0, 5, 6),
+            (0, 0, 0, 5),
+            (0, 0, 3, 0),
+            (0, 5, 0, 6),
+        ),
+        bass=("sub",),
+        chord_hits=([0.0], [0.0], [0.0, 0.75]),
         hook=HookStyle(
             rhythms=(
                 (
-                    (0, 2),
-                    (2, 2),
-                    (4, 1),
-                    (6, 2),
-                    (8, 2),
-                    (10, 2),
-                    (12, 1),
-                    (14, 2),
+                    (0, 1),
+                    (2, 1),
+                    (3, 1),
+                    (6, 1),
+                    (8, 1),
+                    (10, 1),
+                    (11, 1),
+                    (14, 1),
                 ),
+                ((0, 2), (3, 2), (6, 2), (8, 2), (11, 2), (14, 1), (15, 1)),
                 (
                     (0, 1),
                     (2, 1),
-                    (3, 2),
-                    (6, 2),
-                    (8, 1),
-                    (10, 1),
-                    (11, 2),
-                    (14, 2),
-                ),
-                ((0, 3), (3, 3), (6, 2), (8, 3), (11, 3), (14, 2)),
-                (
-                    (0, 2),
-                    (3, 1),
-                    (4, 2),
+                    (4, 1),
+                    (6, 1),
                     (7, 1),
-                    (8, 2),
-                    (11, 1),
-                    (12, 2),
+                    (10, 1),
+                    (12, 1),
                     (15, 1),
                 ),
+                (
+                    (0, 1),
+                    (3, 1),
+                    (4, 1),
+                    (7, 1),
+                    (8, 1),
+                    (11, 1),
+                    (12, 1),
+                    (14, 1),
+                ),
+                (
+                    (0, 1),
+                    (1, 1),
+                    (3, 1),
+                    (6, 1),
+                    (8, 1),
+                    (9, 1),
+                    (11, 1),
+                    (14, 1),
+                ),
             ),
-            repeat=0.5,
-            span=(1, 3),
-            leaps=(3, 5),
-            gate=0.5,
-            register=76,
+            repeat=0.45,
+            span=(2, 4),
+            leaps=(2, 3),
+            gate=0.8,
+            register=64,
         ),
-        arp_rates=("1/16", "1/8"),
-        seventh=0.1,
+        arp_rates=("1/8", "1/8"),
+        seventh=0.0,
+        power_chords=True,
         drum_vel=1.12,
-        ghosts={KICK: [7, 15]},
         fill="hats",
         crash=True,
         bass_gate=0.97,
-        chord_gate=0.8,
-        voicing="open",
-        stab=True,
+        chord_gate=0.95,
+        accents={KICK: 112, CLAP: 108, SNARE: 104},
+        hat_rolls=(
+            (14, 2, 4),
+            (6, 2, 4),
+            (12, 2, 3),
+            (10, 2, 3),
+            (12, 4, 6),
+            (4, 2, 3),
+        ),
+        roll_chance=0.6,
+        bass_floor=32,
+        bass_on_kicks=True,
+        bass_jump=0.3,
+        home_modes=("Minor", "Phrygian"),
+        lead_snaps_inside=True,
+        phrases={
+            "chorus": (
+                ("hook", "hook", "hook", "vary"),
+                ("hook", "hook", "lift", "vary"),
+            ),
+            "verse": (
+                ("hook", "hook", "hook", "vary"),
+                ("hook", "skeleton", "hook", "vary"),
+            ),
+            "intro": (
+                ("hook", "hook", "hook", "vary"),
+                ("hook", "hook", "hook", "vary"),
+            ),
+            "outro": (
+                ("hook", "hook", "hook", "vary"),
+                ("hook", "hook", "hook", "vary"),
+            ),
+        },
     ),
 }
 DEFAULT_FEEL = "Pop"

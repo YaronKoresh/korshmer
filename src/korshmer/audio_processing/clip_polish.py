@@ -28,7 +28,7 @@ NOISE = "noise"
 QUALITY = "quality"
 ALIGN = "align"
 EARLIER_TAGS = re.compile(
-    rf"(_({NOISE_TAG}|{QUALITY_TAG}|{TEMPO_TAG})(_[0-9a-f]{{8}})?)+$"
+    rf"(_({NOISE_TAG}|{QUALITY_TAG}|{TEMPO_TAG}[0-9.]*)(_[0-9a-f]{{8}})?)+$"
 )
 NOISE_STAGE = "Removing background noise"
 QUALITY_STAGE = "Measuring and improving the level"
@@ -36,6 +36,10 @@ NOTES_STAGE = "Listening to the notes of the song"
 TEMPO_STAGE = "Comparing the tempo with the song"
 STRETCH_STAGE = "Matching the tempo of the song"
 BEAT_STAGE = "Finding the beat"
+FOLLOW_STAGE = "Stretching the clip to the new tempo"
+SAME_TEMPO_SHARE = 1e-4
+SLOWEST_FOLLOW = 0.5
+FASTEST_FOLLOW = 2.0
 PARTS_STAGE = "Looking for separate parts"
 MIN_PART_GAP_S = 3.0
 MIN_PART_S = 0.3
@@ -185,7 +189,16 @@ def improve_quality_file(path, folder=None, notes=None, origin=0.0):
     return _write(target, improved, sample_rate), readings
 
 
-def match_tempo_file(path, clip_bpm, song_bpm, folder=None):
+def follow_tempo_file(path, recorded_bpm, song_bpm, folder=None):
+    if abs(recorded_bpm - song_bpm) / song_bpm < SAME_TEMPO_SHARE:
+        info = sf.info(path)
+        return path, info.frames / info.samplerate
+    return match_tempo_file(
+        path, recorded_bpm, song_bpm, folder, f"{TEMPO_TAG}{song_bpm:.2f}"
+    )
+
+
+def match_tempo_file(path, clip_bpm, song_bpm, folder=None, tag=TEMPO_TAG):
     from korshmer.audio_processing.tempo_align import stretch_to_tempo
     from korshmer.midi.tempo_map import TempoMap
 
@@ -193,7 +206,7 @@ def match_tempo_file(path, clip_bpm, song_bpm, folder=None):
     matched = stretch_to_tempo(
         data.T, sample_rate, 0.0, TempoMap.uniform(clip_bpm), song_bpm
     )
-    target = fixed_clip_path(path, TEMPO_TAG, folder)
+    target = fixed_clip_path(path, tag, folder)
     _write(target, matched.T, sample_rate)
     return target, matched.shape[1] / sample_rate
 

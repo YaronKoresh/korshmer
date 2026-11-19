@@ -65,7 +65,7 @@ _STYLES = {
     "Lo-Fi": ("Jazz (ii-V-I)", "HipHop", "sparse", (4, 33, 88, 80)),
     "Rock": ("Blues (I-IV-V)", "Rock", "eighths", (29, 34, 88, 80)),
     "Jazz": ("Jazz (ii-V-I)", "Rock", "walking", (0, 32, 89, 65)),
-    "Phonk": ("Sad (vi-IV-I-V)", "Trap", "808", (113, 38, 91, 80)),
+    "Phonk": ("Sad (vi-IV-I-V)", "Trap", "sub", (113, 87, 91, 80)),
 }
 SONG_STYLES = list(_STYLES)
 
@@ -202,6 +202,8 @@ _FILL_TOMS = (
     (15, genre_feel.LOW_TOM),
 )
 _GHOST_VELOCITY = 36
+_ROLL_SOFT = 58
+_ROLL_RISE = 40
 _CRASH_ACCENT = 108
 
 
@@ -235,6 +237,9 @@ def generate_drums(
     ghosts=None,
     fill="snare",
     crash=False,
+    accents=None,
+    rolls=(),
+    roll_chance=0.0,
 ):
     rng = _rng(seed)
     if pattern is None:
@@ -245,6 +250,10 @@ def generate_drums(
     for b in range(bars):
         t0 = (start_bar + b) * bar
         filling = fill_bars and b % fill_bars == fill_bars - 1 and energy >= 0.5
+        roll = None
+        if rolls and energy >= 0.5 and not filling:
+            if rng.random() < roll_chance:
+                roll = rng.choice(rolls)
         for pitch, steps in pattern.items():
             if energy < 0.5 and pitch in (_OPEN_HAT, _CLAP):
                 continue
@@ -254,11 +263,26 @@ def generate_drums(
                     continue
                 if energy < 0.5 and pitch == _HAT and s % 4:
                     continue
+                if roll and pitch == _HAT and 0 <= s - roll[0] < roll[1]:
+                    continue
                 vel = 100 if s % 4 == 0 else 78
+                if accents and pitch in accents:
+                    vel = accents[pitch]
                 vel += rng.randint(-8, 8)
                 vel = max(1, min(127, int(vel * velocity_scale)))
                 _note(
                     inst, pitch, t0 + s * step, t0 + s * step + step * 0.9, vel
+                )
+        if roll:
+            first, span, count = roll
+            for k in range(count):
+                at = t0 + (first + k * span / count) * step
+                _note(
+                    inst,
+                    _HAT,
+                    at,
+                    at + step * span / count * 0.9,
+                    (_ROLL_SOFT + k * _ROLL_RISE // count) * velocity_scale,
                 )
         if ghosts and energy >= 0.5:
             for pitch, steps in ghosts.items():
@@ -301,8 +325,8 @@ def _fold(pitch, floor):
     return floor + (pitch - floor) % 12
 
 
-def _bass_root(ctx, degree):
-    return _fold(ctx.degree_pitch(degree, 2), _BASS_FLOOR)
+def _bass_root(ctx, degree, floor):
+    return _fold(ctx.degree_pitch(degree, 2), floor)
 
 
 @dataclass
@@ -313,9 +337,11 @@ class _BassBar:
     rng: random.Random
     kicks: list
     riff: list
+    floor: int
+    jump: float
 
     def pitch(self, step=0):
-        return _bass_root(self.ctx, self.degree) + (
+        return _bass_root(self.ctx, self.degree, self.floor) + (
             self.ctx.degree_pitch(self.degree + step, 2)
             - self.ctx.degree_pitch(self.degree, 2)
         )
@@ -324,7 +350,7 @@ class _BassBar:
         if self.following == self.degree:
             return self.pitch(4)
         side = 1 if self.following < self.degree else -1
-        return _bass_root(self.ctx, self.following) + (
+        return _bass_root(self.ctx, self.following, self.floor) + (
             self.ctx.degree_pitch(self.following + side, 2)
             - self.ctx.degree_pitch(self.following, 2)
         )
@@ -398,6 +424,25 @@ def _bass_808(bar):
     return hits
 
 
+def _bass_sub(bar):
+    steps = [0]
+    for s in sorted(bar.kicks or _SUB_STEPS):
+        if s - steps[-1] >= _SUB_SPACING:
+            steps.append(s)
+    last = len(steps) - 1
+    jumping = last > 0 and bar.rng.random() < bar.jump
+    hits = []
+    for index, s in enumerate(steps):
+        edge = steps[index + 1] if index < last else 16
+        pitch = bar.pitch()
+        if index == last and index and bar.following != bar.degree:
+            pitch = bar.approach()
+        elif index == last and jumping:
+            pitch += 12
+        hits.append((s, edge - s, pitch, 112 if s == 0 else 104))
+    return hits
+
+
 def _bass_walking(bar):
     pitches = (
         bar.pitch(),
@@ -432,10 +477,12 @@ _BASS_BARS = {
     "pump": _bass_pump,
     "sparse": _bass_sparse,
     "808": _bass_808,
+    "sub": _bass_sub,
     "walking": _bass_walking,
     "riff": _bass_riff,
 }
-_BASS_FLOOR = 33
+_SUB_STEPS = (0, 6, 10)
+_SUB_SPACING = 4
 _POWER_FLOOR = 45
 _SHELL_FLOOR = 2
 _STACK_DROP = 5
@@ -452,6 +499,7 @@ def generate_bass(
     energy=1.0,
     rhythm=None,
     riff=None,
+    kick_steps=None,
 ):
     rng = _rng(seed)
     if rhythm is None:
@@ -460,7 +508,8 @@ def generate_bass(
         rhythm = "driving"
     pattern = _BASS_BARS.get(rhythm, _bass_eighths)
     program = _STYLES.get(style, _STYLES["Pop"])[3][1]
-    gate = genre_feel.feel_for(style).bass_gate
+    feel = genre_feel.feel_for(style)
+    gate = feel.bass_gate
     inst = _new_inst("Bass", program)
     bar = ctx.bar
     unit = bar / 16
@@ -479,7 +528,18 @@ def generate_bass(
             for k in kicks
             if t0 <= k < t0 + bar - unit / 2
         ]
-        info = _BassBar(ctx, degree, following, rng, in_bar, riff)
+        if kick_steps is not None and not kicks:
+            in_bar = list(kick_steps)
+        info = _BassBar(
+            ctx,
+            degree,
+            following,
+            rng,
+            in_bar,
+            riff,
+            feel.bass_floor,
+            feel.bass_jump,
+        )
         for s, length, pitch, vel in pattern(info):
             _note(
                 inst, pitch, t0 + s * unit, t0 + (s + length * gate) * unit, vel
@@ -675,6 +735,7 @@ _DEGREE_REACH = 3
 class _Lead:
     ctx: HarmonicContext
     mid: int
+    snap_inside: bool = False
 
     @property
     def low(self):
@@ -694,10 +755,14 @@ class _Lead:
     def snap(self, degree, chord):
         n = len(self.ctx.intervals)
         tones = {(chord + step) % n for step in (0, 2, 4)}
-        for delta in (0, 1, -1, 2, -2):
-            if (degree + delta) % n in tones:
-                return self.clamp(degree + delta)
-        return degree
+        near = [
+            degree + delta
+            for delta in (0, 1, -1, 2, -2)
+            if (degree + delta) % n in tones
+        ]
+        if self.snap_inside:
+            near = [d for d in near if self.low <= d <= self.high] or near
+        return self.clamp(near[0]) if near else degree
 
     def place(self, chord, steps, previous):
         n = len(self.ctx.intervals)
@@ -736,13 +801,13 @@ def _lead_velocity(rng, energy, onset, length, in_phrase):
     return 80 + int(15 * energy) + accent + arc - rng.randint(0, 6)
 
 
-def _lead_for(ctx, register):
+def _lead_for(ctx, register, snap_inside=False):
     n = len(ctx.intervals)
     mid = min(
         range(-2 * n, 6 * n),
         key=lambda d: abs(ctx.degree_pitch(d, _LEAD_OCTAVE) - register),
     )
-    return _Lead(ctx, mid)
+    return _Lead(ctx, mid, snap_inside)
 
 
 def generate_melody(
@@ -759,6 +824,7 @@ def generate_melody(
     lift=0,
 ):
     rng = _rng(seed)
+    feel = genre_feel.feel_for(style)
     if hook is None:
         hook = hooks.make_hook(rng, style, mood)
     gate = min(1.0, hook.gate * _MOOD_GATE.get(mood, 1.0))
@@ -766,10 +832,10 @@ def generate_melody(
     bar = ctx.bar
     unit = bar / hooks.STEPS
     register = hook.register - _KIND_DROP.get(kind, 0) + lift
-    lead = _lead_for(ctx, min(register, _LEAD_CEILING))
+    lead = _lead_for(ctx, min(register, _LEAD_CEILING), feel.lead_snaps_inside)
     previous = lead.mid
     settled = {}
-    for b, role in enumerate(hooks.bar_roles(kind, bars, final)):
+    for b, role in enumerate(hooks.bar_roles(kind, bars, final, feel.phrases)):
         plan = hooks.plan_bar(hook, role, rng)
         t0 = (start_bar + b) * bar
         chord = ctx.chord_at(start_bar + b)

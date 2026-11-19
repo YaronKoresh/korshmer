@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.signal import butter, resample_poly, sosfilt
+from scipy.signal import butter, resample_poly, sosfilt, sosfiltfilt
 
 OVERSAMPLE = 4
 
@@ -71,3 +71,81 @@ def amp(audio, sample_rate, settings=CRUNCH):
     right = sosfilt(butter(1, 3500 / nyq, "lowpass", output="sos"), right)
     right = right * (_rms(y) / (_rms(right) + 1e-12))
     return np.stack([y, right], axis=1).astype(np.float32)
+
+
+@dataclass(frozen=True)
+class DriveSettings:
+    drive: float
+    band_hz: float = 0.0
+    bias: float = 0.1
+    tone_hz: float = 6000.0
+    harmonics_db: float = 0.0
+    top_pitch: int = 127
+
+
+SUB_DRIVE = DriveSettings(
+    drive=6.0, band_hz=150.0, tone_hz=2500.0, harmonics_db=6.0, top_pitch=59
+)
+BELL_DRIVE = DriveSettings(drive=5.0, bias=0.15, tone_hz=5000.0)
+DRIVE_FOR_PROGRAM = {87: SUB_DRIVE, 113: BELL_DRIVE}
+DRIVE_RUMBLE_HZ = 20.0
+DRIVE_SPLIT_ORDER = 4
+
+
+def _shape(band, sample_rate, settings):
+    peak = float(np.abs(band).max())
+    if peak < 1e-9:
+        return band
+    nyq = sample_rate / 2
+    up = resample_poly(band / peak, OVERSAMPLE, 1)
+    b = settings.bias
+    up = np.tanh(settings.drive * up + b) - np.tanh(b)
+    shaped = resample_poly(up, 1, OVERSAMPLE)[: len(band)]
+    sos = np.vstack(
+        [
+            butter(2, DRIVE_RUMBLE_HZ / nyq, "highpass", output="sos"),
+            butter(2, settings.tone_hz / nyq, "lowpass", output="sos"),
+        ]
+    )
+    shaped = sosfilt(sos, shaped)
+    return shaped * (_rms(band) / (_rms(shaped) + 1e-12))
+
+
+def drive(audio, sample_rate, settings):
+    x = np.asarray(audio, dtype=np.float64)
+    if x.ndim == 1:
+        x = np.stack([x, x], axis=1)
+    if x.size == 0:
+        return np.zeros((0, 2), np.float32)
+    if settings.band_hz <= 0:
+        return np.stack(
+            [_shape(x[:, k], sample_rate, settings) for k in range(2)], axis=1
+        ).astype(np.float32)
+    split = butter(
+        DRIVE_SPLIT_ORDER,
+        settings.band_hz / (sample_rate / 2),
+        output="sos",
+    )
+    low = sosfiltfilt(split, x.mean(axis=1))
+    shaped = _shape(low, sample_rate, settings)
+    body = sosfiltfilt(split, shaped)
+    edge = (shaped - body) * 10 ** (settings.harmonics_db / 20)
+    return (x - low[:, None] + (body + edge)[:, None]).astype(np.float32)
+
+
+def effect_for(instrument):
+    program = instrument.program
+    if program in AMP_FOR_PROGRAM:
+        return AMP_FOR_PROGRAM[program]
+    settings = DRIVE_FOR_PROGRAM.get(program)
+    if settings is None:
+        return None
+    if any(note.pitch > settings.top_pitch for note in instrument.notes):
+        return None
+    return settings
+
+
+def apply_effect(audio, sample_rate, settings):
+    if isinstance(settings, DriveSettings):
+        return drive(audio, sample_rate, settings)
+    return amp(audio, sample_rate, settings)

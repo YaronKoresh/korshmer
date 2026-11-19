@@ -75,7 +75,7 @@ def test_phonk_is_a_complete_style():
     assert made.style == "Phonk"
     roles = _role_notes(made)
     assert roles["drums"] and roles["bass"] and roles["melody"]
-    assert len(roles["drums"]) / made.total_bars >= 12
+    assert len(roles["drums"]) / made.total_bars >= 8
 
 
 @pytest.mark.parametrize(

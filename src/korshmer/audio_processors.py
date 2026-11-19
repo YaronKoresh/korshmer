@@ -338,12 +338,12 @@ def level_render(audio):
 
 
 def _render_with_guitar_amps(instruments, render_batch, sr):
-    from korshmer.audio_processing.guitar_amp import AMP_FOR_PROGRAM, amp
+    from korshmer.audio_processing import guitar_amp
 
     amped = {}
     rest = []
     for inst in instruments:
-        settings = None if inst.is_drum else AMP_FOR_PROGRAM.get(inst.program)
+        settings = None if inst.is_drum else guitar_amp.effect_for(inst)
         if settings is None or not inst.notes:
             rest.append(inst)
         else:
@@ -354,7 +354,7 @@ def _render_with_guitar_amps(instruments, render_batch, sr):
     for settings, group in amped.items():
         dry = render_batch(group, level=False)
         if dry is not None:
-            parts.append(amp(dry, sr, settings))
+            parts.append(guitar_amp.apply_effect(dry, sr, settings))
     parts = [p for p in parts if p is not None and len(p)]
     if not parts:
         return None
@@ -453,7 +453,7 @@ def render_midi_to_wav(
 
                 audio_left = []
                 audio_right = []
-                current_time = 0.0
+                rendered = 0
                 check_interval = 200
 
                 active_notes = 0
@@ -469,13 +469,12 @@ def render_midi_to_wav(
                         and stop_callback()
                     ):
                         return None
-                    delta = time - current_time
-                    if delta > 0:
-                        samples_needed = int(delta * sr)
-                        if samples_needed > 0:
-                            l, r = fs.get_samples(samples_needed)
-                            audio_left.append(l)
-                            audio_right.append(r)
+                    samples_needed = int(time * sr) - rendered
+                    if samples_needed > 0:
+                        l, r = fs.get_samples(samples_needed)
+                        audio_left.append(l)
+                        audio_right.append(r)
+                        rendered += samples_needed
 
                     if etype == "noteon":
                         if active_notes >= MAX_SIMULTANEOUS_NOTES:
@@ -489,7 +488,6 @@ def render_midi_to_wav(
                     else:
                         fs.note_off(chan, note)
                         active_notes -= 1
-                    current_time = time
 
                 if dropped_count:
                     print(

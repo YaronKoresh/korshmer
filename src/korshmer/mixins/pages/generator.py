@@ -2,7 +2,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -23,6 +22,7 @@ from korshmer.midi_generation.korshmer_schema import (
 from korshmer.ui.widgets.material.adaptive import FlowLayout
 from korshmer.ui.widgets.material.button import HelpButton, MaterialButton
 from korshmer.ui.widgets.material.card import MaterialCard
+from korshmer.ui.widgets.material.length_box import LengthPicker
 
 
 class GeneratorPageMixin:
@@ -70,12 +70,16 @@ class GeneratorPageMixin:
 
         self.combo_gen_mode = QComboBox()
         self.combo_gen_mode.addItems(list(composer.MODES))
-        self.spin_gen_minutes = QDoubleSpinBox()
-        self.spin_gen_minutes.setRange(MIN_MINUTES, MAX_MINUTES)
-        self.spin_gen_minutes.setDecimals(1)
-        self.spin_gen_minutes.setSingleStep(0.5)
-        self.spin_gen_minutes.setValue(DEFAULT_MINUTES)
-        self.spin_gen_minutes.setSuffix(" min")
+        tempo_box = getattr(self, "spin_bpm", None)
+        self.gen_length = LengthPicker(
+            MIN_MINUTES,
+            MAX_MINUTES,
+            DEFAULT_MINUTES,
+            tempo_box.value() if tempo_box is not None else 120.0,
+        )
+        self.spin_gen_minutes = self.gen_length.box
+        if tempo_box is not None:
+            tempo_box.valueChanged.connect(self.gen_length.set_tempo)
         self.combo_gen_style = QComboBox()
         self.combo_gen_style.addItems(list(composer.STYLE_CHOICES))
         self.combo_gen_mood = QComboBox()
@@ -99,7 +103,7 @@ class GeneratorPageMixin:
                 self.create_label_help(
                     "Length", HELP_TEXTS["generator_minutes"]
                 ),
-                self.spin_gen_minutes,
+                self.gen_length,
             ),
             (QLabel("Style"), self.combo_gen_style),
             (QLabel("Mood"), self.combo_gen_mood),
@@ -117,7 +121,7 @@ class GeneratorPageMixin:
 
     def _update_generator_mode_fields(self, mode):
         layering = mode == "Layer over editor"
-        self.spin_gen_minutes.setEnabled(not layering)
+        self.gen_length.setEnabled(not layering)
         self.chk_gen_replace.setEnabled(mode == "New song")
 
     def _ui_card_generator_roles(self):

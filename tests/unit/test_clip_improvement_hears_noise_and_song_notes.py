@@ -239,10 +239,14 @@ def _timeline_with_clip(qapp, tmp_path, notes, start=0.0):
 
 def _improve(timeline, clip):
     steps = []
-    worker = timeline.improve_clip_quality(clip.id)
-    worker.edit_progress.connect(
-        lambda _clip, _label, stage, _percent: steps.append(stage)
-    )
+    show = timeline._show_clip_edit_progress
+
+    def remember(label, name, stage, percent):
+        steps.append(stage)
+        show(label, name, stage, percent)
+
+    timeline._show_clip_edit_progress = remember
+    timeline.improve_clip_quality(clip.id)
     timeline.wait_for_clip_edits()
     QApplication.processEvents()
     QApplication.processEvents()
@@ -261,7 +265,7 @@ def test_improving_a_clip_in_the_editor_listens_to_the_notes_under_it(
     timeline, clip, said = _timeline_with_clip(qapp, tmp_path, loud_notes)
     level, steps = _improve(timeline, clip)
 
-    assert steps[0] == "Listening to the notes of the song"
+    assert "Listening to the notes of the song" in steps
     assert level > clip_level.level_goal_db() + 3.0
     assert "over the notes" in said[-1]
     assert timeline.model.clip_by_id(clip.id).gain == 1.0

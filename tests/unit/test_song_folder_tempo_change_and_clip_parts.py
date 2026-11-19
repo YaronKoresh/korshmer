@@ -86,18 +86,21 @@ def test_changing_the_tempo_keeps_audio_clips_on_the_same_beat_as_the_notes(
     assert shown.x() / shown.pixels_per_second == pytest.approx(1.6, abs=0.01)
 
 
-def test_changing_the_tempo_does_not_alter_the_sound_or_the_cut_of_a_clip(
+def test_changing_the_tempo_never_changes_the_original_recording(
     qapp, tmp_path
 ):
     studio = _studio_with_song(tmp_path)
     timeline = studio.arranger
-    clip = timeline.add_audio_clip(_tone(tmp_path / "take.wav"), 2.0)
-    timeline.model.trim_clip(clip.id, 3.0, 5.0)
-    path = clip.path
+    recording = _tone(tmp_path / "take.wav")
+    before = Path(recording).read_bytes()
+    timeline.add_audio_clip(recording, 2.0)
 
     timeline.piano_roll.set_tempo(150.0)
+    timeline.stretch_clips_to_tempo()
+    timeline.wait_for_clip_edits()
+    QApplication.processEvents()
 
-    assert (clip.offset, clip.duration, clip.path) == (1.0, 2.0, path)
+    assert Path(recording).read_bytes() == before
 
 
 def test_stepping_back_after_a_tempo_change_keeps_notes_and_clips_together(

@@ -306,18 +306,22 @@ def test_a_running_fix_shows_its_steps_and_how_far_it_is(
     original = _sung_phrases(tmp_path / "voice.wav", level=0.02)
     timeline, clip, _said = _with_clip(qapp, original)
     steps = []
+    show = timeline._show_clip_edit_progress
 
-    worker = timeline.fix_clip_automatically(clip.id)
-    worker.edit_progress.connect(
-        lambda _clip, _label, stage, percent: steps.append((stage, percent))
-    )
+    def remember(label, name, stage, percent):
+        steps.append((stage, percent))
+        show(label, name, stage, percent)
+
+    timeline._show_clip_edit_progress = remember
+    timeline.fix_clip_automatically(clip.id)
     shown_while_running = timeline.clip_edit_bar.isVisible()
     _finish(timeline)
 
     stages = [stage for stage, _percent in steps]
     percents = [percent for _stage, percent in steps]
     assert shown_while_running
-    assert stages[0] == "Looking for separate parts"
+    assert stages[0] == "Starting"
+    assert "Looking for separate parts" in stages
     assert "Removing background noise" in stages
     assert "Measuring and improving the level" in stages
     assert stages[-1] == "Finding the beat"

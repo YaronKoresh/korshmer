@@ -305,6 +305,7 @@ class InteractivePianoRoll(QGraphicsView):
     model_changed = Signal()
     context_menu_requested = Signal(QPoint)
     viewport_changed = Signal()
+    tempo_followed = Signal(float, float)
     range_warning = Signal(str)
 
     def __init__(self, parent=None):
@@ -641,6 +642,7 @@ class InteractivePianoRoll(QGraphicsView):
 
         old_beat_width, new_beat_width = result
         ratio = new_beat_width / old_beat_width if old_beat_width > 0 else 1.0
+        earlier_bpm = float(self.vm.tempo) * ratio
 
         for item in self.scene.items():
             if isinstance(item, PianoKeyItem):
@@ -668,6 +670,7 @@ class InteractivePianoRoll(QGraphicsView):
         self._update_scene_rect()
         self.scene.update()
         self.viewport().update()
+        self.tempo_followed.emit(earlier_bpm, float(self.vm.tempo))
 
     def get_beat_width(self):
         return self.vm.beat_width

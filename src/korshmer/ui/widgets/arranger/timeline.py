@@ -7,7 +7,7 @@ import numpy as np
 import pretty_midi
 import sounddevice as sd
 import soundfile as sf
-from PySide6.QtCore import QEvent, Qt, QThread, Signal
+from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -74,6 +74,8 @@ CLIP_NOISE_LABEL = "Remove Background Noise"
 CLIP_QUALITY_LABEL = "Improve Level and Quality"
 CLIP_ALL_LABEL = "Fix Clip Automatically"
 CLIP_MOVE_TOLERANCE_S = 1e-3
+CLIP_FOLLOW_LABEL = "Following the tempo"
+TEMPO_FOLLOW_DELAY_MS = 600
 STEMS_FOLDER = "Stems"
 SNAP_HELP = (
     "Snaps note edits to the current grid. Hold Alt while dragging to bypass."
@@ -362,6 +364,11 @@ class ArrangerTimeline(QWidget):
         self.model = self.piano_roll.model
         self.track_panel = TrackPanel(self.model)
         self.piano_roll.viewport_changed.connect(self._start_visible_waveforms)
+        self.piano_roll.tempo_followed.connect(self._on_tempo_followed)
+        self._tempo_follow_timer = QTimer(self)
+        self._tempo_follow_timer.setSingleShot(True)
+        self._tempo_follow_timer.setInterval(TEMPO_FOLLOW_DELAY_MS)
+        self._tempo_follow_timer.timeout.connect(self.stretch_clips_to_tempo)
 
         self._build_transport_toolbar(layout)
         self._build_edit_toolbar(layout)
@@ -644,7 +651,35 @@ class ArrangerTimeline(QWidget):
             QMessageBox.warning(self, "Audio Clip", str(e))
 
     def set_song_folder(self, folder):
+        from korshmer.project_management.song_folder import set_open_song_folder
+
         self.vm.song_folder = str(folder) if folder else None
+        set_open_song_folder(folder)
+
+    def repoint_clips(self, old_folder, new_folder):
+        old_root = os.path.abspath(str(old_folder))
+        for clip in self.model.clips:
+            paths = [clip.path] + ([clip.source[0]] if clip.source else [])
+            moved = []
+            for path in paths:
+                inside = os.path.abspath(path).startswith(old_root + os.sep)
+                moved.append(
+                    os.path.join(
+                        str(new_folder), os.path.relpath(path, old_root)
+                    )
+                    if inside
+                    else path
+                )
+            clip.path = moved[0]
+            if clip.source:
+                clip.source = (moved[1], *clip.source[1:])
+            if clip.tempo_base:
+                base = clip.tempo_base[0]
+                if os.path.abspath(base).startswith(old_root + os.sep):
+                    base = os.path.join(
+                        str(new_folder), os.path.relpath(base, old_root)
+                    )
+                clip.tempo_base = (base, clip.tempo_base[1])
 
     def keep_clips_in(self, song_folder):
         from korshmer.project_management.song_folder import kept_in_song
@@ -656,6 +691,11 @@ class ArrangerTimeline(QWidget):
             kept = kept_in_song(clip.path, song_folder)
             moved += kept != clip.path
             clip.path = kept
+            if clip.tempo_base is not None:
+                clip.tempo_base = (
+                    kept_in_song(clip.tempo_base[0], song_folder),
+                    clip.tempo_base[1],
+                )
             if clip.source is not None:
                 clip.source = (
                     kept_in_song(clip.source[0], song_folder),
@@ -997,6 +1037,95 @@ class ArrangerTimeline(QWidget):
         )
         self._refresh_clip_edit_bar()
 
+    def _on_tempo_followed(self, earlier_bpm, bpm):
+        if earlier_bpm <= 0 or not self.model.clips_to_follow_tempo(
+            earlier_bpm
+        ):
+            return
+        self._tempo_follow_timer.start()
+
+    def stretch_clips_to_tempo(self):
+        from korshmer.audio_processing import clip_polish
+
+        self._tempo_follow_timer.stop()
+        if (
+            self.model.tempo_map is not None
+            or self.model.normalized is not None
+        ):
+            return []
+        bpm = float(self.model.tempo)
+        started = []
+        for clip in list(self.model.clips):
+            if clip.tempo_base is None or clip.source is not None:
+                continue
+            if self.clip_edit_running(clip.id):
+                self._tempo_follow_timer.start()
+                continue
+            base_path, recorded_bpm = clip.tempo_base
+            if not os.path.isfile(base_path):
+                continue
+            if not (
+                clip_polish.SLOWEST_FOLLOW
+                <= recorded_bpm / bpm
+                <= clip_polish.FASTEST_FOLLOW
+            ):
+                self.clip_edit_status.emit(
+                    f"{CLIP_FOLLOW_LABEL}: '{clip.name}' was recorded at "
+                    f"{recorded_bpm:g} BPM, too far from {bpm:g} BPM to stretch, "
+                    "so it keeps its recorded speed"
+                )
+                continue
+
+            def job(
+                report,
+                cancelled,
+                base_path=base_path,
+                recorded_bpm=recorded_bpm,
+            ):
+                report(clip_polish.FOLLOW_STAGE, 0, 1)
+                path, length = clip_polish.follow_tempo_file(
+                    base_path, recorded_bpm, bpm
+                )
+                return {
+                    "follow": bpm,
+                    "path": path,
+                    "length": length,
+                    "made": [path] if path != base_path else [],
+                }
+
+            worker = ClipEditWorker(
+                clip.id, CLIP_FOLLOW_LABEL, job, parent=self
+            )
+            worker.edit_ready.connect(self._on_clip_edit_ready)
+            worker.edit_failed.connect(self._on_clip_edit_failed)
+            worker.edit_progress.connect(self._on_clip_edit_progress)
+            worker.finished.connect(self._refresh_clip_edit_bar)
+            self._clip_edit_workers.append(worker)
+            self._show_clip_edit_progress(
+                CLIP_FOLLOW_LABEL, clip.name, "Starting", 0
+            )
+            worker.start()
+            started.append(worker)
+        return started
+
+    def _apply_tempo_follow(self, clip, result):
+        if abs(result["follow"] - float(self.model.tempo)) > 1e-6:
+            self._tempo_follow_timer.start()
+            return
+        if not self.model.retune_clip(
+            clip.id, result["path"], result["length"]
+        ):
+            return
+        self.piano_roll.load_model(keep_selection=True)
+        self._queue_waveform(clip)
+        self._start_visible_waveforms()
+        self._on_model_changed()
+        self._refresh_clip_edit_bar()
+        self.clip_edit_status.emit(
+            f"{CLIP_FOLLOW_LABEL}: '{clip.name}' now plays at "
+            f"{float(self.model.tempo):g} BPM"
+        )
+
     def _drop_unused_clip_files(self):
         in_use = self.model.clip_files_in_use() | self._saved_clip_files
         for path in sorted(self._clip_edit_files - in_use):
@@ -1112,6 +1241,9 @@ class ArrangerTimeline(QWidget):
         if clip is None:
             self._drop_unused_clip_files()
             return
+        if "follow" in result:
+            self._apply_tempo_follow(clip, result)
+            return
         if "parts" in result:
             self._replace_with_parts(clip, label, result)
             return
@@ -1130,6 +1262,7 @@ class ArrangerTimeline(QWidget):
         if new_path != clip.path:
             clip.path = new_path
             clip.waveform = []
+            clip.tempo_base = None
             if clip.source is not None and "source" in result:
                 clip.source = (result["source"], *clip.source[1:])
             if "length" in result:
@@ -1175,7 +1308,8 @@ class ArrangerTimeline(QWidget):
         text = f"{label} could not finish for '{name}': {problem}"
         self._refresh_clip_edit_bar()
         self.clip_edit_status.emit(text)
-        QMessageBox.warning(self, label, text)
+        if label != CLIP_FOLLOW_LABEL:
+            QMessageBox.warning(self, label, text)
 
     def _queue_waveform(self, clip):
         self._pending_waveform_ids.add(clip.id)

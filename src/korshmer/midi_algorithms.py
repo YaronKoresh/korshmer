@@ -48,8 +48,9 @@ def _finite_number(value, name, low=None, high=None):
 
 
 def _save_modified_midi(pm, original_path, suffix, one_track_each=True):
-    dir_name = os.path.join(DATA_DIR, "Processed_MIDI")
-    os.makedirs(dir_name, exist_ok=True)
+    from korshmer.project_management.song_folder import midi_folder
+
+    dir_name = midi_folder(DATA_DIR)
     base_name = os.path.splitext(os.path.basename(original_path))[0]
     new_name = f"{base_name}_{suffix}.mid"
     out_path = os.path.join(dir_name, new_name)

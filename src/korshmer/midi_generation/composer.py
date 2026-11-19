@@ -568,8 +568,20 @@ def vary_programs(rng, profile, previous):
     }
 
 
-def plan_acts(rng, count, scale, base_programs, profile):
+def home_mode(scale, modes):
+    if not modes or scale in modes or _is_minor_like(scale):
+        return 0, scale
+    found = {name: shift for shift, name in mode_options(scale)}
+    for name in modes:
+        if name in found:
+            return found[name], name
+    return 0, scale
+
+
+def plan_acts(rng, count, scale, base_programs, profile, modes=()):
     options = mode_options(scale)
+    if modes:
+        options = [o for o in options if o[1] in modes]
     acts = []
     for index, kind in enumerate(act_kinds(count)):
         if kind in ("Statement", "Return"):
@@ -1027,6 +1039,13 @@ def compose(options, existing=None):
             structure = structure_for(style)
         sections = plan_sections(rng, total_bars, structure)
     minor_like = _is_minor_like(options.scale)
+    feel = genre_feel.feel_for(style)
+    home_shift = 0
+    if not layering:
+        home_shift, harm_scale = home_mode(harm_scale, feel.home_modes)
+    if home_shift:
+        minor_like = _is_minor_like(harm_scale)
+    home_root = (root_idx + home_shift) % 12
     profile = genres.profile_for(style)
     role_programs = {
         role: rng.choice(profile.programs[role])
@@ -1042,6 +1061,7 @@ def compose(options, existing=None):
         harm_scale,
         {role: role_programs[role] for role in genres.PITCHED_ROLES},
         profile,
+        feel.home_modes,
     )
     if options.mode == "Layer over editor":
         for chapter in arc:
@@ -1056,7 +1076,6 @@ def compose(options, existing=None):
     )
 
     progressions = {}
-    feel = genre_feel.feel_for(style)
     hook = hooks.make_hook(
         random.Random(rng.randrange(1 << 30)), style, base_mood
     )
@@ -1108,7 +1127,7 @@ def compose(options, existing=None):
         act_starts.setdefault(act, (section.start_bar, section.roles, chapter))
         section.act_kind = chapter.kind
         section.energy = min(1.0, section.energy * ARC_ENERGY[chapter.kind])
-        section_root = (root_idx + chapter.shift) % 12
+        section_root = (home_root + chapter.shift) % 12
         section.key = f"{NOTE_NAMES[section_root]} {chapter.scale}"
         occurrence = seen.get(section.name, 0)
         seen[section.name] = occurrence + 1
@@ -1254,6 +1273,9 @@ def compose(options, existing=None):
                         ghosts=feel.ghosts,
                         fill=fill,
                         crash=feel.crash and kind == "chorus" and not index,
+                        accents=feel.accents,
+                        rolls=feel.hat_rolls,
+                        roll_chance=feel.roll_chance,
                     )
                 elif role == "bass":
                     inst = engine.generate_bass(
@@ -1264,6 +1286,11 @@ def compose(options, existing=None):
                         ),
                         rhythm="riff" if riff else bass_rhythm[bass_key],
                         riff=riff,
+                        kick_steps=(
+                            state["pattern"].get(engine._KICK)
+                            if feel.bass_on_kicks and not layering
+                            else None
+                        ),
                         **kw,
                     )
                 elif role == "chords":
@@ -1356,6 +1383,7 @@ def compose(options, existing=None):
                         hook=hook,
                         kind="chorus" if section.name == "Loop" else kind,
                         final=closing,
+                        style=style,
                         **{**kw, "seed": melody_seed[(kind, act)]},
                     )
                 else:

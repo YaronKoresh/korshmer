@@ -80,3 +80,12 @@ def app_recovery_file_stays_out_of_the_real_data_folder(tmp_path_factory):
 @pytest.fixture(autouse=True)
 def each_test_starts_without_a_recovery_file(tmp_path_factory):
     _RECOVERY_FILE["path"] = tmp_path_factory.mktemp("recovery") / "test.gz"
+
+
+@pytest.fixture(autouse=True)
+def _no_song_left_open():
+    from korshmer.project_management.song_folder import set_open_song_folder
+
+    set_open_song_folder(None)
+    yield
+    set_open_song_folder(None)

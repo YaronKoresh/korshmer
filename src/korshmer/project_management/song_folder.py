@@ -1,10 +1,72 @@
 import filecmp
+import glob
 import os
 import shutil
 from pathlib import Path
 
 from korshmer.project_management.file_io_log import logged_file_op
 from korshmer.ui.viewmodels.arranger_vm import CLIPS_FOLDER
+
+MIDI_FOLDER = "MIDI"
+CONVERSION_FOLDER = "Conversion"
+SHARED_MIDI_FOLDER = "Processed_MIDI"
+_open_song = {"folder": None}
+
+
+def set_open_song_folder(folder):
+    _open_song["folder"] = str(folder) if folder else None
+
+
+def open_song_folder():
+    return _open_song["folder"]
+
+
+def midi_folder(shared_data_folder):
+    home = open_song_folder()
+    folder = (
+        os.path.join(home, MIDI_FOLDER)
+        if home
+        else os.path.join(str(shared_data_folder), SHARED_MIDI_FOLDER)
+    )
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def conversion_kept_in_song(session_folder, song_folder):
+    session_folder = str(session_folder or "")
+    if not session_folder or not os.path.isdir(session_folder):
+        return None
+    if _inside(session_folder, song_folder) or _inside(
+        song_folder, session_folder
+    ):
+        return None
+    target = Path(song_folder) / CONVERSION_FOLDER
+    with logged_file_op("Copy conversion into song", target):
+        shutil.copytree(
+            session_folder,
+            target,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("*.kproj", "Versions", "Backups"),
+        )
+    return str(target)
+
+
+def history_kept_in_song(song_path, shared_folder, folder_name, marker):
+    shared_folder = Path(shared_folder)
+    if not shared_folder.is_dir():
+        return 0
+    song_path = Path(song_path)
+    pattern = f"{glob.escape(song_path.stem)}_{marker}_*{song_path.suffix}"
+    moved = 0
+    for found in sorted(shared_folder.glob(pattern)):
+        target_folder = song_path.parent / folder_name
+        target_folder.mkdir(parents=True, exist_ok=True)
+        target = target_folder / found.name
+        if not target.exists():
+            with logged_file_op("Move into song", target):
+                shutil.move(str(found), str(target))
+            moved += 1
+    return moved
 
 
 def _inside(path, folder):
@@ -60,6 +122,9 @@ def _with_clip_paths(editor, song_folder, convert):
         source = clip.get("source")
         if source:
             clip["source"] = [convert(str(source[0]), song_folder), *source[1:]]
+        base = clip.get("tempo_base")
+        if base:
+            clip["tempo_base"] = [convert(str(base[0]), song_folder), *base[1:]]
         clips.append(clip)
     editor["clips"] = clips
     return editor
