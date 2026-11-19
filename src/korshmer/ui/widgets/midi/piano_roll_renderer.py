@@ -1,11 +1,13 @@
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QPen
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QColor, QFont, QPen, QPolygonF
 
 from korshmer.constants import NOTE_NAMES
 from korshmer.ui.viewmodels.editor_vm import note_name_for_pitch
 
 MUTED_TRACK_ALPHA = 0.4
 MIN_NOTE_WIDTH_PX = 2.0
+SLIDE_MARK_ALPHA = 0.9
+SLIDE_MARK_WIDTH_PX = 14.0
 
 
 class NoteRenderer:
@@ -21,12 +23,55 @@ class NoteRenderer:
         return fill, pen_color
 
     @staticmethod
-    def note_tooltip(pitch, velocity, track_name):
+    def note_tooltip(pitch, velocity, track_name, slide=None):
         name = note_name_for_pitch(pitch)
         text = f"{name} · vel {velocity}"
         if track_name:
             text = f"{text} · {track_name}"
+        if slide:
+            text = f"{text} · {slide.summary()}"
         return text
+
+    @staticmethod
+    def slide_marks(rect, slide):
+        width = min(SLIDE_MARK_WIDTH_PX, rect.width() / 2)
+        left, right = rect.left(), rect.right()
+        top, bottom = rect.top(), rect.bottom()
+        marks = []
+        lead = slide.lead() if slide else 0
+        fall = slide.fall() if slide else 0
+        if lead:
+            near, far = (bottom, top) if lead < 0 else (top, bottom)
+            marks.append(
+                QPolygonF(
+                    [
+                        QPointF(left, near),
+                        QPointF(left + width, far),
+                        QPointF(left, far),
+                    ]
+                )
+            )
+        if fall:
+            near, far = (top, bottom) if fall < 0 else (bottom, top)
+            marks.append(
+                QPolygonF(
+                    [
+                        QPointF(right - width, near),
+                        QPointF(right, far),
+                        QPointF(right, near),
+                    ]
+                )
+            )
+        return marks
+
+    @staticmethod
+    def paint_slide(painter, rect, slide, dim_alpha):
+        mark = QColor(255, 255, 255)
+        mark.setAlphaF(SLIDE_MARK_ALPHA * max(0.35, dim_alpha))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(mark)
+        for polygon in NoteRenderer.slide_marks(rect, slide):
+            painter.drawPolygon(polygon)
 
     @staticmethod
     def note_label(y, grid_y):

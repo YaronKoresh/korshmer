@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import librosa
 import numpy as np
 import soundfile as sf
+from scipy import signal
+from scipy.ndimage import maximum_filter1d
 
 from korshmer.audio_processing import clip_level, clip_tempo
 from korshmer.constants import DATA_DIR
@@ -41,7 +43,14 @@ SAME_TEMPO_SHARE = 1e-4
 SLOWEST_FOLLOW = 0.5
 FASTEST_FOLLOW = 2.0
 PARTS_STAGE = "Looking for separate parts"
-MIN_PART_GAP_S = 1.5
+MIN_PART_GAP_S = 0.6
+MAX_PART_GAP_S = 3.0
+PART_BURST_JOIN_S = 0.1
+PART_HIT_S = 0.5
+PART_MIN_HITS = 4
+PART_PULSE_GAPS = 2.5
+PART_LASTING_S = 0.75
+LOWEST_HEARD_HZ = 30.0
 MIN_PART_S = 0.3
 PART_EDGE_S = 0.05
 PART_BELOW_LOUDEST_DB = 40.0
@@ -52,9 +61,9 @@ PART_STEADY_PAUSE_DB = 8.0
 PART_MIN_CONTRAST_DB = 20.0
 PART_RISE_OVER_PAUSE_DB = 8.0
 MIN_TRIM_S = 0.1
-PART_MIN_HISS_CONTRAST_DB = 6.0
-PART_HISS_FLATNESS = 0.1
-PART_TONE_SHARE_OF_HISS = 0.5
+PART_MIN_NOISE_CONTRAST_DB = 6.0
+PART_NOISE_CHANGE = 0.3
+PART_SOUND_SHARE_OF_NOISE = 0.5
 SHORT_PART_S = 2.0
 ON_NEIGHBOUR = "nearby part"
 PART_FRAME = 1024
@@ -156,6 +165,11 @@ def clip_beat_shift(
     data, sample_rate, beats_at, start=0.0, offset=0.0, duration=None
 ):
     mono = _kept_part(data, sample_rate, offset, duration)
+    if mono.shape[0] >= PART_FRAME:
+        mono = _audible(mono, sample_rate)
+        usual = np.percentile(_frame_levels_db(mono), PART_LOUD_PERCENTILE)
+        if float(usual) <= 20.0 * np.log10(SILENCE_LEVEL):
+            return None, SILENT
     shift = _pulse_shift(mono, sample_rate, beats_at, start)
     if shift is not None:
         return shift, ON_PULSE
@@ -332,6 +346,13 @@ def _align(clip, current, result, beats_at, song_bpm, enter, kept, folder):
     )
 
 
+def _audible(mono, sample_rate):
+    band = signal.butter(
+        4, LOWEST_HEARD_HZ, "highpass", fs=sample_rate, output="sos"
+    )
+    return signal.sosfiltfilt(band, mono).astype(np.float32)
+
+
 def _frame_levels_db(mono):
     levels = librosa.feature.rms(
         y=mono, frame_length=PART_FRAME, hop_length=PART_FRAME, center=False
@@ -339,30 +360,43 @@ def _frame_levels_db(mono):
     return 20.0 * np.log10(np.maximum(levels, 10.0 ** (PART_SILENT_DB / 20.0)))
 
 
-def _frame_flatness(mono):
-    return librosa.feature.spectral_flatness(
-        y=mono, n_fft=PART_FRAME, hop_length=PART_FRAME, center=False
-    )[0]
+def _frame_change(mono):
+    spectrum = np.abs(
+        librosa.stft(
+            mono, n_fft=PART_FRAME, hop_length=PART_FRAME, center=False
+        )
+    )
+    power = spectrum**2
+    shape = power / np.maximum(power.sum(axis=0, keepdims=True), 1e-24)
+    moved = np.abs(np.diff(shape, axis=1)).sum(axis=0) / 2.0
+    return np.concatenate([[0.0], moved])
 
 
-def _hiss_between_tones(levels, flatness, pause, loud):
-    frames = min(levels.shape[0], flatness.shape[0])
-    levels, flatness = levels[:frames], flatness[:frames]
-    quiet = flatness[levels <= pause]
-    sounding = flatness[levels >= loud - PART_RISE_OVER_PAUSE_DB]
+def _noise_between_sounds(levels, change, pause, loud):
+    frames = min(levels.shape[0], change.shape[0])
+    levels, change = levels[:frames], change[:frames]
+    quiet = change[levels <= pause]
+    sounding = change[levels >= loud - PART_RISE_OVER_PAUSE_DB]
     if quiet.size == 0 or sounding.size == 0:
         return False
-    hiss = float(np.median(quiet))
-    return hiss >= PART_HISS_FLATNESS and float(np.median(sounding)) <= (
-        hiss * PART_TONE_SHARE_OF_HISS
+    restless = float(np.median(quiet))
+    return restless >= PART_NOISE_CHANGE and float(np.median(sounding)) <= (
+        restless * PART_SOUND_SHARE_OF_NOISE
     )
 
 
-def _sound_threshold_db(levels, flatness=None):
+def _lasting_levels(levels, sample_rate):
+    frames = max(1, int(PART_LASTING_S * sample_rate / PART_FRAME))
+    return maximum_filter1d(levels, size=frames, mode="nearest")
+
+
+def _sound_threshold_db(levels, sample_rate, change=None):
     loud = float(np.percentile(levels, PART_LOUD_PERCENTILE))
     lowest = loud - PART_BELOW_LOUDEST_DB
+    lasting = _lasting_levels(levels, sample_rate)
     pauses = np.maximum(
-        levels[levels <= np.percentile(levels, PART_PAUSE_PERCENTILE)], lowest
+        lasting[lasting <= np.percentile(lasting, PART_PAUSE_PERCENTILE)],
+        lowest,
     )
     floor = float(np.max(pauses))
     steady = floor - float(np.min(pauses)) <= PART_STEADY_PAUSE_DB
@@ -372,22 +406,40 @@ def _sound_threshold_db(levels, flatness=None):
     if contrast >= PART_MIN_CONTRAST_DB:
         return floor + min(PART_RISE_OVER_PAUSE_DB, contrast / 2.0)
     if (
-        flatness is not None
-        and contrast >= PART_MIN_HISS_CONTRAST_DB
-        and _hiss_between_tones(levels, flatness, floor, loud)
+        change is not None
+        and contrast >= PART_MIN_NOISE_CONTRAST_DB
+        and _noise_between_sounds(levels, change, floor, loud)
     ):
         return floor + contrast / 2.0
     return lowest
 
 
-def _sound_spans(heard, frame):
+def _joined_spans(heard, frame, pause):
     spans = []
     for index in np.flatnonzero(heard):
         begin, end = index * frame, (index + 1) * frame
-        if spans and begin - spans[-1][1] < MIN_PART_GAP_S:
+        if spans and begin - spans[-1][1] < pause:
             spans[-1][1] = end
         else:
             spans.append([begin, end])
+    return spans
+
+
+def _splitting_pause(heard, frame):
+    bursts = _joined_spans(heard, frame, PART_BURST_JOIN_S)
+    between_hits = [
+        later[0] - earlier[1]
+        for earlier, later in zip(bursts, bursts[1:], strict=False)
+        if min(earlier[1] - earlier[0], later[1] - later[0]) < PART_HIT_S
+    ]
+    if len(between_hits) < PART_MIN_HITS:
+        return MIN_PART_GAP_S
+    steady_pulse = PART_PULSE_GAPS * float(np.median(between_hits))
+    return min(MAX_PART_GAP_S, max(MIN_PART_GAP_S, steady_pulse))
+
+
+def _sound_spans(heard, frame):
+    spans = _joined_spans(heard, frame, _splitting_pause(heard, frame))
     return [span for span in spans if span[1] - span[0] >= MIN_PART_S]
 
 
@@ -395,10 +447,13 @@ def clip_parts(data, sample_rate, offset=0.0, duration=None):
     mono = _kept_part(data, sample_rate, offset, duration)
     if mono.shape[0] < PART_FRAME:
         return []
+    mono = _audible(mono, sample_rate)
     levels = _frame_levels_db(mono)
     if float(levels.max()) <= 20.0 * np.log10(SILENCE_LEVEL):
         return []
-    heard = levels > _sound_threshold_db(levels, _frame_flatness(mono))
+    heard = levels > _sound_threshold_db(
+        levels, sample_rate, _frame_change(mono)
+    )
     whole = mono.shape[0] / sample_rate
     return [
         (

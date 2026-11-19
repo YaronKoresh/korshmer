@@ -54,6 +54,16 @@ def _spans(audio):
     return clip_polish.clip_parts(audio, RATE)
 
 
+def _joined_by_rumble(under_sound_db):
+    audio = _joined()
+    drift = np.cumsum(np.random.default_rng(6).normal(0, 1, audio.shape))
+    drift -= np.convolve(drift, np.ones(2000) / 2000, "same")
+    drift /= drift.std()
+    return (audio + 0.21 * 10 ** (under_sound_db / 20.0) * drift).astype(
+        np.float32
+    )
+
+
 def _two_sounds_at_their_places(spans):
     return len(spans) == 2 and np.allclose(
         spans, [(1.95, 7.05), (10.95, 15.05)], atol=0.1
@@ -79,6 +89,29 @@ def test_two_tones_joined_by_loud_hiss_are_still_found_as_two_parts(noise):
 
     assert len(spans) == 2
     assert np.allclose(spans, [(1.95, 7.0), (10.95, 15.05)], atol=0.2)
+
+
+@pytest.mark.parametrize("rumble", [-35.0, -25.0, -18.0, -12.0])
+def test_two_tones_joined_by_unsteady_low_rumble_are_found_as_two_parts(rumble):
+    spans = _spans(_joined_by_rumble(rumble))
+
+    assert len(spans) == 2
+    assert np.allclose(spans, [(1.95, 7.0), (10.95, 15.05)], atol=0.2)
+
+
+def test_rumble_almost_as_loud_as_the_sound_leaves_the_clip_whole():
+    assert np.allclose(_spans(_joined_by_rumble(-4.0)), [(0.0, 18.0)], atol=0.1)
+
+
+def test_a_wavering_note_with_a_soft_passage_is_not_cut_out():
+    time = np.arange(RATE * 20) / RATE
+    waver = 3.0 * np.sin(2 * np.pi * 5.5 * time)
+    passage = np.where((time > 8) & (time < 12), 0.2, 1.0)
+    music = 0.3 * np.sin(2 * np.pi * 220 * time + waver) * passage
+
+    assert np.allclose(
+        _spans(music.astype(np.float32)), [(0.0, 20.0)], atol=0.1
+    )
 
 
 @pytest.mark.parametrize("soft", [0.12, 0.25, 0.4])
@@ -120,8 +153,67 @@ def test_a_slow_fade_in_and_out_stays_one_part():
     assert len(_spans(music)) == 1
 
 
-def test_a_short_pause_keeps_the_sounds_together():
-    assert len(_spans(_joined(-40.0, pause=1.0))) == 1
+def _with_inaudible_movement(kind):
+    audio = _joined()
+    time = np.arange(audio.shape[0]) / RATE
+    if kind == "steady offset":
+        return audio + 0.02
+    if kind == "slow drift":
+        return audio + 0.05 * np.sin(2 * np.pi * 8.0 * time)
+    wander = 2.0 * np.sin(2 * np.pi * 0.3 * time)
+    return audio + 0.03 * np.sin(2 * np.pi * 3.0 * time + wander)
+
+
+@pytest.mark.parametrize(
+    "kind", ["steady offset", "slow drift", "wandering drift"]
+)
+def test_movement_too_low_to_hear_still_counts_as_silence(kind):
+    spans = _spans(_with_inaudible_movement(kind).astype(np.float32))
+
+    assert _two_sounds_at_their_places(spans)
+
+
+def test_a_pause_of_about_half_a_second_keeps_the_sounds_together():
+    assert len(_spans(_joined(-40.0, pause=0.4))) == 1
+
+
+def test_a_pause_of_one_second_is_enough_to_split_the_sounds():
+    assert len(_spans(_joined(-40.0, pause=1.0))) == 2
+
+
+def _hits(times, seconds):
+    audio = np.zeros(int(RATE * seconds), dtype=np.float32)
+    click = np.hanning(2000) * np.sin(np.arange(2000) * 0.2) * 0.4
+    for moment in times:
+        first = int(moment * RATE)
+        audio[first : first + 2000] += click
+    return audio
+
+
+def test_a_slow_steady_pulse_is_not_broken_into_single_hits():
+    pulse = _hits(np.arange(1.0, 21.0, 0.67), 22)
+
+    assert len(_spans(pulse)) == 1
+
+
+def test_a_slow_pulse_with_a_long_break_is_split_only_at_the_break():
+    before = list(np.arange(1.0, 7.0, 0.67))
+    after = list(np.arange(10.0, 16.0, 0.67))
+
+    spans = _spans(_hits(before + after, 17))
+
+    assert len(spans) == 2
+    assert spans[0][1] < 7.5 and spans[1][0] > 9.5
+
+
+def test_phrases_less_than_a_second_apart_become_separate_parts():
+    time = np.arange(RATE * 14) / RATE
+    audio = np.zeros_like(time)
+    for begin, end in ((1.0, 3.0), (3.8, 6.0), (6.8, 9.0), (9.8, 12.0)):
+        sounding = (time >= begin) & (time < end)
+        audio += sounding * 0.3 * np.sin(2 * np.pi * 220 * time)
+
+    assert len(_spans(audio.astype(np.float32))) == 4
 
 
 def _clicks(start, late, count=12, level=0.4):
@@ -330,3 +422,41 @@ def test_a_very_short_part_with_no_rhythmic_part_nearby_starts_on_a_beat(
     assert len(timeline.model.clips) == 2
     for clip in timeline.model.clips:
         assert _on_a_beat(_first_sound(clip))
+
+
+def test_quiet_ends_that_hold_only_inaudible_drift_are_trimmed_off(
+    qapp, tmp_path, fixed_files
+):
+    recording = _recording(tmp_path / "take.wav", [(4.0, 0.1)], 16)
+    audio, rate = sf.read(recording, dtype="float32")
+    time = np.arange(audio.shape[0]) / rate
+    sf.write(recording, audio + 0.05 * np.sin(2 * np.pi * 6.0 * time), rate)
+
+    timeline, said = _fixed(qapp, recording, start=2.0)
+
+    clip = timeline.model.clips[0]
+    assert clip.duration == pytest.approx(5.65, abs=0.2)
+    assert "trimmed" in said[-1]
+
+
+def test_a_clip_holding_only_inaudible_drift_is_reported_as_silent(
+    qapp, tmp_path, fixed_files
+):
+    time = np.arange(RATE * 6) / RATE
+    drift = (0.05 * np.sin(2 * np.pi * 6.0 * time)).astype(np.float32)
+    sf.write(str(tmp_path / "drift.wav"), drift, RATE)
+    timeline = ArrangerTimeline()
+    timeline.show()
+    qapp.processEvents()
+    timeline.btn_snap.setChecked(False)
+    timeline.model.tempo = 120.0
+    clip = timeline.add_audio_clip(str(tmp_path / "drift.wav"), 1.1)
+    said = []
+    timeline.clip_edit_status.connect(said.append)
+
+    timeline.align_clip_to_beat(clip.id)
+    timeline.wait_for_clip_edits()
+    QApplication.processEvents()
+
+    assert timeline.model.clip_by_id(clip.id).start == pytest.approx(1.1)
+    assert "silent" in said[-1]

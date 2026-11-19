@@ -81,7 +81,7 @@ def test_ten_minute_song_uses_many_chord_progressions():
 def test_short_song_stays_in_one_act():
     comp = _song(minutes=1)
     assert comp.total_bars <= ACT_BARS
-    assert len({s.progression for s in comp.sections}) <= 5
+    assert len({s.progression for s in comp.sections}) <= 6
 
 
 @pytest.mark.parametrize("scale", ["Minor", "Dorian", "Pentatonic Major"])

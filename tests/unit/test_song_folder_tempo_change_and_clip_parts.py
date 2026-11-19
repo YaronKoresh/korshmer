@@ -449,14 +449,16 @@ def test_a_clip_with_one_continuous_take_is_not_split(
     assert "split" not in said[-1]
 
 
-def test_only_pauses_of_a_second_and_a_half_or_more_split_a_clip():
-    audio = np.zeros(RATE * 12, dtype=np.float32)
-    audio[RATE : RATE * 4] = 0.3
-    audio[RATE * 5 : RATE * 9] = 0.3
+def test_only_pauses_longer_than_about_half_a_second_split_a_clip():
+    time = np.arange(RATE * 12) / RATE
+    tone = (0.3 * np.sin(2 * np.pi * 220 * time)).astype(np.float32)
+    audio = np.zeros_like(tone)
+    audio[RATE : RATE * 4] = tone[RATE : RATE * 4]
+    audio[int(RATE * 4.4) : RATE * 9] = tone[int(RATE * 4.4) : RATE * 9]
 
     assert len(clip_polish.clip_parts(audio, RATE)) == 1
     audio[RATE * 4 : RATE * 9] = 0.0
-    audio[RATE * 9 : RATE * 11] = 0.3
+    audio[RATE * 9 : RATE * 11] = tone[RATE * 9 : RATE * 11]
     assert [
         (round(begin), round(end))
         for begin, end in clip_polish.clip_parts(audio, RATE)

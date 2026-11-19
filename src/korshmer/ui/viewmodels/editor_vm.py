@@ -17,6 +17,7 @@ from korshmer.utils.bend_range import (
     set_bend_range,
 )
 from korshmer.utils.instrument_names import sanitize_instrument_name
+from korshmer.utils.note_slides import NoteSlide, attach_slides, played_bends
 from korshmer.utils.tempo import BPM_DECIMALS, validate_bpm
 from korshmer.utils.track_layout import (
     instrument_name,
@@ -53,6 +54,8 @@ CLIP_KIND_COLORS = {
 
 DEFAULT_TRACK_NAME = "Lead"
 MIN_NOTE_DURATION = 0.01
+SONG_VERSION = 2
+SLIDES_ON_NOTES_SINCE = 2
 MAX_UNDO_STEPS = 100
 MAX_CLIP_GAIN = 8.0
 MIN_CLIP_SECONDS = 0.05
@@ -309,15 +312,26 @@ class TrackModel:
 
 
 class NoteModel:
-    __slots__ = ("id", "track_id", "pitch", "start", "duration", "velocity")
+    __slots__ = (
+        "id",
+        "track_id",
+        "pitch",
+        "start",
+        "duration",
+        "velocity",
+        "slide",
+    )
 
-    def __init__(self, note_id, track_id, pitch, start, duration, velocity):
+    def __init__(
+        self, note_id, track_id, pitch, start, duration, velocity, slide=None
+    ):
         self.id = int(note_id)
         self.track_id = int(track_id)
         self.pitch = clamp_pitch(pitch)
         self.start = max(0.0, float(start))
         self.duration = max(MIN_NOTE_DURATION, float(duration))
         self.velocity = clamp_velocity(velocity)
+        self.slide = slide.copy() if slide else None
 
     @property
     def end(self):
@@ -331,6 +345,7 @@ class NoteModel:
             self.start,
             self.duration,
             self.velocity,
+            self.slide,
         )
 
     def to_dict(self):
@@ -341,6 +356,7 @@ class NoteModel:
             "start": self.start,
             "duration": self.duration,
             "velocity": self.velocity,
+            "slide": self.slide.to_dict() if self.slide else None,
         }
 
     @classmethod
@@ -352,6 +368,7 @@ class NoteModel:
             data.get("start", 0.0),
             data.get("duration", MIN_NOTE_DURATION),
             data.get("velocity", 100),
+            NoteSlide.from_dict(data.get("slide")),
         )
 
 
@@ -506,6 +523,20 @@ def _seconds(value):
     return float(value) if math.isfinite(value) and value > 0 else 0.0
 
 
+def _last_bend_of_each_tick(pm, bends):
+    kept = {}
+    for time, value in bends:
+        kept[pm.time_to_tick(time)] = (time, value)
+    return list(kept.values())
+
+
+def _song_version(data):
+    version = data.get("version", 1)
+    if isinstance(version, bool) or not isinstance(version, (int, float)):
+        return 1
+    return version
+
+
 def _grid_offset_value(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0.0
@@ -535,6 +566,8 @@ def _stretch_notes(notes, factor):
     for note in notes:
         note.start *= factor
         note.duration = max(MIN_NOTE_DURATION, note.duration * factor)
+        if note.slide:
+            note.slide = note.slide.scaled(factor)
 
 
 def _stretch_bends(tracks, factor):
@@ -737,7 +770,9 @@ class EditorModel:
             return track_id
         return self.ensure_default_track().id
 
-    def add_note(self, track_id, pitch, start, duration, velocity=100):
+    def add_note(
+        self, track_id, pitch, start, duration, velocity=100, slide=None
+    ):
         note = NoteModel(
             self._allocate_note_id(),
             self.resolve_track_id(track_id),
@@ -745,6 +780,7 @@ class EditorModel:
             start,
             duration,
             velocity,
+            slide,
         )
         self.notes.append(note)
         return note
@@ -754,6 +790,12 @@ class EditorModel:
         if not doomed:
             return
         self.notes = [n for n in self.notes if n.id not in doomed]
+
+    def remove_slides(self, note_ids):
+        slid = [n for n in self._selected_notes(note_ids) if n.slide]
+        for note in slid:
+            note.slide = None
+        return len(slid)
 
     def notes_by_id(self):
         return {note.id: note for note in self.notes}
@@ -781,14 +823,24 @@ class EditorModel:
         start = tempo_map.seconds_at(tempo_map.beats_at(note.start) + beats)
         end = tempo_map.seconds_at(tempo_map.beats_at(note.end) + beats)
         start = max(0.0, start)
-        return start, max(MIN_NOTE_DURATION, end - start)
+        duration = max(MIN_NOTE_DURATION, end - start)
+        slide = note.slide and note.slide.remapped(
+            note.start,
+            note.end,
+            start,
+            start + duration,
+            lambda t: tempo_map.seconds_at(tempo_map.beats_at(t) + beats),
+        )
+        return start, duration, slide
 
     def shift_notes_by_beats(self, note_ids, beats):
         if self.tempo_map is None:
             self.shift_notes(note_ids, float(beats) * 60.0 / self.tempo)
             return
         for note in self._selected_notes(note_ids):
-            note.start, note.duration = self._moved_by_beats(note, float(beats))
+            note.start, note.duration, note.slide = self._moved_by_beats(
+                note, float(beats)
+            )
 
     def beats_length(self, start, beats):
         if self.tempo_map is None:
@@ -874,6 +926,7 @@ class EditorModel:
                 "offset": n.start - origin,
                 "duration": n.duration,
                 "velocity": n.velocity,
+                "slide": n.slide.to_dict() if n.slide else None,
             }
             for n in sorted(selected, key=lambda n: (n.start, n.pitch))
         ]
@@ -892,6 +945,7 @@ class EditorModel:
                     base + float(entry.get("offset", 0.0)),
                     entry.get("duration", MIN_NOTE_DURATION),
                     entry.get("velocity", 100),
+                    NoteSlide.from_dict(entry.get("slide")),
                 )
             )
         return created
@@ -907,15 +961,15 @@ class EditorModel:
                 span_start
             )
             beats = max(1, math.ceil(beats - 1e-9))
-            return [
-                self.add_note(
-                    n.track_id,
-                    n.pitch,
-                    *self._moved_by_beats(n, beats),
-                    n.velocity,
+            created = []
+            for n in selected:
+                start, duration, slide = self._moved_by_beats(n, beats)
+                created.append(
+                    self.add_note(
+                        n.track_id, n.pitch, start, duration, n.velocity, slide
+                    )
                 )
-                for n in selected
-            ]
+            return created
         offset = span_end - span_start
         if beat_seconds and beat_seconds > 0:
             offset = math.ceil(offset / beat_seconds - 1e-9) * beat_seconds
@@ -927,6 +981,7 @@ class EditorModel:
                 n.start + offset,
                 n.duration,
                 n.velocity,
+                n.slide,
             )
             for n in selected
         ]
@@ -1042,14 +1097,23 @@ class EditorModel:
                 return track
         return None
 
+    def track_bends(self, track_id):
+        track = self.tracks.get(track_id)
+        if track is None:
+            return [], DEFAULT_BEND_RANGE
+        return played_bends(
+            self.notes_for_track(track_id), track.bends, track.bend_range
+        )
+
     def _bends_allow(self, track, spans, bends, bend_range):
-        if not bends and not track.bends:
+        played, _wide = self.track_bends(track.id)
+        if not bends and not played:
             return True
-        if bends and track.bends and bend_range != track.bend_range:
+        if bends and played and bend_range != track.bend_range:
             return False
         return not bends_clash(
             [(n.start, n.end) for n in self.notes_for_track(track.id)],
-            track.bends,
+            played,
             spans,
             bends,
         )
@@ -1090,13 +1154,22 @@ class EditorModel:
                     program=int(inst.program),
                     is_drum=bool(inst.is_drum),
                 )
-            for note, (start, end) in zip(inst.notes, spans, strict=True):
+            bends.sort(key=lambda point: point[0])
+            slides, free = attach_slides(spans, bends, bend_range)
+            for index, (note, (start, end)) in enumerate(
+                zip(inst.notes, spans, strict=True)
+            ):
                 self.add_note(
-                    track.id, note.pitch, start, end - start, note.velocity
+                    track.id,
+                    note.pitch,
+                    start,
+                    end - start,
+                    note.velocity,
+                    slides.get(index),
                 )
             if bends:
                 track.bends = sorted(
-                    track.bends + bends, key=lambda point: point[0]
+                    track.bends + free, key=lambda point: point[0]
                 )
                 track.bend_range = bend_range
             if track not in created:
@@ -1147,13 +1220,16 @@ class EditorModel:
                         end=end,
                     )
                 )
-            if track.bends:
+            bends, bend_range = played_bends(
+                notes, track.bends, track.bend_range
+            )
+            if bends:
                 inst.pitch_bends = [
                     pretty_midi.PitchBend(value, time)
-                    for time, value in track.bends
+                    for time, value in _last_bend_of_each_tick(pm, bends)
                 ]
-                if track.bend_range != DEFAULT_BEND_RANGE:
-                    set_bend_range(inst, track.bend_range)
+                if bend_range != DEFAULT_BEND_RANGE:
+                    set_bend_range(inst, bend_range)
             pm.instruments.append(inst)
         pm.instruments = merge_by_instrument(
             pm.instruments, keep_shared_names=True
@@ -1163,9 +1239,13 @@ class EditorModel:
     def _retime(self, convert):
         for note in self.notes:
             start = max(0.0, float(convert(note.start)))
-            end = float(convert(note.end))
+            duration = max(MIN_NOTE_DURATION, float(convert(note.end)) - start)
+            if note.slide:
+                note.slide = note.slide.remapped(
+                    note.start, note.end, start, start + duration, convert
+                )
             note.start = start
-            note.duration = max(MIN_NOTE_DURATION, end - start)
+            note.duration = duration
         for track in self.tracks.values():
             for point in track.bends:
                 point[0] = max(0.0, float(convert(point[0])))
@@ -1368,7 +1448,7 @@ class EditorModel:
 
     def to_dict(self):
         return {
-            "version": 1,
+            "version": SONG_VERSION,
             "tempo": self.tempo,
             "grid_offset": self.grid_offset,
             "tempo_map": self.tempo_map.as_pairs() if self.tempo_map else None,
@@ -1400,6 +1480,8 @@ class EditorModel:
             note = NoteModel.from_dict(entry)
             if note.track_id in self.tracks:
                 self.notes.append(note)
+        if _song_version(data) < SLIDES_ON_NOTES_SINCE:
+            self._attach_track_bends()
         for entry in data.get("clips", []) or []:
             if entry.get("path"):
                 self.clips.append(ClipModel.from_dict(entry))
@@ -1407,6 +1489,17 @@ class EditorModel:
         self._next_note_id = max((n.id for n in self.notes), default=0) + 1
         self._next_clip_id = max((c.id for c in self.clips), default=0) + 1
         return self
+
+    def _attach_track_bends(self):
+        for track in self.tracks.values():
+            if not track.bends:
+                continue
+            notes = [n for n in self.notes_for_track(track.id) if not n.slide]
+            slides, track.bends = attach_slides(
+                [(n.start, n.end) for n in notes], track.bends, track.bend_range
+            )
+            for index, slide in slides.items():
+                notes[index].slide = slide
 
     @classmethod
     def from_dict(cls, data):

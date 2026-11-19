@@ -57,10 +57,13 @@ class GenreFeel:
     home_modes: tuple = ()
     phrases: dict = field(default_factory=dict)
     lead_snaps_inside: bool = False
+    chord_spans: tuple = (1,)
+    hook_holds: bool = False
 
 
 FEELS = {
     "Pop": GenreFeel(
+        chord_spans=(1, 1, 1, 2),
         grooves=(
             {
                 KICK: [0, 8, 10],
@@ -163,6 +166,7 @@ FEELS = {
         strum=0.008,
     ),
     "Rock": GenreFeel(
+        chord_spans=(1, 1, 2),
         grooves=(
             {KICK: [0, 8, 10], SNARE: [4, 12], HAT: _EVEN},
             {
@@ -199,6 +203,10 @@ FEELS = {
             (0, 5, 3, 0),
             (0, 6, 4, 0),
             (0, 4, 6, 0),
+            (0, 2, 5, 6),
+            (0, 2, 3, 6),
+            (0, 6, 5, 4),
+            (0, 3, 6, 5),
         ),
         bass=("driving", "driving", "syncopated", "gallop", "chug"),
         chord_hits=(
@@ -243,6 +251,7 @@ FEELS = {
         riff=True,
     ),
     "Hip-Hop": GenreFeel(
+        chord_spans=(1, 2, 2),
         grooves=(
             {KICK: [0, 7, 10], SNARE: [4, 12], HAT: _EVEN},
             {
@@ -333,6 +342,7 @@ FEELS = {
         voicing="open",
     ),
     "Lo-Fi": GenreFeel(
+        chord_spans=(1, 1, 2),
         grooves=(
             {
                 KICK: [0, 7, 10],
@@ -424,6 +434,7 @@ FEELS = {
         voicing="open",
     ),
     "Jazz": GenreFeel(
+        chord_spans=(1, 1, 1, 2),
         grooves=(
             {KICK: [0, 10], RIDE: [0, 4, 6, 8, 12, 14], PEDAL_HAT: [4, 12]},
             {
@@ -522,6 +533,7 @@ FEELS = {
         voicing="shell",
     ),
     "EDM": GenreFeel(
+        chord_spans=(1, 1, 2),
         grooves=(
             {KICK: [0, 4, 8, 12], CLAP: [4, 12], OPEN_HAT: [2, 6, 10, 14]},
             {
@@ -640,6 +652,7 @@ FEELS = {
         stab=True,
     ),
     "Phonk": GenreFeel(
+        chord_spans=(1, 2, 2),
         grooves=(
             {
                 KICK: [0, 6, 10],
@@ -686,6 +699,12 @@ FEELS = {
             (0, 0, 3, 5),
             (0, 0, 6, 3),
             (0, 0, 3, 6),
+            (0, 6, 0, 3),
+            (0, 3, 0, 6),
+            (0, 6, 0, 5),
+            (0, 5, 3, 6),
+            (0, 6, 5, 3),
+            (0, 5, 6, 3),
         ),
         bass=("sub",),
         chord_hits=(
@@ -821,6 +840,7 @@ FEELS = {
         bass_jump=0.3,
         home_modes=("Minor", "Phrygian"),
         lead_snaps_inside=True,
+        hook_holds=True,
         phrases={
             "chorus": (
                 ("hook", "hook", "hook", "vary"),
@@ -842,6 +862,12 @@ FEELS = {
     ),
 }
 DEFAULT_FEEL = "Pop"
+HOME_CHORD = 0
+DEPARTING_KINDS = ("bridge", "break")
+OPENING_KIND = "intro"
+OPENS_AT_HOME = 0.4
+HOOK_KIND = "chorus"
+HOOK_BARS = 3
 
 
 def feel_for(style):
@@ -855,12 +881,54 @@ def groove_for(rng, style):
 
 def progression_for(rng, style, kind, minor=False):
     feel = feel_for(style)
-    pool = feel.minor_progressions if minor else ()
-    chords = list(rng.choice(pool or feel.progressions))
+    pool = (feel.minor_progressions if minor else ()) or feel.progressions
+    if feel.hook_holds and kind == HOOK_KIND:
+        pool = [p for p in pool if len(set(p)) < len(p)]
+    chords = list(rng.choice(pool))
     if kind in ("bridge", "break"):
         shift = rng.choice((1, 2))
         chords = chords[shift:] + chords[:shift]
     return chords
+
+
+def _turned(chords, turn):
+    return chords[turn:] + chords[:turn]
+
+
+def _kept(turns, chords, fits):
+    return [t for t in turns if fits(_turned(chords, t))] or turns
+
+
+def lay_out(rng, style, kind, chords, anchored=False):
+    feel = feel_for(style)
+    chords = list(chords)
+    turns = list(range(len(chords)))
+    span = 1 if kind == HOOK_KIND else rng.choice(feel.chord_spans)
+    if kind in DEPARTING_KINDS:
+        turns = _kept(turns, chords, lambda c: c[0] != HOME_CHORD)
+    if feel.hook_holds and kind == HOOK_KIND:
+        turns = _kept(turns, chords, _held)
+    opening = kind == OPENING_KIND and rng.random() < OPENS_AT_HOME
+    turn = turns[0] if anchored or opening else rng.choice(turns)
+    return settle(style, kind, _turned(chords, turn)), span
+
+
+def _held(chords):
+    return len(set(chords[:HOOK_BARS])) < HOOK_BARS
+
+
+def settle(style, kind, chords):
+    chords = list(chords)
+    if kind in DEPARTING_KINDS and chords[0] == HOME_CHORD:
+        away = [t for t, chord in enumerate(chords) if chord != HOME_CHORD]
+        chords = _turned(chords, away[0]) if away else chords
+    if kind == HOOK_KIND and feel_for(style).hook_holds and not _held(chords):
+        chords[1] = chords[0]
+    return chords
+
+
+def spread(chords, span):
+    return [chord for chord in chords for _ in range(span)]
 
 
 def apply_swing(instruments, bpm, swing):

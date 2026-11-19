@@ -307,7 +307,11 @@ def test_progressions_follow_the_scale_mode(style):
     )
     minor = {tuple(p) for p in genre_feel.feel_for(style).minor_progressions}
     verse = next(s for s in comp.sections if s.name == "Verse")
-    assert tuple(verse.progression) in minor
+    chords = tuple(verse.progression)
+    if len(chords) == 8:
+        assert chords[0::2] == chords[1::2]
+        chords = chords[0::2]
+    assert {chords[turn:] + chords[:turn] for turn in range(4)} & minor
 
 
 def _features(style, seed, scale):

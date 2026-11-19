@@ -60,7 +60,7 @@ class ContextMenuManager:
     def _handle_score_editor_action(self, action_name, parent):
         self._handle_action("score_editor", action_name, parent)
 
-    def create_piano_roll_menu(self, parent, clip_actions=()):
+    def create_piano_roll_menu(self, parent, clip_actions=(), slide_notes=None):
         menu = QMenu(parent)
 
         for label, run in clip_actions:
@@ -153,6 +153,14 @@ class ContextMenuManager:
         octave_down_action = menu.addAction("Octave Down")
         octave_down_action.triggered.connect(
             lambda _=False, p=parent, name="Octave Down": (
+                self._handle_piano_roll_action(name, p)
+            )
+        )
+
+        remove_slide_action = menu.addAction("Remove Slide")
+        remove_slide_action.setEnabled(slide_notes is None or slide_notes > 0)
+        remove_slide_action.triggered.connect(
+            lambda _=False, p=parent, name="Remove Slide": (
                 self._handle_piano_roll_action(name, p)
             )
         )

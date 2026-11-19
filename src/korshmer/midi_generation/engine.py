@@ -112,6 +112,7 @@ class HarmonicContext:
     bpm: float
     progression: list = field(default_factory=lambda: [0, 4, 5, 3])
     chord_bars: float = 1.0
+    origin: int = 0
 
     @property
     def intervals(self):
@@ -131,7 +132,8 @@ class HarmonicContext:
 
     def chord_at(self, bar_index):
         return self.progression[
-            int(bar_index // self.chord_bars) % len(self.progression)
+            int((bar_index - self.origin) // self.chord_bars)
+            % len(self.progression)
         ]
 
     @classmethod
@@ -462,6 +464,7 @@ def _bass_sub(bar):
             steps.append(s)
     last = len(steps) - 1
     jumping = last > 0 and bar.rng.random() < bar.jump
+    jumping = jumping and bar.pitch() + 12 <= bar.floor + _SUB_REACH
     hits = []
     for index, s in enumerate(steps):
         edge = steps[index + 1] if index < last else 16
@@ -646,6 +649,7 @@ BASS_BUSYNESS = {
 }
 _SUB_STEPS = (0, 6, 10)
 _SUB_SPACING = 4
+_SUB_REACH = 20
 _POWER_FLOOR = 45
 _SHELL_FLOOR = 2
 _STACK_DROP = 5
@@ -875,6 +879,7 @@ def generate_arp(
     start_bar=0,
     energy=1.0,
     shape="updown",
+    octave=5,
 ):
     rng = _rng(seed)
     div = GRID_RESOLUTIONS.get(rate, 4)
@@ -883,7 +888,7 @@ def generate_arp(
     bar = ctx.bar
     for b in range(bars):
         t0 = (start_bar + b) * bar
-        tones = ctx.triad(ctx.chord_at(start_bar + b), 5)
+        tones = ctx.triad(ctx.chord_at(start_bar + b), octave)
         tones.append(tones[0] + 12)
         if shape == "up":
             order = tones

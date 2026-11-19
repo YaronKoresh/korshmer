@@ -123,6 +123,7 @@ class PianoKeyItem(QGraphicsRectItem):
         self.snap_enabled = True
         self.dim_alpha = 1.0
         self.total_rows = 128
+        self.slide = None
 
         self.setFlags(
             QGraphicsItem.ItemIsSelectable
@@ -156,6 +157,11 @@ class PianoKeyItem(QGraphicsRectItem):
         self.refresh_style()
         self.update()
 
+    def set_slide(self, slide):
+        self.slide = slide or None
+        self.update_tooltip()
+        self.update()
+
     def refresh_style(self):
         fill, pen_color = NoteRenderer.note_colors(
             self.color, self.velocity, self.dim_alpha
@@ -171,7 +177,7 @@ class PianoKeyItem(QGraphicsRectItem):
     def update_tooltip(self):
         self.setToolTip(
             NoteRenderer.note_tooltip(
-                self.current_pitch(), self.velocity, self.track_name
+                self.current_pitch(), self.velocity, self.track_name, self.slide
             )
         )
 
@@ -189,6 +195,8 @@ class PianoKeyItem(QGraphicsRectItem):
             label,
             self.dim_alpha,
         )
+        if self.slide:
+            NoteRenderer.paint_slide(painter, rect, self.slide, self.dim_alpha)
 
     def hoverMoveEvent(self, event):
         margin = 10
@@ -676,6 +684,7 @@ class InteractivePianoRoll(QGraphicsView):
             item.setX(x)
             item.setRect(0, 0, width, item.rect().height())
             item.snap_enabled = snapping
+            item.set_slide(note.slide)
 
     def get_beat_width(self):
         return self.vm.beat_width
@@ -912,6 +921,7 @@ class InteractivePianoRoll(QGraphicsView):
         item.total_rows = self.vm.total_divisions
         if track is not None:
             item.set_track_style(track.color, track.name, track.muted)
+        item.set_slide(note.slide)
         if self.vm.divisions_per_octave != 12:
             item.setY(y)
         return item
@@ -1258,6 +1268,17 @@ class InteractivePianoRoll(QGraphicsView):
             lambda: self.model.set_notes_velocity(note_ids, velocity)
         )
         return len(note_ids)
+
+    def selected_slide_count(self):
+        selected = set(self._selected_note_ids())
+        return sum(1 for n in self.model.notes if n.id in selected and n.slide)
+
+    def remove_slide_selected(self):
+        self.sync_model_from_scene()
+        note_ids = self._selected_note_ids()
+        if not self.selected_slide_count():
+            return 0
+        return self._apply_edit(lambda: self.model.remove_slides(note_ids))
 
     def _wheel_velocity(self, item, delta_sign):
         now = time.monotonic()

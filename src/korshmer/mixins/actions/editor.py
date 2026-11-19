@@ -139,6 +139,17 @@ class EditorActionsMixin:
         if arranger is not None:
             arranger.transpose_selected(-12)
 
+    def on_piano_roll_remove_slide(self):
+        arranger = self._editor()
+        if arranger is None:
+            return
+        removed = arranger.remove_slide_selected()
+        if removed:
+            publish(
+                Event.STATUS_UPDATE,
+                text=f"Removed the slide from {removed} note(s)",
+            )
+
     def on_piano_roll_duplicate(self):
         arranger = self._editor()
         if arranger is not None:

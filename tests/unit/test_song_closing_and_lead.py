@@ -111,7 +111,7 @@ def test_song_closes_on_five_then_one(style):
         comp = _compose(style, seed, ("chords",))
         final = comp.sections[-1]
         prog = final.progression
-        last = (comp.start_bar + final.start_bar + final.bars - 1) % len(prog)
+        last = (final.bars - 1) % len(prog)
         assert prog[last] == 0
         assert prog[last - 1] == 4
 

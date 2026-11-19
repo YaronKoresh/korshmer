@@ -501,7 +501,9 @@ Help:
 
     def _show_piano_roll_context_menu(self, position):
         menu = self.context_menu_manager.create_piano_roll_menu(
-            self, self.arranger.clip_menu_actions(position)
+            self,
+            self.arranger.clip_menu_actions(position),
+            self.arranger.selected_slide_count(),
         )
         menu.exec(self.arranger.piano_roll.mapToGlobal(position))
 

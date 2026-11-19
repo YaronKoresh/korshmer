@@ -1417,6 +1417,12 @@ class ArrangerTimeline(QWidget):
     def humanize_selected(self, t=0.01, v=8):
         return self.piano_roll.humanize_selected(t, v)
 
+    def selected_slide_count(self):
+        return self.piano_roll.selected_slide_count()
+
+    def remove_slide_selected(self):
+        return self.piano_roll.remove_slide_selected()
+
     def set_snap(self, enabled):
         self.piano_roll.set_snap(enabled)
         if self.btn_snap.isChecked() != bool(enabled):
