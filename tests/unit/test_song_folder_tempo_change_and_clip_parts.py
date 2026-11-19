@@ -162,6 +162,7 @@ def test_a_saved_song_reopens_with_every_clip_in_place_after_the_originals_are_g
     )
     timeline.model.trim_clip(clip.id, 3.0, 5.0)
     timeline.model.set_clip_mute(clip.id, True)
+    timeline.piano_roll.load_model()
     timeline.piano_roll.set_tempo(150.0)
     song = _song_file(studio)
     studio._save_song_to(song)

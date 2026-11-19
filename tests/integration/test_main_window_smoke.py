@@ -226,7 +226,7 @@ class TestMidiGeneratorInWindow:
         window.combo_root.setCurrentText(root)
         window.combo_scale.setCurrentText(scale)
         window.spin_bpm.setValue(120)
-        window.spin_gen_minutes.setValue(0.5)
+        window.spin_gen_bars.setValue(16)
         window.spin_gen_seed.setValue(5)
 
     def test_generate_fills_the_editor_with_role_tracks_only(
@@ -338,10 +338,10 @@ class TestMidiGeneratorInWindow:
 
     def test_length_field_follows_the_generator_mode(self, window):
         window.combo_gen_mode.setCurrentText("Layer over editor")
-        assert not window.spin_gen_minutes.isEnabled()
+        assert not window.spin_gen_bars.isEnabled()
         assert not window.chk_gen_replace.isEnabled()
         window.combo_gen_mode.setCurrentText("New song")
-        assert window.spin_gen_minutes.isEnabled()
+        assert window.spin_gen_bars.isEnabled()
         assert window.chk_gen_replace.isEnabled()
 
     def test_engine_managed_options_are_not_asked_from_the_user(self, window):

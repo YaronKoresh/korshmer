@@ -246,7 +246,7 @@ class EditorActionsMixin:
             root=root,
             scale=scale,
             bpm=bpm,
-            minutes=self.spin_gen_minutes.value(),
+            bars=self.spin_gen_bars.value(),
             style=self.combo_gen_style.currentText(),
             mood=self.combo_gen_mood.currentText(),
             seed=self._generator_seed(),

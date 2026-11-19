@@ -1356,7 +1356,13 @@ class ArrangerTimeline(QWidget):
         self._waveform_workers = still_running
 
     def _on_waveform_ready(self, clip_id, waveform, duration):
-        if self.model.clip_by_id(clip_id) is None:
+        clip = self.model.clip_by_id(clip_id)
+        if clip is None:
+            return
+        measured = getattr(self.sender(), "path", clip.path)
+        if measured != clip.path:
+            self._queue_waveform(clip)
+            self._start_visible_waveforms()
             return
         self.model.set_clip_waveform(clip_id, waveform, duration)
         self.piano_roll.refresh_clip(clip_id)

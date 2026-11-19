@@ -20,7 +20,9 @@ from korshmer.midi_generation.korshmer_schema import (
     compose_routine_tracks,
     pentatonic_for,
     plan_schema,
+    validate_bars,
     validate_minutes,
+    whole_routines,
 )
 from korshmer.utils.tempo import validate_bpm
 from korshmer.utils.track_layout import merge_by_instrument
@@ -210,6 +212,7 @@ class ComposeOptions:
     scale: str
     bpm: float = 120.0
     minutes: float = 3.0
+    bars: int | None = None
     style: str = AUTO_STYLE
     structure: str = AUTO_STRUCTURE
     mood: str = "Auto"
@@ -271,7 +274,10 @@ def validate_options(options):
             "The generator needs a defined scale. "
             "Choose a scale in the THEORY tab (not Auto)."
         )
-    validate_minutes(options.minutes)
+    if options.bars is None:
+        validate_minutes(options.minutes)
+    else:
+        validate_bars(options.bars)
     validate_bpm(options.bpm)
     if options.style not in STYLE_CHOICES:
         raise ValueError(f"Unknown style: {options.style}")
@@ -987,7 +993,11 @@ def compose(options, existing=None):
     song_gains = None
     rng = random.Random(options.seed)
     bar = 240.0 / bpm
-    total_bars = bars_for_minutes(options.minutes, bpm)
+    total_bars = (
+        bars_for_minutes(options.minutes, bpm)
+        if options.bars is None
+        else whole_routines(options.bars)
+    )
     user_roles = tuple(r for r in _PRIORITY if r in options.roles)
     texture_on = options.texture_batches > 0
 

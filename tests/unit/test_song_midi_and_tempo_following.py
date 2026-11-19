@@ -18,11 +18,6 @@ from korshmer.mixins.actions.project_management import (
 )
 from korshmer.project_management.project_manager import ProjectManager
 from korshmer.ui.widgets.arranger.timeline import ArrangerTimeline
-from korshmer.ui.widgets.material.length_box import (
-    LengthPicker,
-    clock_text,
-    minutes_from_text,
-)
 
 RATE = 44100
 
@@ -389,78 +384,22 @@ def test_a_song_saved_inside_its_conversion_folder_is_not_copied(
     assert list(converted.glob("*.kproj"))
 
 
-def test_the_length_is_shown_and_typed_as_minutes_and_seconds(qapp):
-    picker = LengthPicker(0.5, 120.0, 3.0)
+def test_a_late_picture_of_an_earlier_recording_does_not_change_the_clip_length(
+    qapp, tmp_path
+):
+    timeline = _timeline(qapp)
+    short = _click_loop(tmp_path / "short.wav", seconds=2)
+    long = _click_loop(tmp_path / "long.wav", seconds=6)
+    clip = timeline.add_audio_clip(short, 0.0)
+    timeline.wait_for_waveforms()
+    timeline._start_waveform_worker(clip)
 
-    assert picker.box.text() == "3:00"
-    for typed, minutes in (
-        ("2:30", 2.5),
-        ("1:05", 65 / 60),
-        ("2.5", 2.5),
-        ("90s", 1.5),
-    ):
-        picker.box.lineEdit().setText(typed)
-        picker.box.interpretText()
-        assert picker.box.value() == pytest.approx(minutes)
-    assert clock_text(2.5) == "2:30"
-    assert minutes_from_text("soon") is None
+    clip.path = long
+    clip.rescale(6.0)
+    timeline.wait_for_waveforms()
+    QApplication.processEvents()
+    timeline.wait_for_waveforms()
+    QApplication.processEvents()
 
-
-def test_the_length_arrows_move_in_quarter_minute_steps(qapp):
-    picker = LengthPicker(0.5, 120.0, 3.0)
-
-    picker.box.stepUp()
-    assert picker.box.text() == "3:15"
-    picker.box.stepDown()
-    picker.box.stepDown()
-    assert picker.box.text() == "2:45"
-
-
-def test_quick_length_buttons_set_the_length_and_show_which_one_is_chosen(qapp):
-    picker = LengthPicker(0.5, 120.0, 3.0)
-
-    assert [button.text() for button in picker.quick.values()] == [
-        "0:30",
-        "1:00",
-        "1:30",
-        "2:00",
-        "3:00",
-        "4:00",
-        "5:00",
-    ]
-    picker.quick[90].click()
-    assert picker.box.value() == pytest.approx(1.5)
-    assert [
-        seconds
-        for seconds, button in picker.quick.items()
-        if button.isChecked()
-    ] == [90]
-    picker.box.setValue(1.75)
-    assert not any(button.isChecked() for button in picker.quick.values())
-
-
-def test_the_length_shows_how_many_bars_it_gives_at_the_song_tempo(qapp):
-    picker = LengthPicker(0.5, 120.0, 2.0, tempo=120.0)
-
-    assert picker.bar_count() == 60
-    assert "60 bars" in picker.bars.text()
-    picker.set_tempo(90.0)
-    assert picker.bar_count() == 45
-    assert "45 bars at 90 BPM" in picker.bars.text()
-
-
-def test_a_length_outside_the_allowed_range_is_brought_back_inside(qapp):
-    picker = LengthPicker(0.5, 120.0, 3.0)
-
-    picker.box.lineEdit().setText("0:10")
-    picker.box.interpretText()
-
-    assert picker.box.text() == "0:30"
-
-
-def test_turning_the_length_off_also_turns_off_its_box(qapp):
-    picker = LengthPicker(0.5, 120.0, 3.0)
-
-    picker.setEnabled(False)
-
-    assert not picker.box.isEnabled()
+    assert clip.length == pytest.approx(6.0, abs=0.01)
+    assert clip.duration == pytest.approx(6.0, abs=0.01)

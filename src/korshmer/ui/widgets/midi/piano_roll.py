@@ -644,33 +644,38 @@ class InteractivePianoRoll(QGraphicsView):
         ratio = new_beat_width / old_beat_width if old_beat_width > 0 else 1.0
         earlier_bpm = float(self.vm.tempo) * ratio
 
-        for item in self.scene.items():
-            if isinstance(item, PianoKeyItem):
-                beats_from_start = (
-                    item.x() / old_beat_width if old_beat_width > 0 else 0
-                )
-                item.setX(beats_from_start * new_beat_width)
-
-                rect = item.rect()
-                duration_in_beats = (
-                    rect.width() / old_beat_width if old_beat_width > 0 else 1.0
-                )
-                item.setRect(
-                    0, 0, duration_in_beats * new_beat_width, rect.height()
-                )
-                item.grid_x = new_beat_width
-
+        self.sync_model_from_scene()
         self.model.follow_tempo(ratio)
         for clip_id in self._clip_items:
             self.refresh_clip(clip_id)
         self.vm.tempo_map = getattr(self.model, "tempo_map", None)
         self.model.grid_offset = self.vm.grid_offset
-        for item in self._note_items.values():
-            item.grid_origin = self.vm.grid_offset_x
+        self._place_note_items()
         self._update_scene_rect()
         self.scene.update()
         self.viewport().update()
         self.tempo_followed.emit(earlier_bpm, float(self.vm.tempo))
+
+    def _place_note_items(self):
+        notes = self.model.notes_by_id()
+        for note_id, item in self._note_items.items():
+            note = notes.get(note_id)
+            if note is None:
+                continue
+            x, width, _y = NoteRenderer.note_geometry(
+                note,
+                self.vm.pixels_per_second,
+                self.vm.grid_size,
+                self.vm.divisions_per_octave,
+                self.vm.total_divisions,
+            )
+            snapping = item.snap_enabled
+            item.snap_enabled = False
+            item.grid_x = self.vm.beat_width
+            item.grid_origin = self.vm.grid_offset_x
+            item.setX(x)
+            item.setRect(0, 0, width, item.rect().height())
+            item.snap_enabled = snapping
 
     def get_beat_width(self):
         return self.vm.beat_width
@@ -678,16 +683,9 @@ class InteractivePianoRoll(QGraphicsView):
     def stretch_notes(self, ratio):
         if ratio == 1.0 or ratio <= 0:
             return
-
-        for item in self.scene.items():
-            if isinstance(item, PianoKeyItem):
-                new_x = item.x() * ratio
-                current_rect = item.rect()
-                new_width = current_rect.width() * ratio
-                item.setRect(0, 0, new_width, current_rect.height())
-                item.setPos(new_x, item.y())
-
+        self.sync_model_from_scene()
         self.model.scale_note_times(ratio)
+        self._place_note_items()
         self._update_scene_rect()
 
     def zoom(self, factor_x=1.0, factor_y=1.0):

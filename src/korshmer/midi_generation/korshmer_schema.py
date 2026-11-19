@@ -24,6 +24,9 @@ MIN_ACTIVE_TRACKS = 2
 MIN_MINUTES = 0.5
 MAX_MINUTES = 120.0
 DEFAULT_MINUTES = 3.0
+MIN_BARS = 4
+MAX_BARS = 2048
+DEFAULT_BARS = 64
 
 LONG_PROGRAMS = {
     "Violin": 40,
@@ -86,6 +89,27 @@ def bars_for_minutes(minutes, bpm):
     seconds_per_bar = 60.0 / validate_bpm(bpm) * BEATS_PER_BAR
     bars = math.ceil(validate_minutes(minutes) * 60.0 / seconds_per_bar)
     return max(ROUTINE_BARS, -(-bars // ROUTINE_BARS) * ROUTINE_BARS)
+
+
+def validate_bars(bars):
+    if isinstance(bars, bool) or not isinstance(bars, (int, float)):
+        raise ValueError("The number of bars must be a whole number.")
+    if not math.isfinite(bars) or int(bars) != bars:
+        raise ValueError("The number of bars must be a whole number.")
+    if not MIN_BARS <= bars <= MAX_BARS:
+        raise ValueError(
+            f"The length must be between {MIN_BARS} and {MAX_BARS} bars."
+        )
+    return int(bars)
+
+
+def whole_routines(bars):
+    bars = validate_bars(bars)
+    return -(-bars // ROUTINE_BARS) * ROUTINE_BARS
+
+
+def seconds_for_bars(bars, bpm):
+    return bars * 60.0 / validate_bpm(bpm) * BEATS_PER_BAR
 
 
 def plan_schema(total_bars):

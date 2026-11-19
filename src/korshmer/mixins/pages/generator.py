@@ -15,14 +15,15 @@ from PySide6.QtWidgets import (
 from korshmer.constants import HELP_TEXTS
 from korshmer.midi_generation import composer
 from korshmer.midi_generation.korshmer_schema import (
-    DEFAULT_MINUTES,
-    MAX_MINUTES,
-    MIN_MINUTES,
+    DEFAULT_BARS,
+    MAX_BARS,
+    MIN_BARS,
+    ROUTINE_BARS,
 )
 from korshmer.ui.widgets.material.adaptive import FlowLayout
 from korshmer.ui.widgets.material.button import HelpButton, MaterialButton
 from korshmer.ui.widgets.material.card import MaterialCard
-from korshmer.ui.widgets.material.length_box import LengthPicker
+from korshmer.ui.widgets.material.length_box import BarsPicker
 
 
 class GeneratorPageMixin:
@@ -71,13 +72,14 @@ class GeneratorPageMixin:
         self.combo_gen_mode = QComboBox()
         self.combo_gen_mode.addItems(list(composer.MODES))
         tempo_box = getattr(self, "spin_bpm", None)
-        self.gen_length = LengthPicker(
-            MIN_MINUTES,
-            MAX_MINUTES,
-            DEFAULT_MINUTES,
+        self.gen_length = BarsPicker(
+            MIN_BARS,
+            MAX_BARS,
+            DEFAULT_BARS,
+            ROUTINE_BARS,
             tempo_box.value() if tempo_box is not None else 120.0,
         )
-        self.spin_gen_minutes = self.gen_length.box
+        self.spin_gen_bars = self.gen_length.box
         if tempo_box is not None:
             tempo_box.valueChanged.connect(self.gen_length.set_tempo)
         self.combo_gen_style = QComboBox()
@@ -100,9 +102,7 @@ class GeneratorPageMixin:
                 self.combo_gen_mode,
             ),
             (
-                self.create_label_help(
-                    "Length", HELP_TEXTS["generator_minutes"]
-                ),
+                self.create_label_help("Bars", HELP_TEXTS["generator_bars"]),
                 self.gen_length,
             ),
             (QLabel("Style"), self.combo_gen_style),

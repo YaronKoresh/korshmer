@@ -33,7 +33,7 @@ class TestGeneratorHelpTexts:
         for key in (
             "midi_generator",
             "generator_mode",
-            "generator_minutes",
+            "generator_bars",
             "generator_roles",
             "seed",
             "stems_editor",
