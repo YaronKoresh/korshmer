@@ -1,11 +1,13 @@
 import logging
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from itertools import pairwise
 
 import librosa
 import numpy as np
+import psutil
 from numba import njit
 from scipy import signal
 from scipy.ndimage import (
@@ -41,6 +43,11 @@ logger = logging.getLogger(__name__)
 EXCITER_LOW_HZ = 1400.0
 EXCITER_HIGH_HZ = 22000.0
 EXCITER_BAND_COUNT = 40
+EXCITER_WORKING_BYTES = 1.5e9
+SATURATION_BLOCK = 1 << 18
+MASTERING_PEAK_COPIES = 12
+LIMITER_BLOCK = 1 << 20
+EXCITER_COPIES_PER_BAND = 3
 EXCITER_BANDS_PER_OCTAVE = 10
 EXCITER_FILTER_ORDER = 4
 EXCITER_MAX_HARMONIC_ORDER = 7
@@ -310,6 +317,61 @@ def _limiter_release(gs_db, rc_fast, rc_slow, w_slow):
     return out
 
 
+def _zero_phase(sos: np.ndarray, y: np.ndarray) -> np.ndarray:
+    if y.ndim < 2:
+        result: np.ndarray = sosfiltfilt(sos, y, axis=-1)
+        return result
+    filtered = np.empty(y.shape, dtype=np.float64)
+    for index, row in enumerate(y):
+        filtered[index] = sosfiltfilt(sos, row, axis=-1)
+    return filtered
+
+
+def _peak_power(band: np.ndarray, win: int) -> np.ndarray:
+    power: np.ndarray = uniform_filter1d(
+        band[0] ** 2, size=win, axis=-1, mode="nearest"
+    )
+    for row in band[1:]:
+        np.maximum(
+            power,
+            uniform_filter1d(row**2, size=win, axis=-1, mode="nearest"),
+            out=power,
+        )
+    return power
+
+
+def mastering_memory_bytes(
+    samples: int, rate: float, target_rate: float
+) -> int:
+    at_target = samples * float(target_rate) / float(rate)
+    return int(MASTERING_PEAK_COPIES * at_target * 2 * 8)
+
+
+def _require_free_memory(samples: int, rate: float, target_rate: float) -> None:
+    needed = mastering_memory_bytes(samples, rate, target_rate)
+    free = int(psutil.virtual_memory().available)
+    if needed > free:
+        raise MemoryError(
+            f"Mastering this {samples / rate / 60.0:.0f}-minute song needs about "
+            f"{needed / 1e9:.1f} GB of free memory and only {free / 1e9:.1f} GB "
+            "is free. Close other programs or master a shorter part."
+        )
+
+
+def _lowered_rate(x: np.ndarray, factor: int, kernel: np.ndarray) -> np.ndarray:
+    count = -(-x.shape[-1] // factor)
+    reach = 2 * (kernel.shape[0] // factor + 1)
+    lowered = np.empty((x.shape[0], count), dtype=np.float64)
+    for index, row in enumerate(x):
+        for first in range(0, count, LIMITER_BLOCK):
+            last = min(count, first + LIMITER_BLOCK)
+            before = min(first, reach)
+            piece = row[(first - before) * factor : (last + reach) * factor]
+            down = signal.resample_poly(piece, 1, factor, window=kernel)
+            lowered[index, first:last] = down[before : before + last - first]
+    return lowered
+
+
 def _build_oversampling_kernel(
     sr: int, os_factor: int, kaiser_beta: float
 ) -> np.ndarray:
@@ -338,15 +400,20 @@ def _saturate_analog_warmth(
         return result
 
     kernel = _build_oversampling_kernel(sr, oversample, EXCITER_KAISER_BETA)
-    rows = []
-    for row in band:
-        up = resample_poly(row, up=oversample, down=1, window=kernel)
-        distorted = curve(up.astype(np.float32))
-        down = resample_poly(distorted, up=1, down=oversample, window=kernel)[
-            : row.shape[-1]
-        ]
-        rows.append(down)
-    return np.stack(rows).astype(np.float64)
+    reach = 2 * (kernel.shape[0] // oversample + 1)
+    saturated = np.empty(band.shape, dtype=np.float64)
+    for index, row in enumerate(band):
+        for first in range(0, row.shape[-1], SATURATION_BLOCK):
+            last = min(row.shape[-1], first + SATURATION_BLOCK)
+            before = min(first, reach)
+            piece = row[first - before : min(row.shape[-1], last + reach)]
+            up = resample_poly(piece, up=oversample, down=1, window=kernel)
+            distorted = curve(up.astype(np.float32))
+            down = resample_poly(
+                distorted, up=1, down=oversample, window=kernel
+            )
+            saturated[index, first:last] = down[before : before + last - first]
+    return saturated
 
 
 def _band_envelope(band: np.ndarray, sr: int) -> np.ndarray:
@@ -391,7 +458,7 @@ def _excite_band(
         btype="band",
         output="sos",
     )
-    band = sosfiltfilt(band_sos, y, axis=-1)
+    band = _zero_phase(band_sos, y)
     if np.max(np.abs(band)) <= EXCITER_SILENCE_LEVEL:
         return np.zeros_like(y)
 
@@ -399,10 +466,15 @@ def _excite_band(
     env_floor = float(np.max(env)) * 10.0 ** (EXCITER_ENV_FLOOR_DB / 20.0)
     if env_floor <= EXCITER_SILENCE_LEVEL:
         return np.zeros_like(y)
-    normalized = np.clip(
-        band / np.maximum(env, env_floor)[None, :],
+    rms_band = np.sqrt(np.mean(band**2))
+    normalized = band
+    del band
+    normalized /= np.maximum(env, env_floor)[None, :]
+    np.clip(
+        normalized,
         -EXCITER_NORMALIZED_LIMIT,
         EXCITER_NORMALIZED_LIMIT,
+        out=normalized,
     )
 
     drive = min(
@@ -425,18 +497,19 @@ def _excite_band(
         btype="band",
         output="sos",
     )
-    harmonics = sosfiltfilt(harmonics_sos, saturated, axis=-1) * env[None, :]
+    del normalized
+    harmonics = _zero_phase(harmonics_sos, saturated)
+    del saturated
+    harmonics *= env[None, :]
+    del env
 
-    rms_band = np.sqrt(np.mean(band**2))
     rms_harmonics = np.sqrt(np.mean(harmonics**2))
     if rms_harmonics <= EXCITER_SILENCE_LEVEL:
         return np.zeros_like(y)
 
     cap_db = _harmonic_cap_db(f_high)
-    result: np.ndarray = harmonics * (
-        rms_band * 10.0 ** (cap_db / 20.0) / (rms_harmonics + 1e-12)
-    )
-    return result
+    harmonics *= rms_band * 10.0 ** (cap_db / 20.0) / (rms_harmonics + 1e-12)
+    return harmonics
 
 
 def _harmonic_cap_db(freq_hz: float) -> float:
@@ -456,13 +529,27 @@ def _generate_harmonics(
     padded = np.pad(y, ((0, 0), (pre, pre)), mode="reflect")
     harmonics = np.zeros_like(padded)
     bands = list(pairwise(edges_hz))
-    workers = min(len(bands), compute_worker_count(KIND_COMPUTE))
+    workers = _bands_at_once(len(bands), padded.nbytes)
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        for excited in pool.map(
-            lambda band_hz: _excite_band(padded, sr, band_hz, settings), bands
-        ):
-            harmonics += excited
+        waiting: deque = deque()
+        for band_hz in bands:
+            waiting.append(
+                pool.submit(_excite_band, padded, sr, band_hz, settings)
+            )
+            if len(waiting) >= workers:
+                harmonics += waiting.popleft().result()
+        while waiting:
+            harmonics += waiting.popleft().result()
     return harmonics[:, pre : pre + n]
+
+
+def _bands_at_once(band_count: int, song_bytes: int) -> int:
+    affordable = int(
+        EXCITER_WORKING_BYTES // (EXCITER_COPIES_PER_BAND * song_bytes)
+    )
+    return max(
+        1, min(band_count, compute_worker_count(KIND_COMPUTE), affordable)
+    )
 
 
 def _compute_band_centers_hz(low_hz: float, ceiling_hz: float) -> np.ndarray:
@@ -649,13 +736,16 @@ def apply_exciter(
     pad = ((0, 0), (hop, total - hop - n))
     y_pad = np.pad(y, pad, mode="reflect")
     h_pad = np.pad(harmonics, pad, mode="reflect")
+    del harmonics
     air = np.zeros_like(y_pad)
     for start in range(0, total - block + 1, hop):
         seg = slice(start, start + block)
         air[:, seg] += window * _fill_block(
             y_pad[:, seg], h_pad[:, seg], sr, centers_hz, active, mix
         )
-    result = y + air[:, hop : hop + n]
+    del y_pad, h_pad
+    result = air[:, hop : hop + n]
+    result += y
     return result
 
 
@@ -1157,10 +1247,7 @@ class SmartMastering:
     ) -> np.ndarray:
         sr = self.sr
         win = int(np.clip(sr * 1.5 / max(f_lo, 30.0), sr * 0.003, sr * 0.025))
-        power = np.max(
-            uniform_filter1d(band**2, size=win, axis=-1, mode="nearest"),
-            axis=0,
-        )
+        power = _peak_power(band, win)
         det_db: np.ndarray = 10.0 * np.log10(power + 1e-14)
 
         active = det_db > (det_db.max() - 80.0)
@@ -1182,11 +1269,13 @@ class SmartMastering:
         kn = (over > -knee / 2.0) & ~hi
         gr[hi] = over[hi] * slope
         gr[kn] = slope * (over[kn] + knee / 2.0) ** 2 / (2.0 * knee)
+        del over, hi, kn, power, active
 
         ac = np.exp(-1.0 / (sr * cfg.attack_ms / 1000.0 + 1e-9))
         rc = np.exp(-1.0 / (sr * cfg.release_ms / 1000.0 + 1e-9))
         gr = _decoupled_envelope(np.ascontiguousarray(gr), ac, rc)
         downward_gain = 10.0 ** (-gr / 20.0)
+        del gr
 
         upward_gain = np.ones_like(det_db)
         if cfg.upward_boost_db > 0.0:
@@ -1217,12 +1306,18 @@ class SmartMastering:
                 np.ascontiguousarray(up_boost_db), ac, rc
             )
             upward_gain = 10.0 ** (up_env_db / 20.0)
+            del up_boost_db, up_env_db
 
+        del det_db
         total_gain = downward_gain * upward_gain
+        del downward_gain, upward_gain
 
         if self.multiband_params.auto_makeup:
             e_in = float(np.sum(band**2))
-            e_out = float(np.sum((band * total_gain) ** 2))
+            shaped = band * total_gain
+            np.square(shaped, out=shaped)
+            e_out = float(np.sum(shaped))
+            del shaped
             if e_out > 1e-20:
                 total_gain = total_gain * min(np.sqrt(e_in / e_out), 1.41)
         result: np.ndarray = band * total_gain
@@ -1249,8 +1344,11 @@ class SmartMastering:
             if i < len(fcs):
                 wn = float(np.clip(fcs[i] / (self.sr / 2.0), 1e-4, 0.985))
                 sos = signal.butter(2, wn, btype="low", output="sos")
-                band = signal.sosfiltfilt(sos, current, axis=-1)
-                current = current - band
+                band = _zero_phase(sos, current)
+                if current is y2:
+                    current = current - band
+                else:
+                    current -= band
             else:
                 band = current
             f_lo = fcs[i - 1] if i > 0 else lo
@@ -1283,13 +1381,8 @@ class SmartMastering:
             sos = signal.butter(
                 2, [f_lo / nyq, f_hi / nyq], btype="band", output="sos"
             )
-            band = signal.sosfiltfilt(sos, y2, axis=-1)
-            power = np.max(
-                uniform_filter1d(
-                    band**2, size=det_win, axis=-1, mode="nearest"
-                ),
-                axis=0,
-            )
+            band = _zero_phase(sos, y2)
+            power = _peak_power(band, det_win)
             det_db: np.ndarray = 10.0 * np.log10(power + 1e-14)
             if det_db.max() < -90.0:
                 continue
@@ -1303,7 +1396,8 @@ class SmartMastering:
                 np.ascontiguousarray(boost_db), ac, rc
             )
             gain = 10.0 ** (boost_db / 20.0) - 1.0
-            out += band * gain[None, :]
+            band *= gain[None, :]
+            out += band
         return out[0] if np.ndim(y) == 1 else out
 
     def _stereo_widen(
@@ -1370,21 +1464,25 @@ class SmartMastering:
         kernel = _build_oversampling_kernel(self.sr, p.os_factor, p.kaiser_beta)
 
         def up(a):
-            rows = [
-                signal.resample_poly(row, p.os_factor, 1, window=kernel).astype(
-                    np.float32
-                )
-                for row in a
-            ]
-            return np.ascontiguousarray(np.stack(rows))
+            raised = None
+            for index, row in enumerate(a):
+                high = signal.resample_poly(row, p.os_factor, 1, window=kernel)
+                if raised is None:
+                    raised = np.empty(
+                        (len(a), high.shape[-1]), dtype=np.float32
+                    )
+                raised[index] = high
+            return raised
 
         if not p.split_hz or y2.shape[-1] < 512:
             return [up(y2)]
 
         wn = float(np.clip(p.split_hz / (self.sr / 2.0), 1e-4, 0.45))
         sos = signal.butter(2, wn, btype="low", output="sos")
-        lo = signal.sosfiltfilt(sos, y2, axis=-1)
-        return [up(lo), up(y2 - lo)]
+        lo = _zero_phase(sos, y2)
+        low_band = up(lo)
+        np.subtract(y2, lo, out=lo)
+        return [low_band, up(lo)]
 
     def _limit_band_inplace(
         self,
@@ -1453,9 +1551,10 @@ class SmartMastering:
                 os_factor,
             )
             self._soft_clip_inplace(lo, p.bass_clip_knee * ceil_lo, ceil_lo)
-            x = bands_os[1] * drive
-            x += lo
-            del lo
+            x = lo
+            for first in range(0, x.shape[-1], LIMITER_BLOCK):
+                part = slice(first, first + LIMITER_BLOCK)
+                x[:, part] += bands_os[1][:, part] * drive
         else:
             x = bands_os[0] * drive
 
@@ -1481,19 +1580,14 @@ class SmartMastering:
                     knee + span * np.tanh((a[over] - knee) / span)
                 )
 
-        out = signal.resample_poly(
+        result = _lowered_rate(
             x,
-            1,
             os_factor,
-            axis=-1,
-            window=_build_oversampling_kernel(
-                self.sr, os_factor, p.kaiser_beta
-            ),
+            _build_oversampling_kernel(self.sr, os_factor, p.kaiser_beta),
         )
+        del x
         lim_full = 10.0 ** (ceil_db / 20.0)
-        result: np.ndarray = np.clip(
-            out.astype(np.float64), -lim_full, lim_full
-        )
+        np.clip(result, -lim_full, lim_full, out=result)
         return result
 
     def _apply_limiter(
@@ -1711,6 +1805,7 @@ class SmartMastering:
 
         orig_len = y.shape[-1]
         orig_sr = self.sr
+        _require_free_memory(orig_len, orig_sr, self.resampling_target)
 
         y_resamp = y
         if self.sr != self.resampling_target:
@@ -1718,51 +1813,48 @@ class SmartMastering:
             self.sr = self.resampling_target
 
         expected_len = int(round(orig_len * self.sr / orig_sr))
-        y_stereo = stereo(y_resamp)
+        work = stereo(y_resamp)
+        del y_resamp
 
-        y_clean = freq_cut(
-            y_stereo, self.sr, low_cut=self.low_cut, high_cut=None
-        )
+        work = freq_cut(work, self.sr, low_cut=self.low_cut, high_cut=None)
 
-        y_clean = self._balance_channels(y_clean)
-        y_work = self._apply_lufs(y_clean, self.work_lufs)
+        work = self._balance_channels(work)
+        work = self._apply_lufs(work, self.work_lufs)
 
-        y_eq = self._timed("eq", self._phase, y_work, self.phase_type)
+        work = self._timed("eq", self._phase, work, self.phase_type)
 
-        y_mbc = self._timed("multiband", self._multiband_compress, y_eq)
+        work = self._timed("multiband", self._multiband_compress, work)
 
         if self.bass_enhance_mix > 0.0:
-            y_mbc = self._timed(
+            work = self._timed(
                 "bass_enhancer",
                 apply_bass_enhancer,
-                y_mbc,
+                work,
                 self.sr,
                 mix=self.bass_enhance_mix,
             )
 
         if self.exciter_mix > 0.0:
-            y_air = self._timed(
+            work = self._timed(
                 "exciter",
                 apply_exciter,
-                y_mbc,
+                work,
                 self.sr,
                 low_hz=EXCITER_LOW_HZ,
                 high_hz=self.high_cut or EXCITER_HIGH_HZ,
                 mix=self.exciter_mix,
             )
-        else:
-            y_air = y_mbc
 
-        y_exp = self._timed("expansion", self._upward_expand, y_air)
+        work = self._timed("expansion", self._upward_expand, work)
 
-        y_wide = self._timed("stereo_widen", self._stereo_widen, stereo(y_exp))
+        work = self._timed("stereo_widen", self._stereo_widen, stereo(work))
 
-        y_wide = self._balance_channels(y_wide)
-        y_band = freq_cut(
-            y_wide, self.sr, low_cut=self.low_cut, high_cut=self.high_cut
+        work = self._balance_channels(work)
+        work = freq_cut(
+            work, self.sr, low_cut=self.low_cut, high_cut=self.high_cut
         )
 
-        pre_lufs = self._measure_lufs(y_band)
+        pre_lufs = self._measure_lufs(work)
         rise_cap = self.work_lufs + self.pre_limiter_rise_lu
         if pre_lufs is not None and pre_lufs > rise_cap:
             logger.info(
@@ -1770,17 +1862,18 @@ class SmartMastering:
                 pre_lufs,
                 rise_cap,
             )
-            y_band = y_band * 10.0 ** ((rise_cap - pre_lufs) / 20.0)
+            work = work * 10.0 ** ((rise_cap - pre_lufs) / 20.0)
 
         lp = self.limiter_defaults
         if lp.drive_db is None:
             y_lim = self._timed(
-                "limiter", self._limit_to_target, y_band, self.target_lufs, lp
+                "limiter", self._limit_to_target, work, self.target_lufs, lp
             )
         else:
             y_lim = self._timed(
-                "limiter", self._apply_limiter, y_band, lp.drive_db, lp.ceil_db
+                "limiter", self._apply_limiter, work, lp.drive_db, lp.ceil_db
             )
+        del work
 
         lin_amp = 10.0 ** ((lp.ceil_db - TRUE_PEAK_GUARD_DB) / 20.0)
         y_clip = np.clip(y_lim, -lin_amp, lin_amp)

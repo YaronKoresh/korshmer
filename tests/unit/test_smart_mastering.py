@@ -12,10 +12,19 @@ from korshmer.audio_processing.smart_mastering import (
     validation_report,
 )
 
+FLATNESS_SECONDS = 10
 
-def test_slope_db_zero_is_flat():
+
+@pytest.fixture(autouse=True)
+def _repeatable_noise():
+    np.random.seed(20261120)
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_slope_db_zero_is_flat(seed):
     sr = 44100
-    noise = np.random.randn(2, sr).astype(np.float32)
+    rng = np.random.default_rng(seed)
+    noise = rng.standard_normal((2, FLATNESS_SECONDS * sr)).astype(np.float32)
     cfg = SmartMasteringConfig(
         sample_rate=sr, slope_db=0.0, correction_strength=1.0
     )

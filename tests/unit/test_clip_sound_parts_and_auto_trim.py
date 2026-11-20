@@ -132,9 +132,10 @@ def test_a_softer_stretch_of_a_noise_like_sound_is_not_cut_out():
 
 
 def test_a_much_quieter_second_sound_is_still_found_over_background_noise():
-    assert _two_sounds_at_their_places(
-        _spans(_joined(-45.0, levels=(0.3, 0.03)))
-    )
+    spans = _spans(_joined(-45.0, levels=(0.3, 0.03)))
+
+    assert len(spans) == 2
+    assert np.allclose(spans, [(1.95, 7.05), (10.95, 15.0)], atol=0.25)
 
 
 def test_a_soft_passage_inside_continuous_music_is_not_cut_out():
