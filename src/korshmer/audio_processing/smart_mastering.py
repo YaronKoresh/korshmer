@@ -1,6 +1,7 @@
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from itertools import pairwise
@@ -25,7 +26,7 @@ from scipy.signal import (
     welch,
 )
 
-from ..exceptions import InvalidAudioInputError
+from ..exceptions import InvalidAudioInputError, MasteringCancelledError
 from ..utils.worker_count import KIND_COMPUTE, compute_worker_count
 from .generate_bands import generate_bands
 from .validation import (
@@ -92,6 +93,87 @@ AUDIO_SHAPE_HINT = (
 )
 AUDIO_DTYPE_HINT = "Convert the audio to a float or integer dtype."
 AUDIO_FINITE_HINT = "Replace NaN and infinite samples before mastering."
+STAGE_PREPARE = "prepare"
+STAGE_TONE = "tone"
+STAGE_DYNAMICS = "dynamics"
+STAGE_BASS = "bass"
+STAGE_HARMONICS = "harmonics"
+STAGE_TREBLE_FILL = "treble_fill"
+STAGE_DETAILS = "details"
+STAGE_WIDTH = "width"
+STAGE_LOUDNESS = "loudness"
+MASTERING_STAGE_SHARES = {
+    STAGE_PREPARE: 0.7,
+    STAGE_TONE: 0.8,
+    STAGE_DYNAMICS: 3.0,
+    STAGE_BASS: 0.5,
+    STAGE_HARMONICS: 77.0,
+    STAGE_TREBLE_FILL: 1.6,
+    STAGE_DETAILS: 2.0,
+    STAGE_WIDTH: 1.0,
+    STAGE_LOUDNESS: 13.4,
+}
+MASTERING_STAGE_NAMES = {
+    STAGE_PREPARE: "Preparing the song",
+    STAGE_TONE: "Balancing the tone",
+    STAGE_DYNAMICS: "Evening out loud and quiet parts",
+    STAGE_BASS: "Warming the bass",
+    STAGE_HARMONICS: "Adding treble harmonics",
+    STAGE_TREBLE_FILL: "Filling in the missing treble",
+    STAGE_DETAILS: "Bringing out quiet details",
+    STAGE_WIDTH: "Widening the stereo image",
+    STAGE_LOUDNESS: "Setting the final loudness",
+}
+MASTERING_FINISHED_NAME = "Mastering finished"
+MASTERING_CANCELLED_MESSAGE = "Mastering was cancelled."
+HARMONICS_BAND_BASE_COST = 0.25
+HARMONICS_BAND_COST_PER_OVERSAMPLE = 0.375
+LIMITER_PREPARE_SHARE = 0.17
+LIMITER_EXPECTED_PASSES = 3
+
+ProgressCallback = Callable[[float, str], None]
+StopCallback = Callable[[], bool]
+
+
+class MasteringProgress:
+    def __init__(
+        self,
+        report: ProgressCallback | None = None,
+        should_stop: StopCallback | None = None,
+        stages: tuple[str, ...] = tuple(MASTERING_STAGE_SHARES),
+    ) -> None:
+        self._report = report
+        self._should_stop = should_stop
+        self._total = sum(MASTERING_STAGE_SHARES[stage] for stage in stages)
+        self._done = 0.0
+        self._span = 0.0
+        self._percent = 0.0
+        self._name = ""
+
+    def check_stop(self) -> None:
+        if self._should_stop is not None and self._should_stop():
+            raise MasteringCancelledError(MASTERING_CANCELLED_MESSAGE)
+
+    def begin(self, stage: str) -> None:
+        self._done += self._span
+        self._span = MASTERING_STAGE_SHARES[stage]
+        self._name = MASTERING_STAGE_NAMES[stage]
+        self.advance(0.0)
+
+    def advance(self, fraction: float, detail: str = "") -> None:
+        self.check_stop()
+        if self._report is None:
+            return
+        reached = self._done + self._span * min(max(fraction, 0.0), 1.0)
+        self._percent = max(self._percent, 100.0 * reached / self._total)
+        name = f"{self._name} ({detail})" if detail else self._name
+        self._report(self._percent, name)
+
+    def finish(self) -> None:
+        self.check_stop()
+        if self._report is not None:
+            self._percent = 100.0
+            self._report(self._percent, MASTERING_FINISHED_NAME)
 
 
 @dataclass
@@ -199,6 +281,15 @@ class ExciterSettings:
     drive: float | None
     oversample: int
     ceiling_hz: float
+
+
+@dataclass(frozen=True)
+class ExciterBandPlan:
+    f_low: float
+    f_high: float
+    guard_low: float
+    guard_high: float
+    oversample: int
 
 
 @dataclass
@@ -428,19 +519,18 @@ def _band_envelope(band: np.ndarray, sr: int) -> np.ndarray:
     return result
 
 
-def _excite_band(
-    y: np.ndarray,
+def _plan_band(
     sr: int,
     band_hz: tuple[float, float],
     settings: ExciterSettings,
-) -> np.ndarray:
+) -> ExciterBandPlan | None:
     nyquist = sr / 2.0
     low_hz, high_hz = band_hz
 
     f_low = max(low_hz, 20.0)
     f_high = min(high_hz, settings.ceiling_hz * 0.98)
     if f_low >= f_high - 10.0:
-        return np.zeros_like(y)
+        return None
 
     order = (
         EXCITER_MAX_HARMONIC_ORDER_LOW
@@ -450,7 +540,39 @@ def _excite_band(
     guard_low = f_high * EXCITER_GUARD_RATIO
     guard_high = min(settings.ceiling_hz, f_high * order)
     if guard_low >= guard_high - 50.0:
+        return None
+
+    is_oversampling_needed = f_high * order > nyquist
+    return ExciterBandPlan(
+        f_low=f_low,
+        f_high=f_high,
+        guard_low=guard_low,
+        guard_high=guard_high,
+        oversample=settings.oversample if is_oversampling_needed else 2,
+    )
+
+
+def _band_cost(plan: ExciterBandPlan | None) -> float:
+    if plan is None:
+        return 0.0
+    return (
+        HARMONICS_BAND_BASE_COST
+        + HARMONICS_BAND_COST_PER_OVERSAMPLE * plan.oversample
+    )
+
+
+def _excite_band(
+    y: np.ndarray,
+    sr: int,
+    band_hz: tuple[float, float],
+    settings: ExciterSettings,
+) -> np.ndarray:
+    plan = _plan_band(sr, band_hz, settings)
+    if plan is None:
         return np.zeros_like(y)
+    nyquist = sr / 2.0
+    f_low, f_high = plan.f_low, plan.f_high
+    guard_low, guard_high = plan.guard_low, plan.guard_high
 
     band_sos = butter(
         EXCITER_FILTER_ORDER,
@@ -481,13 +603,7 @@ def _excite_band(
         EXCITER_PEAK_DRIVE if settings.drive is None else settings.drive,
         EXCITER_MAX_DRIVE,
     )
-    is_oversampling_needed = f_high * order > nyquist
-    saturated = _saturate_analog_warmth(
-        normalized,
-        sr,
-        drive,
-        settings.oversample if is_oversampling_needed else 2,
-    )
+    saturated = _saturate_analog_warmth(normalized, sr, drive, plan.oversample)
 
     wn0 = np.clip(guard_low / nyquist, 0.01, 0.98)
     wn1 = np.clip(guard_high / nyquist, wn0 + 0.01, 0.995)
@@ -523,23 +639,37 @@ def _generate_harmonics(
     sr: int,
     edges_hz: np.ndarray,
     settings: ExciterSettings,
+    progress: MasteringProgress,
 ) -> np.ndarray:
     n = y.shape[-1]
     pre = min(n - 1, int(sr * EXCITER_EDGE_PAD_MS / 1000.0))
     padded = np.pad(y, ((0, 0), (pre, pre)), mode="reflect")
     harmonics = np.zeros_like(padded)
     bands = list(pairwise(edges_hz))
+    costs = [_band_cost(_plan_band(sr, band_hz, settings)) for band_hz in bands]
+    all_costs = sum(costs) or 1.0
     workers = _bands_at_once(len(bands), padded.nbytes)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         waiting: deque = deque()
+        finished = 0
         for band_hz in bands:
             waiting.append(
                 pool.submit(_excite_band, padded, sr, band_hz, settings)
             )
             if len(waiting) >= workers:
                 harmonics += waiting.popleft().result()
+                finished += 1
+                progress.advance(
+                    sum(costs[:finished]) / all_costs,
+                    f"band {finished} of {len(bands)}",
+                )
         while waiting:
             harmonics += waiting.popleft().result()
+            finished += 1
+            progress.advance(
+                sum(costs[:finished]) / all_costs,
+                f"band {finished} of {len(bands)}",
+            )
     return harmonics[:, pre : pre + n]
 
 
@@ -702,8 +832,10 @@ def apply_exciter(
     drive: float | None = None,
     oversample: int = 4,
     mix: float = 1.0,
+    progress: MasteringProgress | None = None,
 ) -> np.ndarray:
     validate_sample_rate(sr)
+    progress = progress or MasteringProgress()
     y = stereo(y, sr=sr)
     mix = float(np.clip(mix, 0.0, 1.0))
     if mix <= 0.0 or y.shape[-1] < EXCITER_MIN_SAMPLES:
@@ -717,7 +849,9 @@ def apply_exciter(
     settings = ExciterSettings(
         drive=drive, oversample=oversample, ceiling_hz=ceiling_hz
     )
-    harmonics = _generate_harmonics(y, sr, edges_hz, settings)
+    progress.begin(STAGE_HARMONICS)
+    harmonics = _generate_harmonics(y, sr, edges_hz, settings, progress)
+    progress.begin(STAGE_TREBLE_FILL)
     centers_hz = _compute_band_centers_hz(low_hz, ceiling_hz)
     active = centers_hz >= edges_hz[1]
 
@@ -739,6 +873,7 @@ def apply_exciter(
     del harmonics
     air = np.zeros_like(y_pad)
     for start in range(0, total - block + 1, hop):
+        progress.advance(start / total)
         seg = slice(start, start + block)
         air[:, seg] += window * _fill_block(
             y_pad[:, seg], h_pad[:, seg], sr, centers_hz, active, mix
@@ -1323,7 +1458,10 @@ class SmartMastering:
         result: np.ndarray = band * total_gain
         return result
 
-    def _multiband_compress(self, y: np.ndarray) -> np.ndarray:
+    def _multiband_compress(
+        self, y: np.ndarray, progress: MasteringProgress | None = None
+    ) -> np.ndarray:
+        progress = progress or MasteringProgress()
         was_1d = y.ndim == 1
         y2 = np.atleast_2d(np.asarray(y, dtype=np.float64))
 
@@ -1341,6 +1479,7 @@ class SmartMastering:
         out = np.zeros_like(y2)
         current = y2
         for i, cfg in enumerate(cfgs):
+            progress.advance(i / len(cfgs))
             if i < len(fcs):
                 wn = float(np.clip(fcs[i] / (self.sr / 2.0), 1e-4, 0.985))
                 sos = signal.butter(2, wn, btype="low", output="sos")
@@ -1356,7 +1495,10 @@ class SmartMastering:
 
         return out[0] if was_1d else out
 
-    def _upward_expand(self, y: np.ndarray) -> np.ndarray:
+    def _upward_expand(
+        self, y: np.ndarray, progress: MasteringProgress | None = None
+    ) -> np.ndarray:
+        progress = progress or MasteringProgress()
         y2 = np.atleast_2d(np.asarray(y, dtype=np.float64))
         if (
             self.expansion_db <= 0.0
@@ -1377,7 +1519,8 @@ class SmartMastering:
         rc = float(np.exp(-1.0 / (sr * self.expansion_release_ms / 1000.0)))
 
         out = np.array(y2, copy=True)
-        for f_lo, f_hi in pairwise(edges):
+        for index, (f_lo, f_hi) in enumerate(pairwise(edges)):
+            progress.advance(index / self.expansion_bands)
             sos = signal.butter(
                 2, [f_lo / nyq, f_hi / nyq], btype="band", output="sos"
             )
@@ -1595,8 +1738,10 @@ class SmartMastering:
         y: np.ndarray,
         drive_db: float,
         ceil_db: float,
+        progress: MasteringProgress | None = None,
         **overrides,
     ) -> np.ndarray:
+        progress = progress or MasteringProgress()
         p = (
             replace(self.limiter_defaults, **overrides)
             if overrides
@@ -1605,6 +1750,7 @@ class SmartMastering:
         was_1d = np.ndim(y) == 1
         orig_len = np.shape(y)[-1]
         x_os = self._limiter_prepare(y, p)
+        progress.advance(LIMITER_PREPARE_SHARE)
         out = self._limit_oversampled(x_os, drive_db, ceil_db, p)
         out = out[..., :orig_len]
         return out[0] if was_1d else out
@@ -1614,11 +1760,14 @@ class SmartMastering:
         y: np.ndarray,
         target_lufs: float | None,
         p: LimiterParams | None = None,
+        progress: MasteringProgress | None = None,
     ) -> np.ndarray:
         p = p or self.limiter_defaults
+        progress = progress or MasteringProgress()
         y2 = np.atleast_2d(np.asarray(y, dtype=np.float64))
         orig_len = y2.shape[-1]
         x_os = self._limiter_prepare(y2, p)
+        progress.advance(LIMITER_PREPARE_SHARE)
 
         current = self._measure_lufs(y2)
         if target_lufs is None or current is None:
@@ -1635,6 +1784,13 @@ class SmartMastering:
         best_err = np.inf
 
         for _it in range(max(1, p.max_iterations)):
+            progress.advance(
+                LIMITER_PREPARE_SHARE
+                + (1.0 - LIMITER_PREPARE_SHARE)
+                * _it
+                / max(LIMITER_EXPECTED_PASSES, _it + 1),
+                f"pass {_it + 1}",
+            )
             out = self._limit_oversampled(x_os, drive, p.ceil_db, p)[
                 ..., :orig_len
             ]
@@ -1788,8 +1944,22 @@ class SmartMastering:
                 recovery_hint=AUDIO_FINITE_HINT,
             )
 
+    def _enabled_stages(self) -> tuple[str, ...]:
+        skipped = set()
+        if self.bass_enhance_mix <= 0.0:
+            skipped.add(STAGE_BASS)
+        if self.exciter_mix <= 0.0:
+            skipped.update((STAGE_HARMONICS, STAGE_TREBLE_FILL))
+        return tuple(
+            stage for stage in MASTERING_STAGE_SHARES if stage not in skipped
+        )
+
     def process(
-        self, y: np.ndarray, sr: int | None = None
+        self,
+        y: np.ndarray,
+        sr: int | None = None,
+        progress_callback: ProgressCallback | None = None,
+        stop_callback: StopCallback | None = None,
     ) -> tuple[np.ndarray, int]:
         self._validate_input(y, sr)
         if sr is not None:
@@ -1806,6 +1976,10 @@ class SmartMastering:
         orig_len = y.shape[-1]
         orig_sr = self.sr
         _require_free_memory(orig_len, orig_sr, self.resampling_target)
+        progress = MasteringProgress(
+            progress_callback, stop_callback, self._enabled_stages()
+        )
+        progress.begin(STAGE_PREPARE)
 
         y_resamp = y
         if self.sr != self.resampling_target:
@@ -1821,11 +1995,16 @@ class SmartMastering:
         work = self._balance_channels(work)
         work = self._apply_lufs(work, self.work_lufs)
 
+        progress.begin(STAGE_TONE)
         work = self._timed("eq", self._phase, work, self.phase_type)
 
-        work = self._timed("multiband", self._multiband_compress, work)
+        progress.begin(STAGE_DYNAMICS)
+        work = self._timed(
+            "multiband", self._multiband_compress, work, progress
+        )
 
         if self.bass_enhance_mix > 0.0:
+            progress.begin(STAGE_BASS)
             work = self._timed(
                 "bass_enhancer",
                 apply_bass_enhancer,
@@ -1843,10 +2022,13 @@ class SmartMastering:
                 low_hz=EXCITER_LOW_HZ,
                 high_hz=self.high_cut or EXCITER_HIGH_HZ,
                 mix=self.exciter_mix,
+                progress=progress,
             )
 
-        work = self._timed("expansion", self._upward_expand, work)
+        progress.begin(STAGE_DETAILS)
+        work = self._timed("expansion", self._upward_expand, work, progress)
 
+        progress.begin(STAGE_WIDTH)
         work = self._timed("stereo_widen", self._stereo_widen, stereo(work))
 
         work = self._balance_channels(work)
@@ -1864,14 +2046,25 @@ class SmartMastering:
             )
             work = work * 10.0 ** ((rise_cap - pre_lufs) / 20.0)
 
+        progress.begin(STAGE_LOUDNESS)
         lp = self.limiter_defaults
         if lp.drive_db is None:
             y_lim = self._timed(
-                "limiter", self._limit_to_target, work, self.target_lufs, lp
+                "limiter",
+                self._limit_to_target,
+                work,
+                self.target_lufs,
+                lp,
+                progress,
             )
         else:
             y_lim = self._timed(
-                "limiter", self._apply_limiter, work, lp.drive_db, lp.ceil_db
+                "limiter",
+                self._apply_limiter,
+                work,
+                lp.drive_db,
+                lp.ceil_db,
+                progress,
             )
         del work
 
@@ -1890,6 +2083,7 @@ class SmartMastering:
                     ),
                 )
 
+        progress.finish()
         return y_clip, self.sr
 
 

@@ -59,6 +59,11 @@ MAX_NOTE_NAMES = 7
 _chord_detector = ChordDetector()
 
 
+MASTERING_FIRST_PERCENT = 12
+MASTERING_LAST_PERCENT = 24
+CLIP_CANCELLED_MESSAGE = "Clip export was cancelled."
+
+
 class ClipExportError(Exception):
     pass
 
@@ -716,7 +721,7 @@ def _ffmpeg_path():
 
 def _check_cancel(stop_callback):
     if stop_callback and stop_callback():
-        raise ClipExportCancelled("Clip export was cancelled.")
+        raise ClipExportCancelled(CLIP_CANCELLED_MESSAGE)
 
 
 def _report(progress_callback, percent, text):
@@ -859,17 +864,38 @@ def export_music_clip(
             )
 
         if master:
-            _report(progress_callback, 12, "Smart Mastering")
+            _report(
+                progress_callback, MASTERING_FIRST_PERCENT, "Smart Mastering"
+            )
             from korshmer.audio_processing.save_audio import save_audio
             from korshmer.audio_processing.smart_mastering import (
                 SmartMastering,
                 SmartMasteringConfig,
             )
+            from korshmer.exceptions import MasteringCancelledError
+
+            def report_mastering(percent, stage):
+                _report(
+                    progress_callback,
+                    MASTERING_FIRST_PERCENT
+                    + (MASTERING_LAST_PERCENT - MASTERING_FIRST_PERCENT)
+                    * percent
+                    / 100.0,
+                    f"Smart Mastering: {stage}",
+                )
 
             y, sr = sf.read(rendered, dtype="float32", always_2d=True)
-            mastered, out_sr = SmartMastering(SmartMasteringConfig()).process(
-                y.T, sr
-            )
+            try:
+                mastered, out_sr = SmartMastering(
+                    SmartMasteringConfig()
+                ).process(
+                    y.T,
+                    sr,
+                    progress_callback=report_mastering,
+                    stop_callback=stop_callback,
+                )
+            except MasteringCancelledError:
+                raise ClipExportCancelled(CLIP_CANCELLED_MESSAGE) from None
             _check_cancel(stop_callback)
             save_audio(
                 path=wav_path,
@@ -881,7 +907,7 @@ def export_music_clip(
         else:
             shutil.copyfile(rendered, wav_path)
 
-        _report(progress_callback, 24, "Analyzing the song")
+        _report(progress_callback, MASTERING_LAST_PERCENT, "Analyzing the song")
         specs = collect_tech_specs(
             pm,
             midi_path,

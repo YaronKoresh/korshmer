@@ -69,12 +69,29 @@ class TaskWorker(QThread):
 
 class CallableWorker(TaskWorker):
     def __init__(
-        self, func, *args, parent=None, timeout_seconds=None, **kwargs
+        self,
+        func,
+        *args,
+        parent=None,
+        timeout_seconds=None,
+        feeds_progress=False,
+        **kwargs,
     ):
         super().__init__(parent, timeout_seconds=timeout_seconds)
         self._func = func
         self._args = args
         self._kwargs = kwargs
+        self._feeds_progress = feeds_progress
+
+    def stop_requested(self):
+        return not self._running
 
     def execute(self):
-        return self._func(*self._args, **self._kwargs)
+        if not self._feeds_progress:
+            return self._func(*self._args, **self._kwargs)
+        return self._func(
+            *self._args,
+            progress_callback=self.report_progress,
+            stop_callback=self.stop_requested,
+            **self._kwargs,
+        )

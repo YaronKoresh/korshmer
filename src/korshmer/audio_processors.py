@@ -56,15 +56,34 @@ def _load_2d(path):
     return af
 
 
-def process_smart_mastering_file(path, **master_kwargs):
+def process_smart_mastering_file(
+    path, progress_callback=None, stop_callback=None, **master_kwargs
+):
     af = _load_2d(path)
-    from korshmer.audio_processing.smart_mastering import SmartMasteringConfig
+    from korshmer.audio_processing.smart_mastering import (
+        MASTERING_CANCELLED_MESSAGE,
+        SmartMasteringConfig,
+    )
+    from korshmer.exceptions import MasteringCancelledError
 
     cfg = SmartMasteringConfig(**master_kwargs)
     processor = SmartMastering(cfg)
-    af.y, sr = processor.process(af.y, af.sr)
+    af.y, sr = processor.process(
+        af.y,
+        af.sr,
+        progress_callback=progress_callback,
+        stop_callback=stop_callback,
+    )
     out_path = _output_path(path, "Mastered")
-    save_audio(path=out_path, y=af.y, sr=sr, file_format="WAV")
+    unfinished_path = _output_path(path, "Mastered_unfinished")
+    try:
+        save_audio(path=unfinished_path, y=af.y, sr=sr, file_format="WAV")
+        if stop_callback is not None and stop_callback():
+            raise MasteringCancelledError(MASTERING_CANCELLED_MESSAGE)
+        os.replace(unfinished_path, out_path)
+    finally:
+        if os.path.exists(unfinished_path):
+            os.remove(unfinished_path)
     return out_path
 
 

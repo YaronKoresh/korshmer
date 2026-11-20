@@ -3,8 +3,8 @@ import copy
 import numpy as np
 import pretty_midi
 
-from korshmer.analysis import rank_scales
 from korshmer.constants import SCALES
+from korshmer.key_finding import find_key, midi_notes
 from korshmer.midi.bar_lines import bar_lines
 from korshmer.midi.polish import classify
 
@@ -23,15 +23,10 @@ STEP_WEIGHTS = (0.15, 0.35, 0.35, 0.15)
 
 
 def _scale_pitch_classes(pm):
-    chroma = np.zeros(12)
-    for inst in pm.instruments:
-        if inst.is_drum:
-            continue
-        for note in inst.notes:
-            chroma[note.pitch % 12] += note.end - note.start
-    if not np.any(chroma):
+    notes = midi_notes(pm)
+    if not any(n.end > n.start for n in notes):
         return list(range(12))
-    root, name, _score = rank_scales(chroma / np.max(chroma), 1)[0]
+    root, name = find_key(notes)
     intervals = SCALES.get(name, SCALES["Major"])
     return sorted((root + step) % 12 for step in intervals)
 

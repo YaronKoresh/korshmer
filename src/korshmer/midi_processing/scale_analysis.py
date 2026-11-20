@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from korshmer.key_finding import played_in_turn, tonal_centre
 from korshmer.utils.scale_names import sanitize_scale_name
 
 from .note_validation import validate_midi_note
@@ -157,7 +158,9 @@ class ScaleDetector:
     def __init__(self) -> None:
         self.detected_scales: list[Scale] = []
 
-    def detect_scale_from_notes(self, notes: list[int]) -> list[Scale]:
+    def detect_scale_from_notes(
+        self, notes: list[int], timed_notes: list[Any] | None = None
+    ) -> list[Scale]:
         if not isinstance(notes, (list, tuple, np.ndarray)):
             raise ValueError(f"Notes must be a list, got {notes!r}")
         if len(notes) < 3:
@@ -166,7 +169,9 @@ class ScaleDetector:
 
         unique_notes = {n % 12 for n in notes}
         histogram = self._create_histogram(notes)
-        edge_pitch_classes = {notes[0] % 12, notes[-1] % 12}
+        centre = tonal_centre(
+            played_in_turn(notes) if timed_notes is None else timed_notes
+        )
 
         candidates = []
         seen = set()
@@ -188,10 +193,11 @@ class ScaleDetector:
                         degrees=tuple(range(1, len(intervals) + 1)),
                     )
                     tonic_weight = (
-                        histogram[root]
-                        + 0.5 * histogram[(root + 7) % 12]
-                        + (0.5 if root in edge_pitch_classes else 0.0)
+                        histogram[root] + 0.5 * histogram[(root + 7) % 12]
                     )
+                    if centre is not None:
+                        third = 4 if 4 in intervals else 3
+                        tonic_weight += centre.support(third)[root]
                     candidates.append(
                         (round(match_score, 9), float(tonic_weight), scale)
                     )

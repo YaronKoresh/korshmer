@@ -94,6 +94,17 @@ class AudioActionsMixin(BaseActionsMixin):
     def run_smart_mastering(self):
         from korshmer.audio_processors import process_smart_mastering_file
 
+        if self.cancellable_action_is_running():
+            answer = QMessageBox.question(
+                self._dialog_parent(),
+                "Smart Mastering",
+                f"{self._action_progress_label} is still running.\nStop it?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if answer == QMessageBox.Yes:
+                self.cancel_running_action()
+            return
+
         path = self._get_selected_file(is_input=None)
         if not path:
             return
@@ -103,6 +114,7 @@ class AudioActionsMixin(BaseActionsMixin):
             path,
             success_msg="Mastering Complete",
             is_audio=True,
+            progress_label="Mastering",
         )
 
     def run_range_eq_action(self) -> None:

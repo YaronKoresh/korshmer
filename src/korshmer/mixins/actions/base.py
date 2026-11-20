@@ -8,8 +8,13 @@ from korshmer.event_bus import Event, publish
 from korshmer.utils.filesystem import is_midi_path
 from korshmer.workers.base import CallableWorker
 
+ACTION_CANCELLED_MESSAGE = "Cancelled"
+
 
 class BaseActionsMixin:
+    _action_progress_label: str | None = None
+    _action_owns_progress_bar = False
+
     def _get_selected_file(self, is_input=False, requires_midi=False):
 
         if hasattr(self, "_last_selected_list"):
@@ -72,7 +77,13 @@ class BaseActionsMixin:
         return self._get_selected_file(is_input=None, requires_midi=True)
 
     def _run_action(
-        self, action_func, *args, success_msg, on_done=None, **kwargs
+        self,
+        action_func,
+        *args,
+        success_msg,
+        on_done=None,
+        progress_label=None,
+        **kwargs,
     ):
         def finished(result):
             try:
@@ -89,12 +100,26 @@ class BaseActionsMixin:
             *args,
             on_result=finished,
             on_error=self._fail_action,
+            progress_label=progress_label,
             **kwargs,
         ):
-            publish(Event.STATUS_UPDATE, text="Processing...")
+            publish(
+                Event.STATUS_UPDATE,
+                text=f"{progress_label}: starting..."
+                if progress_label
+                else "Processing...",
+            )
         return None
 
-    def _run_in_background(self, func, *args, on_result, on_error, **kwargs):
+    def _run_in_background(
+        self,
+        func,
+        *args,
+        on_result,
+        on_error,
+        progress_label=None,
+        **kwargs,
+    ):
         busy = getattr(self, "_action_worker", None)
         if busy is not None and busy.isRunning():
             publish(
@@ -103,21 +128,109 @@ class BaseActionsMixin:
             )
             return False
 
-        worker = CallableWorker(func, *args, **kwargs)
+        worker = CallableWorker(
+            func, *args, feeds_progress=progress_label is not None, **kwargs
+        )
         self._action_worker = worker
+        settled = []
+
+        def settle():
+            settled.append(True)
+            self._release_action_worker(worker)
+            if progress_label is not None:
+                self._hide_action_progress()
 
         def finished(result):
-            self._release_action_worker(worker)
+            settle()
             on_result(result)
 
         def failed(message):
-            self._release_action_worker(worker)
+            settle()
+            if progress_label is not None and worker.stop_requested():
+                publish(
+                    Event.STATUS_UPDATE, text=f"{progress_label} cancelled."
+                )
+                return
             on_error(message)
+
+        def ended():
+            if not settled:
+                failed(ACTION_CANCELLED_MESSAGE)
 
         worker.finished_signal.connect(finished, Qt.QueuedConnection)
         worker.error_signal.connect(failed, Qt.QueuedConnection)
+        if progress_label is not None:
+            self._action_progress_label = progress_label
+            worker.progress_signal.connect(
+                self._show_action_progress, Qt.QueuedConnection
+            )
+            worker.finished.connect(ended, Qt.QueuedConnection)
+            self._begin_action_progress()
         worker.start()
         return True
+
+    def cancellable_action_is_running(self):
+        worker = getattr(self, "_action_worker", None)
+        return (
+            worker is not None
+            and worker.isRunning()
+            and getattr(self, "_action_progress_label", None) is not None
+        )
+
+    def cancel_running_action(self):
+        if not self.cancellable_action_is_running():
+            return False
+        self._action_worker.stop()
+        publish(
+            Event.STATUS_UPDATE,
+            text=f"Stopping {self._action_progress_label.lower()}...",
+        )
+        if self._action_owns_progress_bar:
+            publish(Event.CONVERT_BUTTON_STATE, enabled=False)
+            publish(Event.CONVERT_BUTTON_TEXT, text="Stopping...")
+        return True
+
+    def _other_progress_is_shown(self):
+        stems_running = getattr(self, "_stem_thread_is_running", None)
+        return bool(getattr(self, "is_processing", False)) or bool(
+            stems_running is not None and stems_running()
+        )
+
+    def _begin_action_progress(self):
+        self._action_owns_progress_bar = not self._other_progress_is_shown()
+        if not self._action_owns_progress_bar:
+            return
+        publish(Event.PROGRESS_BAR_STATE, visible=True, value=0)
+        publish(
+            Event.CONVERT_BUTTON_TEXT,
+            text=f"Stop {self._action_progress_label}",
+        )
+        publish(Event.CONVERT_BUTTON_ROLE, role="danger")
+        publish(Event.CONVERT_BUTTON_STATE, enabled=True)
+
+    def _show_action_progress(self, percent, stage):
+        label = getattr(self, "_action_progress_label", None)
+        worker = getattr(self, "_action_worker", None)
+        if label is None or worker is None or worker.stop_requested():
+            return
+        text = f"{label} {percent}%: {stage}"
+        if self._action_owns_progress_bar:
+            publish(Event.PROGRESS_UPDATE, value=percent, text=text)
+        else:
+            publish(Event.STATUS_UPDATE, text=text)
+
+    def _hide_action_progress(self):
+        self._action_progress_label = None
+        if not self._action_owns_progress_bar:
+            return
+        self._action_owns_progress_bar = False
+        publish(Event.PROGRESS_BAR_STATE, visible=False)
+        publish(Event.CONVERT_BUTTON_TEXT, text="Start Processing")
+        publish(Event.CONVERT_BUTTON_ROLE, role="primary")
+        publish(
+            Event.CONVERT_BUTTON_STATE,
+            enabled=bool(getattr(self, "file_list_paths", True)),
+        )
 
     def _release_action_worker(self, worker):
         if getattr(self, "_action_worker", None) is worker:

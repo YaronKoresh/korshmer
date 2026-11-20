@@ -7,86 +7,33 @@ import numpy as np
 import pretty_midi
 
 from korshmer.audio_processing import analyse_tempo, estimate_meter
-from korshmer.constants import NOTE_NAMES, SCALES
+from korshmer.constants import NOTE_NAMES
+from korshmer.key_finding import (
+    AUDIO_PROFILE_BIAS,
+    DETECTABLE_SCALES,
+    LOW_NOTE_BONUS,
+    PROFILE_BIAS,
+    TonalCentre,
+    chord_support,
+    find_key,
+    find_keys,
+    midi_notes,
+    rank_keys,
+)
 from korshmer.utils import run_async, wait_all
 
-_MAJOR_PROFILE = np.array(
-    [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
-)
-_MINOR_PROFILE = np.array(
-    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
-)
+AUDIO_SECONDS = 60
+AUDIO_TAIL_SECONDS = 20
+AUDIO_EDGE_SECONDS = 1.5
+AUDIO_SOUNDING_SHARE = 0.1
+AUDIO_FLOOR_SHARE = 0.3
+AUDIO_BASS_OCTAVES = 3
+AUDIO_OUTSIDE_PENALTY = 1.0
+AUDIO_HOP = 512
 
 
-DETECTABLE_SCALES = (
-    "Major",
-    "Minor",
-    "Dorian",
-    "Phrygian",
-    "Lydian",
-    "Mixolydian",
-    "Harmonic Minor",
-    "Pentatonic Major",
-    "Pentatonic Minor",
-    "Blues",
-    "Arabian (Maqam Hijaz)",
-    "Gypsy Minor",
-)
-_OUTSIDE_WEIGHT = 2.3
-_INSIDE_WEIGHT = 3.6
-_THIRD_WEIGHT = 4.2
-_FIFTH_WEIGHT = 5.0
-_TONIC_WEIGHT = 6.35
-_PROFILE_BIAS = 0.04
-_AUDIO_PROFILE_BIAS = 0.05
-
-
-def _scale_profile(name):
-    if name == "Major":
-        return _MAJOR_PROFILE
-    if name == "Minor":
-        return _MINOR_PROFILE
-    intervals = SCALES[name]
-    profile = np.full(12, _OUTSIDE_WEIGHT)
-    for interval in intervals:
-        profile[interval] = _INSIDE_WEIGHT
-    thirds = [i for i in intervals if i in (3, 4)]
-    if thirds:
-        profile[thirds[0]] = _THIRD_WEIGHT
-    if 7 in intervals:
-        profile[7] = _FIFTH_WEIGHT
-    profile[0] = _TONIC_WEIGHT
-    return profile
-
-
-def _build_scale_profiles():
-    profiles = []
-    for name in DETECTABLE_SCALES:
-        base = _scale_profile(name)
-        for root in range(12):
-            vector = np.roll(base, root)
-            vector = vector - vector.mean()
-            profiles.append((root, name, vector, np.linalg.norm(vector)))
-    return profiles
-
-
-_SCALE_PROFILES = _build_scale_profiles()
-
-
-def rank_scales(chroma_vals, limit=3, bias=_PROFILE_BIAS):
-    cv = np.asarray(chroma_vals, dtype=float)
-    cv = cv - np.mean(cv)
-    cv_norm = float(np.linalg.norm(cv))
-    if cv_norm == 0:
-        return [(0, "Major", 0.0)][:limit]
-    scored = []
-    for root, name, vector, norm in _SCALE_PROFILES:
-        score = float(vector @ cv) / (norm * cv_norm + 1e-12)
-        if name in ("Major", "Minor"):
-            score += bias
-        scored.append((score, root, name))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [(root, name, score) for score, root, name in scored[:limit]]
+def rank_scales(chroma_vals, limit=3, bias=PROFILE_BIAS):
+    return rank_keys(chroma_vals, None, limit, bias)
 
 
 def _validate_chord_interval(interval):
@@ -179,16 +126,75 @@ def analyze_chords_full(audio_path, interval=1.0, origin=0.0, start=0.0):
     return sorted(results, key=lambda x: x[0])
 
 
+def _pitch_classes(y, sr):
+    full = librosa.feature.chroma_cqt(y=y, sr=sr)
+    low = librosa.feature.chroma_cqt(
+        y=y,
+        sr=sr,
+        fmin=librosa.note_to_hz("C1"),
+        n_octaves=AUDIO_BASS_OCTAVES,
+    )
+    level = librosa.feature.rms(y=y)[0]
+    frames = min(full.shape[1], low.shape[1], level.size)
+    return full[:, :frames], low[:, :frames], level[:frames]
+
+
+def _above_floor(weights):
+    weights = np.asarray(weights, dtype=float)
+    return np.clip(weights - np.quantile(weights, AUDIO_FLOOR_SHARE), 0.0, None)
+
+
+def _edge_chord(full, low, level, sr, last):
+    sounding = np.flatnonzero(level >= AUDIO_SOUNDING_SHARE * level.max())
+    if sounding.size == 0:
+        return np.zeros((2, 12))
+    count = max(1, int(AUDIO_EDGE_SECONDS * sr / AUDIO_HOP))
+    frames = sounding[-count:] if last else sounding[:count]
+    return chord_support(
+        _above_floor(full[:, frames].sum(axis=1))
+        + LOW_NOTE_BONUS * _above_floor(low[:, frames].sum(axis=1))
+    )
+
+
+def _audio_tail(audio_path, y, sr):
+    total = librosa.get_duration(path=audio_path)
+    if total <= AUDIO_SECONDS:
+        return y
+    tail, _sr = librosa.load(
+        audio_path,
+        sr=sr,
+        offset=total - AUDIO_TAIL_SECONDS,
+        duration=AUDIO_TAIL_SECONDS,
+    )
+    return tail
+
+
+def audio_key(y, sr, tail=None, scales=DETECTABLE_SCALES):
+    full, low, level = _pitch_classes(y, sr)
+    closing = (full, low, level) if tail is None else _pitch_classes(tail, sr)
+    bass = _above_floor(low.sum(axis=1))
+    centre = TonalCentre(
+        bass=bass / (bass.sum() + 1e-12),
+        last_chord=_edge_chord(*closing, sr, last=True),
+        first_chord=_edge_chord(full, low, level, sr, last=False),
+    )
+    root_idx, mode, _score = rank_keys(
+        np.sum(full, axis=1),
+        centre,
+        1,
+        AUDIO_PROFILE_BIAS,
+        scales,
+        AUDIO_OUTSIDE_PENALTY,
+    )[0]
+    return root_idx, mode
+
+
 @lru_cache(maxsize=32)
 def detect_key_and_mode(audio_path):
     try:
-        y, sr = librosa.load(audio_path, duration=60)
-        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-        chroma_vals = np.sum(chroma, axis=1)
-        root_idx, mode, _score = rank_scales(
-            chroma_vals, 1, _AUDIO_PROFILE_BIAS
-        )[0]
-        return root_idx, mode
+        y, sr = librosa.load(audio_path, duration=AUDIO_SECONDS)
+        tail = _audio_tail(audio_path, y, sr)
+        return audio_key(y, sr, None if tail is y else tail)
     except Exception:
         return 0, "Major"
 
@@ -196,17 +202,7 @@ def detect_key_and_mode(audio_path):
 def detect_midi_key(midi_path):
     try:
         pm = pretty_midi.PrettyMIDI(midi_path)
-        chroma = np.zeros(12)
-        for inst in pm.instruments:
-            if inst.is_drum:
-                continue
-            for note in inst.notes:
-                chroma[note.pitch % 12] += note.end - note.start
-
-        if np.max(chroma) > 0:
-            chroma /= np.max(chroma)
-
-        root_idx, mode, _score = rank_scales(chroma, 1)[0]
+        root_idx, mode = find_key(midi_notes(pm))
         return NOTE_NAMES[root_idx], mode
     except Exception:
         return "C", "Major"
@@ -264,7 +260,7 @@ def export_scale_stats(midi_data, output_path):
         lines.append(f"{NOTE_NAMES[idx]}: {counts[idx]} notes ({pct:.1f}%)")
     lines.append("")
     lines.append("Probable Key Candidates:")
-    ranked = rank_scales(counts.astype(float), 3)
+    ranked = find_keys(midi_notes(midi_data), 3)
     root_idx, name, _score = ranked[0]
     lines.append(f"Top Estimation: {NOTE_NAMES[root_idx]} {name}")
     for root_idx, name, _score in ranked[1:]:

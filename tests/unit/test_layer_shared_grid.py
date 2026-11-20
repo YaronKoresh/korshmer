@@ -1,3 +1,4 @@
+import math
 import sys
 from types import SimpleNamespace
 
@@ -365,17 +366,27 @@ def _layer_notes(composition):
     )
 
 
-def test_layer_skips_empty_leading_and_trailing_bars():
+def _sounding_span(song, bar):
+    notes = [n for inst in song.instruments for n in inst.notes]
+    first = int(min(n.start for n in notes) // bar)
+    last = math.ceil(max(n.end for n in notes) / bar - 1e-6)
+    return first * bar, last * bar
+
+
+@pytest.mark.parametrize("song_seed", range(12))
+def test_layer_skips_empty_leading_and_trailing_bars(song_seed):
     tempo = 120.0
     bar = 240.0 / tempo
-    song = groove(tempo, 8 * bar, bars=17)
+    song = groove(tempo, 8 * bar, bars=17, seed=song_seed)
     on = compose(_options(bpm=tempo, texture_batches=1), existing=song)
     off = compose(
         _options(bpm=tempo, texture_batches=1, skip_empty_edges=False),
         existing=song,
     )
 
-    low, high = 8 * bar, 25 * bar
+    low, high = _sounding_span(song, bar)
+    assert low == 8 * bar
+    assert 25 * bar <= high <= 26 * bar
     assert min(n.start for i in off.instruments for n in i.notes) < low
     assert max(n.end for i in off.instruments for n in i.notes) > high
     assert min(n.start for i in on.instruments for n in i.notes) >= low
@@ -398,16 +409,21 @@ def test_occupied_bars_report_the_bars_the_notes_sound_in():
     assert song_match.occupied_bars(pretty_midi.PrettyMIDI(), 120.0) == (0, 0)
 
 
-def test_layer_keeps_empty_bars_inside_the_song():
+@pytest.mark.parametrize("song_seed", range(12))
+def test_layer_keeps_empty_bars_inside_the_song(song_seed):
     tempo = 120.0
     bar = 240.0 / tempo
-    song = groove(tempo, 0.0, bars=12)
+    song = groove(tempo, 0.0, bars=12, seed=song_seed)
     for inst in song.instruments:
         inst.notes = [n for n in inst.notes if not 4 * bar <= n.start < 6 * bar]
     on = compose(_options(bpm=tempo), existing=song)
     off = compose(_options(bpm=tempo, skip_empty_edges=False), existing=song)
 
-    assert _layer_notes(on) == _layer_notes(off)
+    low, high = _sounding_span(song, bar)
+    assert low == 0.0
+    inside = [r for r in _layer_notes(off) if r[1] < high]
+    assert _layer_notes(on) == inside
+    assert any(4 * bar <= r[1] < 6 * bar for r in _layer_notes(on))
 
 
 def _stems(tempo):

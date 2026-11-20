@@ -5,13 +5,8 @@ import numpy as np
 import pretty_midi
 
 from korshmer.constants import SCALES
+from korshmer.key_finding import MAJOR_MINOR, find_key, key_fit, note_chroma
 
-MAJOR_PROFILE = np.array(
-    [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
-)
-MINOR_PROFILE = np.array(
-    [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17]
-)
 MAJOR_STEPS = (0, 2, 4, 5, 7, 9, 11)
 MINOR_STEPS = (0, 2, 3, 5, 7, 8, 10)
 
@@ -88,23 +83,16 @@ def _all_notes(midi):
 
 
 def key_profile(notes):
-    profile = np.zeros(12)
-    for n in notes:
-        profile[n.pitch % 12] += (n.end - n.start) * (n.velocity / 127.0)
-    return profile
+    return note_chroma(notes)
 
 
 def estimate_key_confidence(notes):
+    notes = list(notes)
     profile = key_profile(notes)
     if profile.sum() <= 0 or np.std(profile) == 0:
         return 0, "Major", 0.0
-    best = (-2.0, 0, "Major")
-    for name, ref in (("Major", MAJOR_PROFILE), ("Minor", MINOR_PROFILE)):
-        for root in range(12):
-            corr = float(np.corrcoef(profile, np.roll(ref, root))[0, 1])
-            if corr > best[0]:
-                best = (corr, root, name)
-    return best[1], best[2], best[0]
+    root, name = find_key(notes, MAJOR_MINOR)
+    return root, name, key_fit(profile, root, name)
 
 
 def estimate_key(notes):

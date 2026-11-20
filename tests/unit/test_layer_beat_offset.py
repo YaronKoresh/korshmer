@@ -33,8 +33,8 @@ def _options(**changes):
     return ComposeOptions(**values)
 
 
-def _song():
-    comp = compose(_options())
+def _song(seed=SEED):
+    comp = compose(_options(seed=seed))
     pm = pretty_midi.PrettyMIDI(initial_tempo=BPM)
     pm.instruments = comp.instruments
     return pm
@@ -85,18 +85,23 @@ def test_offset_of_an_empty_song_is_zero():
 
 @pytest.mark.parametrize("seconds", [0.15, 0.3, 0.45])
 def test_layers_land_on_the_beat_of_a_shifted_song(seconds):
-    base = _song()
-    straight = compose(
-        _options(mode="Layer over editor", seed=9, style="Pop"),
-        existing=base,
-    )
-    song = _shifted(base, seconds)
-    layered = compose(
-        _options(mode="Layer over editor", seed=9, style="Pop"),
-        existing=song,
-    )
-    reference = _aligned_share(straight.instruments, base)
-    assert _aligned_share(layered.instruments, song) >= reference - 0.05
+    straight_shares = []
+    shifted_shares = []
+    for song_seed in range(1, 13):
+        base = _song(song_seed)
+        straight = compose(
+            _options(mode="Layer over editor", seed=9, style="Pop"),
+            existing=base,
+        )
+        song = _shifted(base, seconds)
+        layered = compose(
+            _options(mode="Layer over editor", seed=9, style="Pop"),
+            existing=song,
+        )
+        straight_shares.append(_aligned_share(straight.instruments, base))
+        shifted_shares.append(_aligned_share(layered.instruments, song))
+    assert min(shifted_shares) >= 0.65
+    assert np.mean(shifted_shares) >= np.mean(straight_shares) - 0.04
 
 
 def test_layers_keep_the_bar_count_of_the_shifted_song():

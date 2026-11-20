@@ -9,7 +9,7 @@ import soundfile as sf
 from scipy import signal
 from scipy.ndimage import maximum_filter1d
 
-from korshmer.audio_processing import clip_level, clip_tempo
+from korshmer.audio_processing import clip_elastic, clip_level, clip_tempo
 from korshmer.constants import DATA_DIR
 
 POLISHED_FOLDER = "clip_edits"
@@ -26,11 +26,13 @@ MIN_PULSE_SECONDS = 1.0
 NOISE_TAG = "clean"
 QUALITY_TAG = "improved"
 TEMPO_TAG = "tempo"
+ELASTIC_TAG = "onbeat"
 NOISE = "noise"
 QUALITY = "quality"
 ALIGN = "align"
 EARLIER_TAGS = re.compile(
-    rf"(_({NOISE_TAG}|{QUALITY_TAG}|{TEMPO_TAG}[0-9.]*)(_[0-9a-f]{{8}})?)+$"
+    rf"(_({NOISE_TAG}|{QUALITY_TAG}|{ELASTIC_TAG}|{TEMPO_TAG}[0-9.]*)"
+    rf"(_[0-9a-f]{{8}})?)+$"
 )
 NOISE_STAGE = "Removing background noise"
 QUALITY_STAGE = "Measuring and improving the level"
@@ -43,6 +45,7 @@ SAME_TEMPO_SHARE = 1e-4
 SLOWEST_FOLLOW = 0.5
 FASTEST_FOLLOW = 2.0
 PARTS_STAGE = "Looking for separate parts"
+ELASTIC_STAGE = "Stretching sounds onto the beat"
 MIN_PART_GAP_S = 0.2
 MAX_PART_GAP_S = 6.0
 PART_BURST_JOIN_S = 0.1
@@ -56,6 +59,8 @@ PART_EDGE_S = 0.05
 PART_BELOW_LOUDEST_DB = 15.0
 PART_SILENT_DB = -120.0
 PART_LOUD_PERCENTILE = 90.0
+PART_SPARSE_SOUND_DB = 10.0
+SILENT_CLIP_PERCENTILE = 98.0
 PART_PAUSE_PERCENTILE = 10.0
 PART_STEADY_PAUSE_DB = 8.0
 PART_MIN_CONTRAST_DB = 20.0
@@ -167,7 +172,7 @@ def clip_beat_shift(
     mono = _kept_part(data, sample_rate, offset, duration)
     if mono.shape[0] >= PART_FRAME:
         mono = _audible(mono, sample_rate)
-        usual = np.percentile(_frame_levels_db(mono), PART_LOUD_PERCENTILE)
+        usual = np.percentile(_frame_levels_db(mono), SILENT_CLIP_PERCENTILE)
         if float(usual) <= 20.0 * np.log10(SILENCE_LEVEL):
             return None, SILENT
     shift = _pulse_shift(mono, sample_rate, beats_at, start)
@@ -237,7 +242,13 @@ def match_tempo_file(path, clip_bpm, song_bpm, folder=None, tag=TEMPO_TAG):
     return target, matched.shape[1] / sample_rate
 
 
-def _stages(steps, clip, song_bpm, notes=None):
+def _stretches_inside(clip, song_bpm, grid_steps):
+    return (
+        bool(grid_steps) and song_bpm is not None and clip.source_path is None
+    )
+
+
+def _stages(steps, clip, song_bpm, notes=None, grid_steps=None):
     paths = 1 + (clip.source_path is not None)
     stages = []
     if NOISE in steps:
@@ -249,6 +260,8 @@ def _stages(steps, clip, song_bpm, notes=None):
         if song_bpm is not None and clip.source_path is None:
             stages += [TEMPO_STAGE, STRETCH_STAGE]
         stages.append(BEAT_STAGE)
+        if _stretches_inside(clip, song_bpm, grid_steps):
+            stages.append(ELASTIC_STAGE)
     return stages
 
 
@@ -261,8 +274,9 @@ def fix_clip(
     cancelled=None,
     folder=None,
     notes=None,
+    grid_steps=None,
 ):
-    stages = _stages(steps, clip, song_bpm, notes)
+    stages = _stages(steps, clip, song_bpm, notes, grid_steps)
     made = []
     done = 0
 
@@ -307,7 +321,11 @@ def fix_clip(
                 current[role] = kept(fixed, current[role])
         if ALIGN in steps:
             _align(
-                clip, current, result, beats_at, song_bpm, enter, kept, folder
+                clip,
+                current,
+                result,
+                (beats_at, song_bpm, grid_steps),
+                (enter, kept, folder),
             )
     except Exception:
         _remove(made)
@@ -321,7 +339,9 @@ def fix_clip(
     return result
 
 
-def _align(clip, current, result, beats_at, song_bpm, enter, kept, folder):
+def _align(clip, current, result, song, tools):
+    beats_at, song_bpm, grid_steps = song
+    enter, kept, folder = tools
     offset, duration = clip.offset, clip.duration
     data, sample_rate = _read(current["path"])
     if song_bpm is not None and clip.source_path is None:
@@ -344,6 +364,68 @@ def _align(clip, current, result, beats_at, song_bpm, enter, kept, folder):
     result["shift"], result["anchor"] = clip_beat_shift(
         data, sample_rate, beats_at, clip.start, offset, duration
     )
+    if not _stretches_inside(clip, song_bpm, grid_steps):
+        return
+    enter(ELASTIC_STAGE)
+    if result["anchor"] == SILENT:
+        return
+    placed = clip.start + (result["shift"] or 0.0) * 60.0 / song_bpm
+    if placed < 0.0:
+        placed += 60.0 / song_bpm
+    song = (beats_at, song_bpm, grid_steps)
+    nudge, anchors = _sounds_on_grid(
+        data,
+        sample_rate,
+        song,
+        (placed, result["anchor"] == ON_PULSE),
+        offset,
+        duration,
+    )
+    result["shift"] = (result["shift"] or 0.0) + nudge * song_bpm / 60.0
+    if not anchors:
+        return
+    target = fixed_clip_path(current["path"], ELASTIC_TAG, folder)
+    _write(
+        target,
+        clip_elastic.stretched_onto_beat(data, sample_rate, anchors),
+        sample_rate,
+    )
+    current["path"] = kept(target, current["path"])
+    result["on_grid"] = (
+        clip_elastic.moved_sounds(anchors),
+        clip_elastic.largest_move(anchors),
+    )
+
+
+def _sounds_on_grid(data, sample_rate, song, place, offset, duration):
+    beats_at, song_bpm, grid_steps = song
+    placed, follows_pulse = place
+    whole = data.shape[0] / sample_rate
+    mono = _kept_part(data, sample_rate, offset, duration)
+    if mono.shape[0] >= PART_FRAME:
+        mono = _audible(mono, sample_rate)
+    starts = clip_elastic.sound_starts(mono, sample_rate)
+    nudge = 0.0
+    if follows_pulse:
+        nudge = clip_elastic.common_move(
+            clip_elastic.grid_moves(
+                starts, beats_at, placed, grid_steps, song_bpm
+            )
+        )
+    moves = clip_elastic.grid_moves(
+        starts, beats_at, placed + nudge, grid_steps, song_bpm
+    )
+    inside = clip_elastic.beat_map(moves, 0.0, mono.shape[0] / sample_rate)
+    if not clip_elastic.worth_stretching(inside):
+        return nudge, []
+    anchors = [(0.0, 0.0)]
+    for source, moved in inside:
+        point = (offset + source, offset + moved)
+        if point[0] > anchors[-1][0] + 1e-9:
+            anchors.append(point)
+    if whole > anchors[-1][0] + 1e-9:
+        anchors.append((whole, whole))
+    return nudge, anchors
 
 
 def _audible(mono, sample_rate):
@@ -390,8 +472,13 @@ def _lasting_levels(levels, sample_rate):
     return maximum_filter1d(levels, size=frames, mode="nearest")
 
 
+def _usual_sound_db(levels):
+    usual = float(np.percentile(levels, PART_LOUD_PERCENTILE))
+    return max(usual, float(levels.max()) - PART_SPARSE_SOUND_DB)
+
+
 def _sound_threshold_db(levels, sample_rate, change=None):
-    loud = float(np.percentile(levels, PART_LOUD_PERCENTILE))
+    loud = _usual_sound_db(levels)
     lowest = loud - PART_BELOW_LOUDEST_DB
     lasting = _lasting_levels(levels, sample_rate)
     pauses = np.maximum(
@@ -503,10 +590,19 @@ def fix_clip_parts(
     cancelled=None,
     folder=None,
     notes=None,
+    grid_steps=None,
 ):
     def whole():
         return fix_clip(
-            clip, steps, beats_at, song_bpm, report, cancelled, folder, notes
+            clip,
+            steps,
+            beats_at,
+            song_bpm,
+            report,
+            cancelled,
+            folder,
+            notes,
+            grid_steps,
         )
 
     if clip.source_path is not None:
@@ -521,7 +617,16 @@ def fix_clip_parts(
             spans[0],
             data.shape[0] / sample_rate,
             whole,
-            (steps, beats_at, song_bpm, report, cancelled, folder, notes),
+            (
+                steps,
+                beats_at,
+                song_bpm,
+                report,
+                cancelled,
+                folder,
+                notes,
+                grid_steps,
+            ),
         )
     if len(spans) < 2:
         return whole()
@@ -552,6 +657,7 @@ def fix_clip_parts(
                 cancelled,
                 folder,
                 notes,
+                grid_steps,
             )
             fixed["start"] = piece.start
             fixed["seconds"] = end - begin

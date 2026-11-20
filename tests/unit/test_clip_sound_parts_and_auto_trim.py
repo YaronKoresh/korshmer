@@ -114,9 +114,17 @@ def test_a_wavering_note_with_a_soft_passage_is_not_cut_out():
     )
 
 
-@pytest.mark.parametrize("soft", [0.12, 0.25, 0.4])
-def test_a_soft_passage_of_any_depth_is_not_mistaken_for_hiss(soft):
+def _soft_level(above_the_limit_db):
+    under_the_sound = clip_polish.PART_BELOW_LOUDEST_DB - above_the_limit_db
+    return 10.0 ** (-under_the_sound / 20.0)
+
+
+@pytest.mark.parametrize("above_the_limit_db", [3.0, 6.0, 10.0])
+def test_a_soft_passage_above_the_quiet_limit_is_not_mistaken_for_hiss(
+    above_the_limit_db,
+):
     time = np.arange(RATE * 20) / RATE
+    soft = _soft_level(above_the_limit_db)
     passage = np.where((time > 8) & (time < 12), soft, 1.0)
     music = (0.3 * np.sin(2 * np.pi * 220 * time) * passage).astype(np.float32)
 
@@ -131,16 +139,27 @@ def test_a_softer_stretch_of_a_noise_like_sound_is_not_cut_out():
     assert np.allclose(_spans(wash.astype(np.float32)), [(0.0, 20.0)], atol=0.1)
 
 
-def test_a_much_quieter_second_sound_is_still_found_over_background_noise():
-    spans = _spans(_joined(-45.0, levels=(0.3, 0.03)))
+def test_a_slightly_quieter_second_sound_is_still_found():
+    quieter = 0.3 * 10.0 ** (-4.0 / 20.0)
+
+    spans = _spans(_joined(-45.0, levels=(0.3, quieter)))
 
     assert len(spans) == 2
     assert np.allclose(spans, [(1.95, 7.05), (10.95, 15.0)], atol=0.25)
 
 
+def test_a_second_sound_far_under_the_quiet_limit_counts_as_background():
+    faint = 0.3 * _soft_level(-10.0)
+
+    spans = _spans(_joined(-60.0, levels=(0.3, faint)))
+
+    assert len(spans) == 1
+    assert spans[0][1] < 8.0
+
+
 def test_a_soft_passage_inside_continuous_music_is_not_cut_out():
     time = np.arange(RATE * 20) / RATE
-    soft = np.where((time > 8) & (time < 12), 0.12, 1.0)
+    soft = np.where((time > 8) & (time < 12), _soft_level(3.0), 1.0)
     music = (0.3 * np.sin(2 * np.pi * 220 * time) * soft).astype(np.float32)
 
     assert np.allclose(_spans(music), [(0.0, 20.0)], atol=0.1)
@@ -174,8 +193,10 @@ def test_movement_too_low_to_hear_still_counts_as_silence(kind):
     assert _two_sounds_at_their_places(spans)
 
 
-def test_a_pause_of_about_half_a_second_keeps_the_sounds_together():
-    assert len(_spans(_joined(-40.0, pause=0.4))) == 1
+def test_a_pause_shorter_than_the_splitting_pause_keeps_the_sounds_together():
+    pause = 0.5 * clip_polish.MIN_PART_GAP_S
+
+    assert len(_spans(_joined(-40.0, pause=pause))) == 1
 
 
 def test_a_pause_of_one_second_is_enough_to_split_the_sounds():
@@ -375,7 +396,7 @@ def test_saving_a_song_leaves_files_in_the_shared_folders_alone(qapp, tmp_path):
     assert not hasattr(song_folder, "history_kept_in_song")
 
 
-def _fill(start, late, hits=2, level=0.4):
+def _fill(start, late, hits=4, level=0.4):
     click = np.hanning(2000) * np.sin(np.arange(2000) * 0.2) * level
     return [
         (int((start + index * BEAT_SECONDS / 2 + late) * RATE), click)
@@ -402,7 +423,7 @@ def test_a_very_short_part_moves_with_the_part_next_to_it_and_keeps_its_place(
     first, fill, last = sorted(
         timeline.model.clips, key=lambda clip: clip.start
     )
-    assert fill.duration < 1.0
+    assert fill.duration < clip_polish.SHORT_PART_S
     assert _on_a_beat(_first_sound(first))
     assert _on_a_beat(_first_sound(last))
     off_beat = _first_sound(fill) / BEAT_SECONDS

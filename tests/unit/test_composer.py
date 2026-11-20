@@ -5,6 +5,7 @@ import pretty_midi
 import pytest
 
 from korshmer.constants import NOTE_NAMES, SCALES
+from korshmer.midi_generation import genre_feel
 from korshmer.midi_generation.composer import (
     AUTO_STRUCTURE,
     DEFAULT_ROLES,
@@ -31,7 +32,11 @@ from korshmer.midi_generation.korshmer_schema import (
     TRACKS_PER_ACTIVATION,
     bars_for_minutes,
 )
-from korshmer.utils.track_layout import DRUMS_NAME, PROGRAM_NAMES
+from korshmer.utils.track_layout import (
+    DRUMS_NAME,
+    PROGRAM_NAMES,
+    SAME_START,
+)
 
 BPM = 120.0
 BAR = 240.0 / BPM
@@ -157,17 +162,25 @@ def test_same_seed_gives_the_same_song():
 
 
 def test_sections_get_their_own_character():
-    c = compose(_opts(minutes=3, seed=2, texture_batches=0))
-    by_name = {}
-    for s in c.sections:
-        by_name.setdefault(s.name, s)
-    assert "drums" not in by_name["Break"].roles
-    assert "drums" in by_name["Chorus"].roles
-    assert (
-        by_name["Chorus"].energy
-        > by_name["Verse"].energy
-        > by_name["Intro"].energy
-    )
+    quiet_breaks = 0
+    for seed in range(1, 41):
+        c = compose(_opts(minutes=3, seed=seed, texture_batches=0))
+        by_name = {}
+        for s in c.sections:
+            by_name.setdefault(s.name, s)
+            if s.name == "Chorus":
+                assert "drums" in s.roles
+            if s.name == "Break" and s.act_kind == "Climax":
+                assert "drums" in s.roles
+            if s.name == "Break" and s.act_kind != "Climax":
+                assert "drums" not in s.roles
+                quiet_breaks += 1
+        assert (
+            by_name["Chorus"].energy
+            > by_name["Verse"].energy
+            > by_name["Intro"].energy
+        )
+    assert quiet_breaks >= 10
 
 
 def test_roles_decide_which_tracks_exist():
@@ -244,6 +257,84 @@ def test_melodic_roles_stay_in_the_chosen_scale(scale, root):
         if inst.is_drum:
             continue
         assert {n.pitch % 12 for n in inst.notes} <= allowed, inst.name
+
+
+@pytest.mark.parametrize("style", SONG_STYLES)
+def test_every_style_stays_in_the_scale_but_for_the_fifth_of_a_power_chord(
+    style,
+):
+    power = genre_feel.feel_for(style).power_chords
+    for scale in ("Major", "Minor", "Dorian", "Harmonic Minor"):
+        for seed in range(1, 5):
+            root = NOTE_NAMES[(5 * seed) % 12]
+            home = NOTE_NAMES.index(root)
+            allowed = {(home + i) % 12 for i in SCALES[scale]}
+            fifths = {(pc + 7) % 12 for pc in allowed}
+            c = compose(
+                _opts(
+                    scale=scale,
+                    root=root,
+                    style=style,
+                    seed=seed,
+                    bars=32,
+                    roles=ROLE_KEYS,
+                    texture_batches=0,
+                )
+            )
+            for inst in c.instruments:
+                if inst.is_drum:
+                    continue
+                heard = {n.pitch % 12 for n in inst.notes}
+                if power and inst.name.startswith("Chords"):
+                    assert heard <= allowed | fifths, inst.name
+                else:
+                    assert heard <= allowed, inst.name
+
+
+@pytest.mark.parametrize("style", SONG_STYLES)
+def test_a_counter_melody_chosen_without_a_melody_still_plays(style):
+    for seed in range(1, 9):
+        alone = compose(
+            _opts(
+                style=style,
+                seed=seed,
+                bars=32,
+                roles=("counter",),
+                texture_batches=0,
+            )
+        )
+        assert _role_names(alone) == {"Counter-melody"}
+        sounding = {
+            int(n.start / BAR + 1e-6)
+            for i in alone.instruments
+            for n in i.notes
+        }
+        assert sounding == set(range(32))
+        allowed = {(9 + i) % 12 for i in SCALES["Minor"]}
+        for inst in alone.instruments:
+            assert {n.pitch % 12 for n in inst.notes} <= allowed
+
+
+def test_a_counter_melody_without_a_melody_plays_wherever_it_is_called_for():
+    called = 0
+    for seed in range(1, 13):
+        answered = compose(
+            _opts(seed=seed, bars=48, roles=("drums", "bass", "pad", "counter"))
+        )
+        assert "Melody" not in _role_names(answered)
+        for section in answered.sections:
+            if "counter" not in section.roles:
+                continue
+            called += 1
+            low = section.start_bar * BAR
+            high = low + section.bars * BAR
+            assert any(
+                low <= n.start < high
+                for i in answered.instruments
+                if i.name.startswith("Counter-melody")
+                for n in i.notes
+            )
+    assert called >= 12
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -452,15 +543,29 @@ def test_a_full_texture_collapses_into_a_handful_of_tracks():
     assert len(c.tracks) <= 24
 
 
-def test_tracks_keep_every_generated_note_start():
-    c = compose(_opts(texture_batches=2, minutes=3))
-    kept = {
-        _instrument_key(t): {(round(n.start, 6), n.pitch) for n in t.notes}
-        for t in c.tracks
-    }
-    for inst in c.instruments:
-        starts = {(round(n.start, 6), n.pitch) for n in inst.notes}
-        assert starts <= kept[_instrument_key(inst)]
+def test_tracks_keep_every_generated_note_within_the_same_start_window():
+    absorbed = 0
+    for seed in range(1, 25):
+        c = compose(_opts(texture_batches=2, minutes=2, seed=seed))
+        kept = {}
+        for track in c.tracks:
+            starts = kept.setdefault(_instrument_key(track), {})
+            for n in track.notes:
+                starts.setdefault(n.pitch, []).append(n.start)
+        for inst in c.instruments:
+            starts = kept[_instrument_key(inst)]
+            for n in inst.notes:
+                nearest = min(
+                    (n.start - start for start in starts[n.pitch]),
+                    key=abs,
+                )
+                assert 0 <= nearest < SAME_START
+                absorbed += nearest > 0
+        for track in c.tracks:
+            assert len({(n.start, n.pitch) for n in track.notes}) == len(
+                track.notes
+            )
+    assert absorbed
 
 
 def test_track_names_are_friendly_not_general_midi():

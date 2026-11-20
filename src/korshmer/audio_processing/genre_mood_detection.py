@@ -284,80 +284,12 @@ class GenreMoodDetector:
     def _estimate_key_mode(
         self, audio: np.ndarray, sr: float
     ) -> tuple[str, str]:
-        chroma = librosa.feature.chroma_cqt(y=audio, sr=sr)
+        from korshmer.analysis import audio_key
+        from korshmer.constants import NOTE_NAMES
+        from korshmer.key_finding import MAJOR_MINOR
 
-        chroma_avg = np.mean(chroma, axis=1)
-
-        key_names = [
-            "C",
-            "C#",
-            "D",
-            "D#",
-            "E",
-            "F",
-            "F#",
-            "G",
-            "G#",
-            "A",
-            "A#",
-            "B",
-        ]
-        key_idx = np.argmax(chroma_avg)
-        key = key_names[key_idx]
-
-        major_profile = np.array(
-            [
-                6.35,
-                2.23,
-                3.48,
-                2.33,
-                4.38,
-                4.09,
-                2.52,
-                5.19,
-                2.39,
-                3.66,
-                2.29,
-                2.88,
-            ]
-        )
-        minor_profile = np.array(
-            [
-                6.33,
-                2.68,
-                3.52,
-                5.38,
-                2.60,
-                3.53,
-                2.54,
-                4.75,
-                3.98,
-                2.69,
-                3.34,
-                3.17,
-            ]
-        )
-
-        major_profile = major_profile / np.sum(major_profile)
-        minor_profile = minor_profile / np.sum(minor_profile)
-
-        chroma_normalized = chroma_avg / (np.sum(chroma_avg) + 1e-10)
-
-        major_correlation = np.corrcoef(
-            chroma_normalized, np.roll(major_profile, key_idx)
-        )[0, 1]
-        minor_correlation = np.corrcoef(
-            chroma_normalized, np.roll(minor_profile, key_idx)
-        )[0, 1]
-
-        if np.isnan(major_correlation):
-            major_correlation = 0.0
-        if np.isnan(minor_correlation):
-            minor_correlation = 0.0
-
-        mode = "major" if major_correlation > minor_correlation else "minor"
-
-        return key, mode
+        root, mode = audio_key(audio, sr, scales=MAJOR_MINOR)
+        return NOTE_NAMES[root], mode.lower()
 
     def calculate_danceability(self, audio_path: str) -> dict:
         audio, sr = librosa.load(audio_path, sr=None, duration=30)

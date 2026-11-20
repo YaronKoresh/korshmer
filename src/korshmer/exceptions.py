@@ -143,6 +143,10 @@ class ProcessingCancelledError(ProcessingError):
     pass
 
 
+class MasteringCancelledError(ProcessingCancelledError):
+    pass
+
+
 class ProcessingTimeoutError(ProcessingError):
     pass
 

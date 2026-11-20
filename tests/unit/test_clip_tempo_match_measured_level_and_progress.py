@@ -273,16 +273,18 @@ def test_a_drum_loop_already_at_the_song_tempo_is_not_stretched(
     assert "tempo matched" not in said[-1]
 
 
-def test_a_recording_without_a_clear_tempo_is_never_stretched(
+def test_a_recording_without_a_clear_tempo_keeps_its_length(
     qapp, tmp_path, fixed_files
 ):
     voice = _sung_phrases(tmp_path / "voice.wav")
     timeline, clip, said = _with_clip(qapp, voice, start=1.1)
+    timeline.wait_for_waveforms()
+    length = timeline.model.clip_by_id(clip.id).duration
 
     timeline.align_clip_to_beat(clip.id)
     _finish(timeline)
 
-    assert timeline.model.clip_by_id(clip.id).path == voice
+    assert timeline.model.clip_by_id(clip.id).duration == pytest.approx(length)
     assert "tempo matched" not in said[-1]
 
 
@@ -324,7 +326,8 @@ def test_a_running_fix_shows_its_steps_and_how_far_it_is(
     assert "Looking for separate parts" in stages
     assert any("Removing background noise" in stage for stage in stages)
     assert any("Measuring and improving the level" in stage for stage in stages)
-    assert stages[-1].endswith("Finding the beat")
+    assert any(stage.endswith("Finding the beat") for stage in stages)
+    assert stages[-1].endswith("Stretching sounds onto the beat")
     assert percents == sorted(percents) and percents[-1] < 100
     assert not timeline.clip_edit_bar.isVisible()
 

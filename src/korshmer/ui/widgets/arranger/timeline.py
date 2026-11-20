@@ -965,6 +965,7 @@ class ArrangerTimeline(QWidget):
         song_bpm = float(self.model.tempo) if steady else None
 
         song = self.get_midi_from_editor() if "quality" in steps else None
+        grid_steps = self.current_grid_divisions()
         tempo = float(self.piano_roll.tempo)
         render = self.notes_audio
         heard = {}
@@ -989,6 +990,7 @@ class ArrangerTimeline(QWidget):
                 report,
                 cancelled,
                 notes=notes if song is not None else None,
+                grid_steps=grid_steps,
             )
 
         return job
@@ -1196,6 +1198,13 @@ class ArrangerTimeline(QWidget):
         placement = self._clip_placement_text(result, seconds, moved)
         if placement:
             notes.append(placement)
+        if "on_grid" in result:
+            count, largest = result["on_grid"]
+            notes.append(
+                f"{count} sounds inside it were stretched onto the "
+                f"{self.combo_grid.currentText()} grid "
+                f"(largest move {largest * 1000.0:.0f} ms)"
+            )
         return notes
 
     def _replace_with_parts(self, clip, label, result):

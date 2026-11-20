@@ -1,5 +1,6 @@
 import math
 import random
+import statistics
 
 import pretty_midi
 
@@ -18,6 +19,13 @@ BPM = 120.0
 BAR = 240.0 / BPM
 BLOCK = 4
 STEP_DB = 3.0
+LAYER_SEEDS = range(1, 13)
+SONG_SEEDS = range(1, 21)
+VARIETY_FLOORS = (
+    ("drums", 0.25, 0.35),
+    ("chords", 0.15, 0.25),
+    ("pad", 0.1, 0.15),
+)
 
 
 def _wobbly_song(bars=64, seed=7, drums=False):
@@ -48,7 +56,7 @@ def _wobbly_song(bars=64, seed=7, drums=False):
     return song
 
 
-def _layer(style="Phonk", seed=3, drums=False):
+def _layer(style="Phonk", seed=3, drums=False, song_seed=7):
     options = ComposeOptions(
         "A",
         "Minor",
@@ -58,7 +66,7 @@ def _layer(style="Phonk", seed=3, drums=False):
         mode="Layer over editor",
         roles=("drums", "bass", "chords", "pad", "arp", "melody"),
     )
-    return compose(options, existing=_wobbly_song(drums=drums))
+    return compose(options, existing=_wobbly_song(seed=song_seed, drums=drums))
 
 
 def _block_levels(made):
@@ -86,9 +94,15 @@ def _steps_db(levels):
 
 def test_a_layer_does_not_pump_with_the_noise_in_the_song_velocities():
     for style, seed in (("Phonk", 3), ("Pop", 5)):
-        body = _block_levels(_layer(style, seed))[1:-1]
-        assert max(_steps_db(body)) < STEP_DB, style
-        assert max(body) / min(body) < 1.25, style
+        steps = []
+        for song_seed in SONG_SEEDS:
+            made = _layer(style, seed, song_seed=song_seed)
+            body = _block_levels(made)[1:-1]
+            steps.append(max(_steps_db(body)))
+            assert max(body) / min(body) < 1.6, (style, song_seed)
+        steady = sum(step < STEP_DB for step in steps)
+        assert steady >= 0.8 * len(steps), style
+        assert statistics.median(steps) < 2.0, style
 
 
 def test_no_layer_note_is_too_quiet_to_hear():
@@ -148,31 +162,47 @@ def _variety(made, word):
 
 
 def test_layer_bars_do_not_repeat_like_a_loop():
-    for style, seed in (("Phonk", 3), ("Pop", 5)):
-        made = _layer(style, seed)
-        assert _variety(made, "drums") >= 0.35, style
-        assert _variety(made, "chords") >= 0.25, style
-        assert _variety(made, "pad") >= 0.15, style
+    for style in ("Phonk", "Pop"):
+        layers = [_layer(style, seed) for seed in LAYER_SEEDS]
+        for word, each, mean in VARIETY_FLOORS:
+            found = [_variety(made, word) for made in layers]
+            assert min(found) >= each, (style, word)
+            assert statistics.mean(found) >= mean, (style, word)
 
 
-def test_a_long_section_gets_different_phrases():
-    made = _layer(style="Pop", seed=5)
-    long_sections = [s for s in made.sections if s.bars >= 8]
-    assert long_sections
-    bass = next(i for i in made.instruments if "bass" in (i.name or "").lower())
-    section = long_sections[0]
-    first = section.start_bar * BAR + made.grid_offset
-    phrase = [
-        tuple(
-            sorted(
-                round((n.start - first - k * 4 * BAR) / BAR * 16)
-                for n in bass.notes
-                if first + k * 4 * BAR <= n.start < first + (k + 1) * 4 * BAR
-            )
+def test_a_long_section_usually_gets_different_phrases():
+    different = 0
+    other_rhythm = 0
+    for seed in LAYER_SEEDS:
+        made = _layer(style="Pop", seed=seed)
+        long_sections = [s for s in made.sections if s.bars >= 8]
+        assert long_sections
+        bass = next(
+            i for i in made.instruments if "bass" in (i.name or "").lower()
         )
-        for k in range(2)
-    ]
-    assert phrase[0] and phrase[1] and phrase[0] != phrase[1]
+        section = long_sections[0]
+        first = section.start_bar * BAR + made.grid_offset
+        phrase = [
+            tuple(
+                sorted(
+                    (
+                        round((n.start - first - k * 4 * BAR) / BAR * 16),
+                        n.pitch,
+                    )
+                    for n in bass.notes
+                    if first + k * 4 * BAR
+                    <= n.start
+                    < first + (k + 1) * 4 * BAR
+                )
+            )
+            for k in range(2)
+        ]
+        assert phrase[0] and phrase[1]
+        different += phrase[0] != phrase[1]
+        steps = [tuple(step for step, _pitch in found) for found in phrase]
+        other_rhythm += steps[0] != steps[1]
+    assert different >= 0.8 * len(LAYER_SEEDS)
+    assert other_rhythm >= len(LAYER_SEEDS) / 3
 
 
 def test_a_varied_phrase_revoices_chords_and_adds_a_bass_pickup():

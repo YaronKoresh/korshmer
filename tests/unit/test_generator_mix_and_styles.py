@@ -67,15 +67,21 @@ def test_phonk_is_a_complete_style():
     assert "Phonk" in genre_feel.FEELS
     assert genres.GENRES["Phonk"].kit == genres.KIT_808
     assert genre_feel.FEELS["Phonk"].drum_vel > 1.0
-    made = compose(
-        ComposeOptions(
-            "A", "Minor", bpm=140.0, minutes=1.0, style="Phonk", seed=3
+    for seed in range(1, 31):
+        made = compose(
+            ComposeOptions(
+                "A", "Minor", bpm=140.0, minutes=1.0, style="Phonk", seed=seed
+            )
         )
-    )
-    assert made.style == "Phonk"
-    roles = _role_notes(made)
-    assert roles["drums"] and roles["bass"] and roles["melody"]
-    assert len(roles["drums"]) / made.total_bars >= 8
+        assert made.style == "Phonk"
+        roles = _role_notes(made)
+        assert roles["drums"] and roles["bass"] and roles["melody"]
+        drummed_bars = sum(
+            section.bars
+            for section in made.sections
+            if "drums" in section.roles
+        )
+        assert len(roles["drums"]) / drummed_bars >= 8
 
 
 @pytest.mark.parametrize(

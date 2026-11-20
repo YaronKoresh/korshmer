@@ -856,6 +856,8 @@ Help:
     def toggle_processing(self):
         if self.is_processing:
             self.stop_conversion()
+        elif self.cancellable_action_is_running():
+            self.cancel_running_action()
         else:
             self.start_conversion_logic()
 

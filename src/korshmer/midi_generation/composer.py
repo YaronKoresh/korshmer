@@ -1485,6 +1485,21 @@ def compose(options, existing=None):
         retold = told.get((kind, act), 0)
         told[(kind, act)] = retold + 1
         sect_seed = rng.randrange(1 << 30)
+        lead_kw = {
+            "mood": state["mood"],
+            "lift": ARC_CLIMAX_LIFT if chapter.kind == "Climax" else 0,
+            "turn": register_turn,
+            "register_mood": base_mood,
+            "phrases": phrases,
+            "hook": hook,
+            "kind": "chorus" if section.name == "Loop" else kind,
+            "final": closing,
+            "style": style,
+            "seed": melody_seed[(kind, act)] + retold,
+            "bars": section.bars,
+            "start_bar": start_bar + section.start_bar,
+            "energy": section.energy,
+        }
         for index, (offset, length) in enumerate(
             _phrases(section.bars, layering)
         ):
@@ -1676,24 +1691,7 @@ def compose(options, existing=None):
                             answer_phrases(tune.notes, heard, lo, hi, bar / 4)
                         )
                         continue
-                    inst = engine.generate_melody(
-                        ctx,
-                        mood=state["mood"],
-                        lift=ARC_CLIMAX_LIFT if chapter.kind == "Climax" else 0,
-                        turn=register_turn,
-                        register_mood=base_mood,
-                        phrases=phrases,
-                        hook=hook,
-                        kind="chorus" if section.name == "Loop" else kind,
-                        final=closing,
-                        style=style,
-                        **{
-                            **kw,
-                            "seed": melody_seed[(kind, act)] + retold,
-                            "bars": section.bars,
-                            "start_bar": start_bar + section.start_bar,
-                        },
-                    )
+                    inst = engine.generate_melody(ctx, **lead_kw)
                 else:
                     continue
                 if layering:
@@ -1739,6 +1737,12 @@ def compose(options, existing=None):
                 if lo <= n.start < hi
             ]
             counter = engine.generate_countermelody(ctx, seg, seed=sect_seed)
+            _voice(out, "counter", chapter.programs["counter"]).notes.extend(
+                counter.notes
+            )
+        elif "counter" in section.roles and "melody" not in user_roles:
+            guide = engine.generate_melody(ctx, **lead_kw)
+            counter = engine.generate_countermelody(ctx, guide, seed=sect_seed)
             _voice(out, "counter", chapter.programs["counter"]).notes.extend(
                 counter.notes
             )

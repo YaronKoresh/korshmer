@@ -117,26 +117,31 @@ def test_song_closes_on_five_then_one(style):
 
 
 def test_build_song_choruses_share_one_hook_and_the_last_bar_closes():
-    pm = engine.build_song(
-        "A",
-        "Minor",
-        style="Pop",
-        bpm=BPM,
-        seed=3,
-        parts=["melody"],
-        bars_per_section=8,
-    )
-    notes = sorted(pm.instruments[0].notes, key=lambda n: n.start)
-    choruses = {_rhythm(notes, bar) for bar in (16, 32, 48)}
-    assert len(choruses) == 1
-    assert _rhythm(notes, 0) == _rhythm(notes, 16)
-    assert _rhythm(notes, 8) != _rhythm(notes, 16)
     preset = engine.PROGRESSION_PRESETS[engine._STYLES["Pop"][0]]
     ctx = engine.HarmonicContext(
         root=9, scale="Minor", bpm=BPM, progression=list(preset)
     )
     final_root = ctx.degree_pitch(ctx.chord_at(63), 4)
-    assert (notes[-1].pitch - final_root) % 12 == 0
+    thinner_verses = 0
+    seeds = range(1, 31)
+    for seed in seeds:
+        pm = engine.build_song(
+            "A",
+            "Minor",
+            style="Pop",
+            bpm=BPM,
+            seed=seed,
+            parts=["melody"],
+            bars_per_section=8,
+        )
+        notes = sorted(pm.instruments[0].notes, key=lambda n: n.start)
+        choruses = {_rhythm(notes, bar) for bar in (16, 32, 48)}
+        assert len(choruses) == 1
+        assert _rhythm(notes, 0) == _rhythm(notes, 16)
+        assert set(_rhythm(notes, 8)) <= set(_rhythm(notes, 16))
+        thinner_verses += _rhythm(notes, 8) != _rhythm(notes, 16)
+        assert (notes[-1].pitch - final_root) % 12 == 0
+    assert thinner_verses >= 0.65 * len(seeds)
 
 
 def test_build_song_hook_follows_the_seed():

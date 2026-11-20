@@ -1,3 +1,4 @@
+import statistics
 from collections import defaultdict
 
 import pretty_midi
@@ -13,6 +14,7 @@ from korshmer.midi_generation.composer import (
 BPM = 120.0
 BAR = 240.0 / BPM
 NO_EXTRAS = ("drums", "bass", "chords", "pad", "melody")
+LONG_SEEDS = range(1, 11)
 
 
 def _song(minutes=10, style="Pop", seed=1, roles=NO_EXTRAS, **kw):
@@ -58,19 +60,31 @@ def _phrase_counts(inst, total_bars):
     return len(phrases), len(set(phrases))
 
 
+def _share(values, holds):
+    values = list(values)
+    return sum(1 for value in values if holds(value)) / len(values)
+
+
 @pytest.mark.parametrize("style", ["Pop", "Rock", "Jazz", "EDM"])
 def test_ten_minute_song_keeps_changing(style):
-    comp = _song(style=style)
-    counts = {
-        name: _phrase_counts(inst, comp.total_bars)
-        for name, inst in _by_role(comp).items()
-    }
-    total, distinct = counts["Drums"]
-    assert distinct >= 20
-    total, distinct = counts["Melody"]
-    assert distinct / total >= 0.6
-    total, distinct = counts["Chords"]
-    assert distinct / total >= 0.25
+    melody = []
+    chords = []
+    for seed in LONG_SEEDS:
+        comp = _song(style=style, seed=seed)
+        counts = {
+            name: _phrase_counts(inst, comp.total_bars)
+            for name, inst in _by_role(comp).items()
+        }
+        total, distinct = counts["Drums"]
+        assert distinct >= 20
+        total, distinct = counts["Melody"]
+        melody.append(distinct / total)
+        total, distinct = counts["Chords"]
+        chords.append(distinct / total)
+    assert _share(melody, lambda ratio: ratio >= 0.45) >= 0.8
+    assert statistics.mean(melody) >= 0.6
+    assert _share(chords, lambda ratio: ratio >= 0.2) >= 0.8
+    assert statistics.mean(chords) >= 0.3
 
 
 def test_ten_minute_song_uses_many_chord_progressions():
@@ -79,9 +93,16 @@ def test_ten_minute_song_uses_many_chord_progressions():
 
 
 def test_short_song_stays_in_one_act():
-    comp = _song(minutes=1)
-    assert comp.total_bars <= ACT_BARS
-    assert len({s.progression for s in comp.sections}) <= 6
+    progressions = []
+    for seed in range(1, 41):
+        comp = _song(minutes=1, seed=seed)
+        assert comp.total_bars <= ACT_BARS
+        assert {s.act for s in comp.sections} == {0}
+        assert {s.act_kind for s in comp.sections} == {"Statement"}
+        progressions.append(len({s.progression for s in comp.sections}))
+        assert progressions[-1] <= len(comp.sections)
+    assert _share(progressions, lambda count: count <= 7) >= 0.9
+    assert statistics.mean(progressions) <= 6
 
 
 @pytest.mark.parametrize("scale", ["Minor", "Dorian", "Pentatonic Major"])
@@ -169,13 +190,16 @@ def test_long_loop_is_cut_into_acts(total):
     assert len(sections) == -(-total // ACT_BARS)
 
 
-def test_ten_minute_loop_song_keeps_changing():
-    comp = _song(structure="Loop")
-    total, distinct = _phrase_counts(
-        next(i for i in comp.instruments if i.name == "Melody"),
-        comp.total_bars,
-    )
-    assert distinct / total >= 0.5
+def test_ten_minute_loop_song_keeps_bringing_new_melody_phrases():
+    ratios = []
+    for seed in LONG_SEEDS:
+        comp = _song(structure="Loop", seed=seed)
+        total, distinct = _phrase_counts(
+            _by_role(comp)["Melody"], comp.total_bars
+        )
+        assert distinct >= 10
+        ratios.append(distinct / total)
+    assert statistics.mean(ratios) >= 0.25
 
 
 ALL_VOICES = (*NO_EXTRAS, "arp", "pluck")

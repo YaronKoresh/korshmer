@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from korshmer.constants import DATA_DIR, FLUID_DIR, NOTE_NAMES, SF3_PATH
 from korshmer.event_bus import Event, publish
+from korshmer.key_finding import find_key, midi_notes
 from korshmer.mixins.path_guard import reject_unsafe_path
 from korshmer.utils.tempo import validate_bpm
 
@@ -69,20 +70,11 @@ class EditorActionsMixin:
         if not needs_root and not needs_scale:
             return root, scale
         detected_root, detected_scale = "C", "Major"
-        if pm is not None and any(
-            n for inst in pm.instruments if not inst.is_drum for n in inst.notes
-        ):
+        notes = midi_notes(pm) if pm is not None else []
+        if notes:
             try:
-                from korshmer.analysis import detect_midi_key
-
-                os.makedirs(DATA_DIR, exist_ok=True)
-                tmp = os.path.join(DATA_DIR, "_key_probe.mid")
-                pm.write(tmp)
-                detected_root, detected_scale = detect_midi_key(tmp)
-                try:
-                    os.remove(tmp)
-                except OSError:
-                    pass
+                root_idx, detected_scale = find_key(notes)
+                detected_root = NOTE_NAMES[root_idx]
             except Exception as e:
                 logging.debug(f"Key detection fallback: {e}")
         if needs_root:

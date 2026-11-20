@@ -532,7 +532,9 @@ def process_scale_detection(midi_path):
         (n for inst in pm.instruments if not inst.is_drum for n in inst.notes),
         key=lambda n: n.start,
     )
-    scales = ScaleDetector().detect_scale_from_notes([n.pitch for n in notes])
+    scales = ScaleDetector().detect_scale_from_notes(
+        [n.pitch for n in notes], timed_notes=notes
+    )
     dir_name = os.path.dirname(midi_path)
     base_name = os.path.splitext(os.path.basename(midi_path))[0]
     out_path = os.path.join(dir_name, f"{base_name}_ScaleAnalysis.txt")
