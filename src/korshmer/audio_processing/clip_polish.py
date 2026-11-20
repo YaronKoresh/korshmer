@@ -21,6 +21,9 @@ FIRST_SOUND_SHARE = 0.1
 SILENCE_LEVEL = 1e-4
 ON_PULSE = "pulse"
 ON_FIRST_SOUND = "first sound"
+ON_SOUNDS = "sounds"
+DEFAULT_PLACING_STEPS = 2
+MIN_PLACED_SOUNDS = 2
 SILENT = "silent"
 MIN_PULSE_SECONDS = 1.0
 NOISE_TAG = "clean"
@@ -152,7 +155,7 @@ def _pulse_shift(mono, sample_rate, beats_at, start):
     return float(-np.angle(pulse) / (2.0 * np.pi * steps))
 
 
-def _first_sound_shift(mono, sample_rate, beats_at, start):
+def _first_sound_shift(mono, sample_rate, beats_at, start, steps):
     if mono.shape[0] < PULSE_HOP:
         return None
     levels = librosa.feature.rms(
@@ -163,12 +166,34 @@ def _first_sound_shift(mono, sample_rate, beats_at, start):
         return None
     heard = np.flatnonzero(levels >= peak * FIRST_SOUND_SHARE)
     beat = _beats_of(heard[:1], sample_rate, beats_at, start)[0]
-    return float(np.round(beat) - beat)
+    return float(np.round(beat * steps) / steps - beat)
+
+
+def _sounds_shift(mono, sample_rate, beats_at, start, steps):
+    starts = clip_elastic.sound_starts(mono, sample_rate)
+    if len(starts) < MIN_PLACED_SOUNDS:
+        return None
+    beats = np.array(
+        [beats_at(float(start) + second) for second, _weight in starts],
+        dtype=np.float64,
+    )
+    weights = np.array([weight for _second, weight in starts])
+    together = np.sum(weights * np.exp(2j * np.pi * steps * beats))
+    if abs(together) <= 0.0:
+        return None
+    return float(-np.angle(together) / (2.0 * np.pi * steps))
 
 
 def clip_beat_shift(
-    data, sample_rate, beats_at, start=0.0, offset=0.0, duration=None
+    data,
+    sample_rate,
+    beats_at,
+    start=0.0,
+    offset=0.0,
+    duration=None,
+    grid_steps=None,
 ):
+    steps = int(grid_steps or DEFAULT_PLACING_STEPS)
     mono = _kept_part(data, sample_rate, offset, duration)
     if mono.shape[0] >= PART_FRAME:
         mono = _audible(mono, sample_rate)
@@ -178,7 +203,10 @@ def clip_beat_shift(
     shift = _pulse_shift(mono, sample_rate, beats_at, start)
     if shift is not None:
         return shift, ON_PULSE
-    shift = _first_sound_shift(mono, sample_rate, beats_at, start)
+    shift = _sounds_shift(mono, sample_rate, beats_at, start, steps)
+    if shift is not None:
+        return shift, ON_SOUNDS
+    shift = _first_sound_shift(mono, sample_rate, beats_at, start, steps)
     if shift is not None:
         return shift, ON_FIRST_SOUND
     return None, SILENT
@@ -362,7 +390,7 @@ def _align(clip, current, result, song, tools):
             data, sample_rate = _read(matched)
     enter(BEAT_STAGE)
     result["shift"], result["anchor"] = clip_beat_shift(
-        data, sample_rate, beats_at, clip.start, offset, duration
+        data, sample_rate, beats_at, clip.start, offset, duration, grid_steps
     )
     if not _stretches_inside(clip, song_bpm, grid_steps):
         return
@@ -572,7 +600,8 @@ def _short_parts_follow_neighbours(parts):
     steady = [part for part in parts if part.get("anchor") == ON_PULSE]
     for part in parts:
         short = part["seconds"] < SHORT_PART_S
-        if not steady or not short or part.get("anchor") != ON_FIRST_SOUND:
+        loose = part.get("anchor") in (ON_FIRST_SOUND, ON_SOUNDS)
+        if not steady or not short or not loose:
             continue
         nearest = min(
             steady, key=lambda other: abs(other["start"] - part["start"])

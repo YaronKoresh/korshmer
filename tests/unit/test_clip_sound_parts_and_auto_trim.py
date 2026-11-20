@@ -431,7 +431,7 @@ def test_a_very_short_part_moves_with_the_part_next_to_it_and_keeps_its_place(
     assert "together with the part next to it" in said[-1]
 
 
-def test_a_very_short_part_with_no_rhythmic_part_nearby_starts_on_a_beat(
+def test_a_very_short_part_with_no_rhythmic_part_nearby_starts_on_a_grid_line(
     qapp, tmp_path, fixed_files
 ):
     audio = np.zeros(RATE * 12, dtype=np.float32)
@@ -442,8 +442,10 @@ def test_a_very_short_part_with_no_rhythmic_part_nearby_starts_on_a_beat(
     timeline, _said = _fixed(qapp, str(tmp_path / "fills.wav"))
 
     assert len(timeline.model.clips) == 2
+    grid = BEAT_SECONDS / timeline.current_grid_divisions()
     for clip in timeline.model.clips:
-        assert _on_a_beat(_first_sound(clip))
+        steps = _first_sound(clip) / grid
+        assert steps == pytest.approx(round(steps), abs=0.2)
 
 
 def test_quiet_ends_that_hold_only_inaudible_drift_are_trimmed_off(

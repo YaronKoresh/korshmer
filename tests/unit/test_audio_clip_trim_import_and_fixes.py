@@ -492,20 +492,19 @@ def _offbeat_rhythm(path, late_seconds):
     return str(path)
 
 
-def test_aligning_speech_without_a_steady_pulse_puts_its_first_sound_on_a_beat(
+def _grid_seconds(timeline):
+    return BEAT_SECONDS / timeline.current_grid_divisions()
+
+
+def test_aligning_speech_without_a_steady_pulse_moves_it_less_than_half_a_grid_step(
     qapp, tmp_path, edited_clips_folder
 ):
     recording = _speech_after_a_pause(tmp_path / "speech.wav")
 
     timeline, clip, said = _aligned(qapp, recording, 2.0)
 
-    first_sound = clip.start + 1.13
-    assert first_sound / BEAT_SECONDS == pytest.approx(
-        round(first_sound / BEAT_SECONDS), abs=0.06
-    )
-    assert abs(clip.start - 2.0) <= BEAT_SECONDS / 2 + 0.01
-    assert clip.start != pytest.approx(2.0, abs=0.01)
-    assert "first sound" in said
+    assert abs(clip.start - 2.0) <= _grid_seconds(timeline) / 2 + 0.001
+    assert "nearest grid line" in said
 
     timeline.undo()
     assert timeline.model.clip_by_id(clip.id).start == pytest.approx(2.0)
@@ -565,16 +564,16 @@ def test_aligning_a_silent_audio_clip_leaves_it_alone_and_says_it_is_silent(
     assert "silent" in said
 
 
-def test_aligning_steady_noise_starts_it_on_a_beat(
+def test_aligning_steady_noise_moves_it_less_than_half_a_grid_step(
     qapp, tmp_path, edited_clips_folder
 ):
     hiss = tmp_path / "hiss.wav"
     sf.write(str(hiss), np.random.default_rng(1).normal(0, 0.1, RATE * 6), RATE)
 
-    _timeline_used, clip, said = _aligned(qapp, str(hiss), 1.1)
+    timeline, clip, said = _aligned(qapp, str(hiss), 1.1)
 
-    assert clip.start == pytest.approx(1.0, abs=0.02)
-    assert "first sound" in said
+    assert abs(clip.start - 1.1) <= _grid_seconds(timeline) / 2 + 0.001
+    assert "nearest grid line" in said
 
 
 def test_removing_background_noise_quiets_the_pauses_and_keeps_the_original_file(

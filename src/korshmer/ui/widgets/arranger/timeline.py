@@ -73,6 +73,8 @@ CLIP_ALIGN_LABEL = "Align Clip to the Beat"
 CLIP_NOISE_LABEL = "Remove Background Noise"
 CLIP_QUALITY_LABEL = "Improve Level and Quality"
 CLIP_ALL_LABEL = "Fix Clip Automatically"
+CLIP_EARLIER_LABEL = "Move Clip One Beat Earlier"
+CLIP_LATER_LABEL = "Move Clip One Beat Later"
 CLIP_MOVE_TOLERANCE_S = 1e-3
 CLIP_FOLLOW_LABEL = "Following the tempo"
 TEMPO_FOLLOW_DELAY_MS = 600
@@ -939,8 +941,37 @@ class ArrangerTimeline(QWidget):
                 (CLIP_NOISE_LABEL, self.remove_clip_noise),
                 (CLIP_QUALITY_LABEL, self.improve_clip_quality),
                 (CLIP_ALL_LABEL, self.fix_clip_automatically),
+                (CLIP_EARLIER_LABEL, self.move_clip_one_beat_earlier),
+                (CLIP_LATER_LABEL, self.move_clip_one_beat_later),
             )
         ]
+
+    def move_clip_one_beat_earlier(self, clip_id):
+        return self.move_clip_by_beats(clip_id, -1.0)
+
+    def move_clip_one_beat_later(self, clip_id):
+        return self.move_clip_by_beats(clip_id, 1.0)
+
+    def move_clip_by_beats(self, clip_id, beats):
+        self.piano_roll.sync_model_from_scene()
+        clip = self.model.clip_by_id(clip_id)
+        if clip is None:
+            return False
+        start = self._shifted_clip_start(clip, beats)
+        if start < 0.0:
+            self.clip_edit_status.emit(
+                f"'{clip.name}' is at the start of the song and cannot move earlier"
+            )
+            return False
+        self.model.snapshot()
+        clip.start = start
+        self.piano_roll.load_model(keep_selection=True)
+        self._on_model_changed()
+        self.clip_edit_status.emit(
+            f"'{clip.name}' moved one beat "
+            f"{'later' if beats > 0 else 'earlier'}"
+        )
+        return True
 
     def _clip_beats_at(self):
         tempo_map = self.model.tempo_map
@@ -1316,10 +1347,15 @@ class ArrangerTimeline(QWidget):
                 f"it is too short to read a beat from, so it moved "
                 f"{seconds:+.3f} s together with the part next to it"
             )
+        if anchor == clip_polish.ON_SOUNDS:
+            return (
+                f"it has no steady beat, so its sounds were moved "
+                f"{seconds:+.3f} s onto the nearest grid lines"
+            )
         if anchor == clip_polish.ON_FIRST_SOUND:
             return (
                 f"it has no steady beat, so its first sound was moved "
-                f"{seconds:+.3f} s onto a beat"
+                f"{seconds:+.3f} s onto the nearest grid line"
             )
         return f"it was moved {seconds:+.3f} s onto the beat"
 
