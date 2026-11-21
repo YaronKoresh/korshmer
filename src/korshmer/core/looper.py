@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import shutil
 import tempfile
 import threading
@@ -41,6 +42,13 @@ class Looper:
         self._rec: np.ndarray | None = None
         self._rec_pos = 0
         self._stream: Any = None
+        self._serial = 0
+        self._unsaved: dict[str, np.ndarray] = {}
+        self._unsaved_lock = threading.Lock()
+        self._jobs: queue.SimpleQueue[tuple[str, np.ndarray] | None] = (
+            queue.SimpleQueue()
+        )
+        self._writer: threading.Thread | None = None
 
     @staticmethod
     def _positive(value, name) -> int:
@@ -87,6 +95,7 @@ class Looper:
         return self._mix is not None
 
     def arm_record(self) -> None:
+        self._prepare_storage()
         with self._lock:
             if self._rec is not None:
                 return
@@ -101,6 +110,49 @@ class Looper:
             self._rec = None
             if not self._layers and self.pending_bpm is not None:
                 self.bpm, self.pending_bpm = self.pending_bpm, None
+
+    def _prepare_storage(self) -> None:
+        if self._dir is None:
+            self._dir = tempfile.mkdtemp(prefix="korshmer-looper-")
+        if self._writer is None or not self._writer.is_alive():
+            self._writer = threading.Thread(
+                target=self._write_layers,
+                name="korshmer-looper-writer",
+                daemon=True,
+            )
+            self._writer.start()
+
+    def _still_unsaved(self, path: str, layer: np.ndarray) -> bool:
+        with self._unsaved_lock:
+            return self._unsaved.get(path) is layer
+
+    def _write_layers(self) -> None:
+        while True:
+            job = self._jobs.get()
+            if job is None:
+                return
+            path, layer = job
+            if not self._still_unsaved(path, layer):
+                continue
+            try:
+                np.save(path, layer)
+            except OSError:
+                continue
+            with self._unsaved_lock:
+                kept = self._unsaved.get(path) is layer
+                if kept:
+                    del self._unsaved[path]
+            if not kept:
+                self._remove_orphan(path)
+
+    def _remove_orphan(self, path: str) -> None:
+        folder = os.path.dirname(path)
+        try:
+            os.remove(path)
+            if folder != self._dir:
+                os.rmdir(folder)
+        except OSError:
+            return
 
     def _begin_record(self) -> None:
         self._armed = False
@@ -129,10 +181,12 @@ class Looper:
             layer = np.concatenate(
                 [layer[shift:], np.zeros((shift, self.channels), np.float32)]
             )
-        if self._dir is None:
-            self._dir = tempfile.mkdtemp(prefix="korshmer-looper-")
-        path = os.path.join(self._dir, f"layer{len(self._layers)}.npy")
-        np.save(path, layer)
+        self._serial += 1
+        path = os.path.join(self._dir or "", f"layer{self._serial}.npy")
+        with self._unsaved_lock:
+            self._unsaved[path] = layer
+        if self._dir is not None:
+            self._jobs.put((path, layer))
         self._layers.append(path)
         mix = layer.copy() if self._mix is None else self._mix + layer
         if self._mix is None:
@@ -144,22 +198,45 @@ class Looper:
             if not self._layers:
                 return False
             path = self._layers.pop()
+        self._discard(path)
+        while True:
+            with self._lock:
+                kept = list(self._layers)
+            try:
+                total = self._sum_layers(kept)
+            except (OSError, ValueError):
+                if self._layers == kept:
+                    raise
+                continue
+            with self._lock:
+                if self._layers == kept:
+                    self._mix = total
+                    return True
+
+    def _discard(self, path: str) -> None:
+        with self._unsaved_lock:
+            unsaved = self._unsaved.pop(path, None) is not None
+        if not unsaved:
             try:
                 os.remove(path)
             except OSError:
                 pass
-            self._mix = self._sum_layers()
-            return True
 
-    def _sum_layers(self) -> np.ndarray | None:
-        if not self._layers:
+    def _layer(self, path: str) -> np.ndarray:
+        with self._unsaved_lock:
+            layer = self._unsaved.get(path)
+        if layer is None:
+            layer = np.load(path, mmap_mode="r")
+        return layer
+
+    def _sum_layers(self, paths: list[str]) -> np.ndarray | None:
+        if not paths:
             return None
         total = np.zeros(
-            (len(np.load(self._layers[0], mmap_mode="r")), self.channels),
-            np.float32,
+            (len(self._layer(paths[0])), self.channels), np.float32
         )
-        for path in self._layers:
-            total += np.load(path, mmap_mode="r")
+        for path in paths:
+            total += self._layer(path)
         return total
 
     def clear(self) -> None:
@@ -169,11 +246,13 @@ class Looper:
             self._mix = None
             self._layers = []
             self._pos = 0
-            if self._dir is not None:
-                shutil.rmtree(self._dir, ignore_errors=True)
-                self._dir = None
+            folder, self._dir = self._dir, None
             if self.pending_bpm is not None:
                 self.bpm, self.pending_bpm = self.pending_bpm, None
+        with self._unsaved_lock:
+            self._unsaved.clear()
+        if folder is not None:
+            shutil.rmtree(folder, ignore_errors=True)
 
     def mix_out(self, out: np.ndarray) -> None:
         mix = self._mix
@@ -237,4 +316,8 @@ class Looper:
 
     def close(self) -> None:
         self.stop_output()
+        writer, self._writer = self._writer, None
+        if writer is not None:
+            self._jobs.put(None)
+            writer.join(timeout=5.0)
         self.clear()

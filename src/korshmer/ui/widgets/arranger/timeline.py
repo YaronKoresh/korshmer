@@ -7,7 +7,7 @@ import numpy as np
 import pretty_midi
 import sounddevice as sd
 import soundfile as sf
-from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QSemaphore, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QApplication,
@@ -60,6 +60,28 @@ from korshmer.utils.filesystem import sanitize_path
 from korshmer.utils.tempo import midi_file_tempo, validate_bpm
 
 DEFAULT_GRID_LABEL = "1/16"
+DEFAULT_TIME_SIGNATURE = "4/4"
+TIME_SIGNATURES = {
+    "2/4": 2,
+    "3/4": 3,
+    "4/4": 4,
+    "5/4": 5,
+    "6/8": 6,
+    "7/8": 7,
+    "12/8": 12,
+}
+TIME_SIGNATURE_HELP = (
+    "Time signature of the grid. The upper number is how many tempo beats "
+    "make one bar; in 6/8, 7/8 and 12/8 the tempo counts eighth notes."
+)
+FOLLOW_HELP = (
+    "Keep the playhead in view while the song plays. Turn it off to stay "
+    "where you are editing."
+)
+ZOOM_FIT_HELP = "Show the whole song"
+RECORD_LABEL = "● REC"
+RECORD_STOP_LABEL = "■ STOP"
+WAVEFORM_DECODE_SLOTS = 2
 ZOOM_STEP = 1.25
 TOOLBAR_SPACING = 6
 EVEN_BPM_HELP = (
@@ -198,6 +220,7 @@ class _StreamingWriter:
 
 class AudioRecorderThread(QThread):
     recording_finished = Signal(str)
+    recording_failed = Signal(str)
     level_ready = Signal(float)
 
     SAMPLE_RATE = 44100
@@ -259,8 +282,9 @@ class AudioRecorderThread(QThread):
                 writer.drain(self._blocks)
                 if writer.finish():
                     self.recording_finished.emit(self.filename)
-        except Exception as e:
-            print(f"Rec Error: {e}")
+        except Exception as problem:
+            logging.getLogger(__name__).exception("Recording failed")
+            self.recording_failed.emit(str(problem) or type(problem).__name__)
         finally:
             if writer is not None:
                 writer.close()
@@ -296,16 +320,28 @@ class AudioRecorderThread(QThread):
 
 class ClipWaveformWorker(QThread):
     waveform_ready = Signal(int, object, float)
+    decode_slots = QSemaphore(WAVEFORM_DECODE_SLOTS)
 
     def __init__(self, clip_id, path, points=512, parent=None):
         super().__init__(parent)
         self.clip_id = clip_id
         self.path = path
         self.points = points
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
 
     def run(self):
-        waveform, duration = compute_clip_waveform(self.path, self.points)
-        self.waveform_ready.emit(self.clip_id, waveform, duration)
+        self.decode_slots.acquire()
+        try:
+            if self.cancelled:
+                return
+            waveform, duration = compute_clip_waveform(self.path, self.points)
+        finally:
+            self.decode_slots.release()
+        if not self.cancelled:
+            self.waveform_ready.emit(self.clip_id, waveform, duration)
 
 
 class ClipEditWorker(QThread):
@@ -350,12 +386,14 @@ class ArrangerTimeline(QWidget):
     export_clip_requested = Signal()
     tracks_changed = Signal()
     clip_edit_status = Signal(str)
+    time_signature_changed = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.vm = ArrangerViewModel()
         self._waveform_workers = []
         self._pending_waveform_ids = set()
+        self._unreadable_waveforms = set()
         self._clip_edit_workers = []
         self._clip_edit_files = set()
         self.notes_audio = notes_audio
@@ -399,7 +437,11 @@ class ArrangerTimeline(QWidget):
         self.piano_roll.notes_changed.connect(self.track_panel.update_status)
         self.piano_roll.model_changed.connect(self._on_model_changed)
         self.piano_roll.audio_dropped.connect(self._on_audio_dropped)
+        self.piano_roll.clips_changed.connect(self._queue_missing_waveforms)
         self.track_panel.tracks_changed.connect(self._on_tracks_edited)
+        mix_changed = getattr(self.track_panel, "mix_changed", None)
+        if mix_changed is not None:
+            mix_changed.connect(self._update_history_buttons)
         self.track_panel.active_track_changed.connect(
             self._on_active_track_changed
         )
@@ -436,7 +478,7 @@ class ArrangerTimeline(QWidget):
         toolbar = FlowLayout(spacing=TOOLBAR_SPACING)
         self._toolbar = toolbar
 
-        self.btn_rec = QPushButton("● REC")
+        self.btn_rec = QPushButton(RECORD_LABEL)
         self.btn_rec.setCheckable(True)
         self.btn_rec.setCursor(Qt.PointingHandCursor)
         self.btn_rec.setFixedHeight(32)
@@ -489,6 +531,11 @@ class ArrangerTimeline(QWidget):
         self.btn_merge.clicked.connect(self.import_merge_midi)
         self.btn_sync_play = MaterialButton("▶︎ Play Editor", "primary")
         self.btn_sync_play.clicked.connect(self.sync_and_play)
+        self.btn_follow = MaterialToggleButton("Follow", MAT_PRIMARY)
+        self.btn_follow.setFixedSize(64, 30)
+        self.btn_follow.setToolTip(FOLLOW_HELP)
+        self.btn_follow.setChecked(True)
+        self.btn_follow.toggled.connect(self.piano_roll.set_follow_playhead)
         self.btn_export_midi = MaterialButton("⬇︎ Export MIDI", "tonal")
         self.btn_export_midi.clicked.connect(self.export_midi)
         self.btn_export_mix = MaterialButton("♫ Export Mix", "success")
@@ -532,6 +579,7 @@ class ArrangerTimeline(QWidget):
             button.setMinimumWidth(button.sizeHint().width())
         for button in (
             self.btn_sync_play,
+            self.btn_follow,
             self.btn_merge,
             self.btn_clear,
             self.btn_export_midi,
@@ -590,6 +638,20 @@ class ArrangerTimeline(QWidget):
         self.btn_zoom_in.clicked.connect(
             lambda: self.piano_roll.zoom(ZOOM_STEP, 1.0)
         )
+        self.btn_zoom_fit = MaterialButton("Fit", "default")
+        self.btn_zoom_fit.setToolTip(ZOOM_FIT_HELP)
+        self.btn_zoom_fit.setAccessibleName(ZOOM_FIT_HELP)
+        self.btn_zoom_fit.setFixedWidth(40)
+        self.btn_zoom_fit.clicked.connect(self.piano_roll.zoom_to_fit)
+
+        self.combo_time_signature = QComboBox()
+        self.combo_time_signature.addItems(list(TIME_SIGNATURES))
+        self.combo_time_signature.setCurrentText(DEFAULT_TIME_SIGNATURE)
+        self.combo_time_signature.setToolTip(TIME_SIGNATURE_HELP)
+        self.combo_time_signature.setAccessibleName("Time signature")
+        self.combo_time_signature.currentTextChanged.connect(
+            self.set_time_signature
+        )
 
         toolbar.addWidget(self.btn_undo)
         toolbar.addWidget(self.btn_redo)
@@ -597,8 +659,10 @@ class ArrangerTimeline(QWidget):
         toolbar.addWidget(self.btn_even_bpm)
         toolbar.addWidget(lbl_grid)
         toolbar.addWidget(self.combo_grid)
+        toolbar.addWidget(self.combo_time_signature)
         toolbar.addWidget(self.btn_zoom_out)
         toolbar.addWidget(self.btn_zoom_in)
+        toolbar.addWidget(self.btn_zoom_fit)
         toolbar.addWidget(self.live_waveform)
 
     def eventFilter(self, obj, event):
@@ -713,9 +777,10 @@ class ArrangerTimeline(QWidget):
         ]
 
     def clear_editor(self):
-        self.wait_for_waveforms()
+        self.cancel_waveforms()
         self.model.snapshot()
         self.model.clear()
+        self.set_time_signature(DEFAULT_TIME_SIGNATURE)
         self.piano_roll.load_model()
         self.piano_roll.focus_notes()
         self._on_model_changed()
@@ -1247,12 +1312,14 @@ class ArrangerTimeline(QWidget):
         for number, fixed in enumerate(result["parts"], 1):
             readings = fixed.get("readings")
             improved = bool(readings) and not clip_level.unchanged(readings)
+            placed = {"pan": clip.pan} if hasattr(clip, "pan") else {}
             part = self.model.add_clip(
                 fixed["path"],
                 start=fixed["start"],
                 name=f"{clip.name} {number}",
                 kind=clip.kind,
                 gain=1.0 if improved else clip.gain,
+                **placed,
             )
             part.color = clip.color
             part.muted = clip.muted
@@ -1371,6 +1438,34 @@ class ArrangerTimeline(QWidget):
     def _queue_waveform(self, clip):
         self._pending_waveform_ids.add(clip.id)
 
+    @staticmethod
+    def _file_mark(path):
+        try:
+            found = os.stat(path)
+        except OSError:
+            return None
+        return path, found.st_size, found.st_mtime_ns
+
+    def _queue_missing_waveforms(self):
+        loading = {
+            (worker.clip_id, worker.path)
+            for worker in self._waveform_workers
+            if not worker.cancelled
+        }
+        for clip in self.model.clips:
+            if clip.waveform or (clip.id, clip.path) in loading:
+                continue
+            mark = self._file_mark(clip.path)
+            if mark is not None and mark not in self._unreadable_waveforms:
+                self._queue_waveform(clip)
+        self._start_visible_waveforms()
+
+    def cancel_waveforms(self):
+        for worker in self._waveform_workers:
+            worker.cancel()
+        self._pending_waveform_ids = set()
+        self._unreadable_waveforms = set()
+
     def _start_visible_waveforms(self):
         if not self._pending_waveform_ids:
             return
@@ -1406,14 +1501,19 @@ class ArrangerTimeline(QWidget):
         self._waveform_workers = still_running
 
     def _on_waveform_ready(self, clip_id, waveform, duration):
+        worker = self.sender()
+        if getattr(worker, "cancelled", False):
+            return
         clip = self.model.clip_by_id(clip_id)
         if clip is None:
             return
-        measured = getattr(self.sender(), "path", clip.path)
+        measured = getattr(worker, "path", clip.path)
         if measured != clip.path:
             self._queue_waveform(clip)
             self._start_visible_waveforms()
             return
+        if not waveform:
+            self._unreadable_waveforms.add(self._file_mark(clip.path))
         self.model.set_clip_waveform(clip_id, waveform, duration)
         self.piano_roll.refresh_clip(clip_id)
         self.track_panel.update_status()
@@ -1485,6 +1585,19 @@ class ArrangerTimeline(QWidget):
             self.combo_grid.blockSignals(False)
         self.piano_roll.viewport().update()
 
+    def set_time_signature(self, name):
+        if name not in TIME_SIGNATURES:
+            name = DEFAULT_TIME_SIGNATURE
+        beats = TIME_SIGNATURES[name]
+        changed = beats != self.piano_roll.beats_per_bar
+        self.piano_roll.set_beats_per_bar(beats)
+        if self.combo_time_signature.currentText() != name:
+            self.combo_time_signature.blockSignals(True)
+            self.combo_time_signature.setCurrentText(name)
+            self.combo_time_signature.blockSignals(False)
+        if changed:
+            self.time_signature_changed.emit(beats)
+
     def current_grid_divisions(self):
         return GRID_RESOLUTIONS.get(
             self.combo_grid.currentText(), GRID_RESOLUTIONS[DEFAULT_GRID_LABEL]
@@ -1499,15 +1612,19 @@ class ArrangerTimeline(QWidget):
         }
         data["snap"] = self.piano_roll.snap_enabled
         data["grid"] = self.combo_grid.currentText()
+        data["time_signature"] = self.combo_time_signature.currentText()
         data["current_track_id"] = self.piano_roll.current_track_id
         return data
 
     def load_project_dict(self, data):
-        self.wait_for_waveforms()
+        self.cancel_waveforms()
         self.model.load_state(data or {})
         self.piano_roll.tempo = self.model.tempo
         self.set_snap(bool((data or {}).get("snap", True)))
         self.set_grid((data or {}).get("grid", DEFAULT_GRID_LABEL))
+        self.set_time_signature(
+            (data or {}).get("time_signature", DEFAULT_TIME_SIGNATURE)
+        )
         wanted = (data or {}).get("current_track_id")
         self.piano_roll.current_track_id = (
             wanted
@@ -1579,18 +1696,31 @@ class ArrangerTimeline(QWidget):
                 looper=self.looper if self.btn_loop.isChecked() else None,
             )
             self.recorder.recording_finished.connect(self.on_rec_finished)
+            self.recorder.recording_failed.connect(self.on_rec_failed)
             self.live_waveform.clear()
             self.live_waveform.setVisible(True)
             self.recorder.level_ready.connect(self.live_waveform.push_level)
             self.recorder.start()
-            self.btn_rec.setText("■ STOP")
+            self.btn_rec.setText(RECORD_STOP_LABEL)
         else:
-            if self.recorder:
-                self.recorder.stop()
-                self.recorder.wait()
-                self.recorder = None
-            self.live_waveform.setVisible(False)
-            self.btn_rec.setText("● REC")
+            self._stop_recorder()
+
+    def _stop_recorder(self):
+        if self.recorder:
+            self.recorder.stop()
+            self.recorder.wait()
+            self.recorder = None
+        self.live_waveform.setVisible(False)
+        self.btn_rec.setText(RECORD_LABEL)
+
+    def on_rec_failed(self, problem):
+        failed = self.sender()
+        if failed is None or failed is self.recorder:
+            self._stop_recorder()
+            self.btn_rec.setChecked(False)
+        text = f"Recording stopped: {problem}"
+        self.clip_edit_status.emit(text)
+        QMessageBox.warning(self, "Recording", text)
 
     def on_rec_finished(self, path):
         self.recording_saved.emit(path)

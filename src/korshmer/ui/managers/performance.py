@@ -18,6 +18,7 @@ class PerformanceMonitor:
         self.update_interval = 0.5
         self.track_performance = {}
         self._in_cpu_spike = False
+        self._process = None
 
     def _log_cpu_spike(self, cpu_percent):
         is_spike = cpu_percent > PERFORMANCE_CPU_SPIKE_PERCENT
@@ -38,7 +39,9 @@ class PerformanceMonitor:
         try:
             import psutil
 
-            process = psutil.Process()
+            if self._process is None:
+                self._process = psutil.Process()
+            process = self._process
 
             cpu_percent = process.cpu_percent()
             memory_info = process.memory_info()

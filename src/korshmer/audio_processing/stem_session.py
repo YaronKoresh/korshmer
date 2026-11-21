@@ -52,6 +52,7 @@ KNOWN_STEM_MODELS = (
     "mdx_extra_q",
 )
 MIX_CHANNELS = 2
+PAN_SIDE_GAIN = float(np.sqrt(2.0))
 
 
 def _now_iso():
@@ -656,6 +657,34 @@ def _clip_gain(clip):
     return gain
 
 
+def _clip_pan(clip):
+    try:
+        pan = float(clip.get("pan") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not np.isfinite(pan):
+        return 0.0
+    return max(-1.0, min(1.0, pan))
+
+
+def pan_gains(pan):
+    if pan <= -1.0:
+        return PAN_SIDE_GAIN, 0.0
+    if pan >= 1.0:
+        return 0.0, PAN_SIDE_GAIN
+    angle = (pan + 1.0) * np.pi / 4.0
+    return (
+        float(PAN_SIDE_GAIN * np.cos(angle)),
+        float(PAN_SIDE_GAIN * np.sin(angle)),
+    )
+
+
+def panned_stereo(data, pan):
+    if pan == 0.0:
+        return data
+    return data * np.array(pan_gains(pan), dtype=np.float32)
+
+
 def _clip_start_samples(clip, sample_rate):
     try:
         start = float(clip.get("start", 0.0))
@@ -720,6 +749,7 @@ def mix_render_with_clips(
         gain = _clip_gain(clip)
         if gain != 1.0:
             data = data * np.float32(gain)
+        data = panned_stereo(data, _clip_pan(clip))
         layers.append((_clip_start_samples(clip, sample_rate), data))
     layers = [(offset, data) for offset, data in layers if data.shape[0] > 0]
     if not layers:

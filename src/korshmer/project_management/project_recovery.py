@@ -12,6 +12,7 @@ from typing import Any
 from korshmer.project_management.file_io_log import logged_file_op, logger
 
 CORRUPT_SUFFIX = ".corrupt"
+REFUSED_SUFFIX = ".refused"
 
 
 def validate_recovery_data(recovery_data: Any) -> str | None:
@@ -32,8 +33,10 @@ def validate_recovery_data(recovery_data: Any) -> str | None:
     return None
 
 
-def quarantine_recovery_file(recovery_file: Path) -> Path | None:
-    target = recovery_file.with_name(recovery_file.name + CORRUPT_SUFFIX)
+def quarantine_recovery_file(
+    recovery_file: Path, suffix: str = CORRUPT_SUFFIX
+) -> Path | None:
+    target = recovery_file.with_name(recovery_file.name + suffix)
     try:
         os.replace(recovery_file, target)
         logger.info(

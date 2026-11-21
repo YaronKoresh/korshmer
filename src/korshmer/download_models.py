@@ -2,9 +2,6 @@ import os
 import shutil
 from pathlib import Path
 
-import demucs.pretrained
-from basic_pitch.inference import ICASSP_2022_MODEL_PATH
-
 
 def normalize_path(p: str) -> str:
     return p.rstrip("/").replace(os.path.sep, "/")
@@ -35,6 +32,9 @@ def download_models():
 
     os.makedirs(models_dir, exist_ok=True)
     print(f"Downloading models to: {models_dir}")
+
+    import demucs.pretrained
+    from basic_pitch.inference import ICASSP_2022_MODEL_PATH
 
     print("Fetching Demucs model...")
     os.environ["TORCH_HOME"] = models_dir

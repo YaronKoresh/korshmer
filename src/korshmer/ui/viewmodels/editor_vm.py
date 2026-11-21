@@ -208,6 +208,61 @@ def clamp_track_gain(gain):
     return max(0.0, min(MAX_TRACK_GAIN, value))
 
 
+PAN_LEFT = -1.0
+PAN_CENTRE = 0.0
+PAN_RIGHT = 1.0
+PAN_CONTROLLER = 10
+PAN_CONTROLLER_CENTRE = 64
+PAN_CONTROLLER_RIGHT = 127
+
+
+def clamp_pan(pan):
+    try:
+        value = float(pan)
+    except (TypeError, ValueError):
+        return PAN_CENTRE
+    if not math.isfinite(value):
+        return PAN_CENTRE
+    return max(PAN_LEFT, min(PAN_RIGHT, value))
+
+
+def _controller_side(offset):
+    if offset > 0:
+        return PAN_CONTROLLER_RIGHT - PAN_CONTROLLER_CENTRE
+    return PAN_CONTROLLER_CENTRE
+
+
+def pan_to_controller(pan):
+    value = clamp_pan(pan)
+    return int(round(PAN_CONTROLLER_CENTRE + value * _controller_side(value)))
+
+
+def controller_to_pan(value):
+    offset = int(value) - PAN_CONTROLLER_CENTRE
+    return clamp_pan(offset / _controller_side(offset))
+
+
+def _instrument_pan(instrument):
+    moves = [
+        change
+        for change in getattr(instrument, "control_changes", None) or ()
+        if change.number == PAN_CONTROLLER
+    ]
+    if not moves:
+        return PAN_CENTRE
+    return controller_to_pan(min(moves, key=lambda move: move.time).value)
+
+
+def _merged_keeping_sides(instruments):
+    by_side = {}
+    for instrument in instruments:
+        by_side.setdefault(_instrument_pan(instrument), []).append(instrument)
+    merged = []
+    for same_side in by_side.values():
+        merged.extend(merge_by_instrument(same_side, keep_shared_names=True))
+    return merged
+
+
 def _bend_points(bends):
     points = []
     for entry in bends or ():
@@ -233,6 +288,7 @@ class TrackModel:
         "gain",
         "bends",
         "bend_range",
+        "pan",
     )
 
     def __init__(
@@ -248,6 +304,7 @@ class TrackModel:
         gain=1.0,
         bends=(),
         bend_range=DEFAULT_BEND_RANGE,
+        pan=PAN_CENTRE,
     ):
         self.id = int(track_id)
         self.name = str(name)
@@ -260,6 +317,7 @@ class TrackModel:
         self.gain = clamp_track_gain(gain)
         self.bends = _bend_points(bends)
         self.bend_range = clamp_bend_range(bend_range)
+        self.pan = clamp_pan(pan)
 
     def instrument_label(self):
         return instrument_name(self.program, self.is_drum)
@@ -277,12 +335,14 @@ class TrackModel:
             self.gain,
             self.bends,
             self.bend_range,
+            self.pan,
         )
 
     def to_dict(self):
         return {
             "id": self.id,
             "gain": self.gain,
+            "pan": self.pan,
             "bends": [list(point) for point in self.bends],
             "bend_range": self.bend_range,
             "name": self.name,
@@ -308,6 +368,7 @@ class TrackModel:
             data.get("gain", 1.0),
             data.get("bends") or (),
             data.get("bend_range", DEFAULT_BEND_RANGE),
+            data.get("pan", PAN_CENTRE),
         )
 
 
@@ -389,6 +450,7 @@ class ClipModel:
         "tempo_base",
         "offset",
         "length",
+        "pan",
     )
 
     def __init__(
@@ -405,6 +467,7 @@ class ClipModel:
         color=None,
         offset=0.0,
         length=None,
+        pan=PAN_CENTRE,
     ):
         self.id = int(clip_id)
         self.path = str(path)
@@ -424,6 +487,7 @@ class ClipModel:
         self.offset = max(0.0, float(offset))
         whole = self.offset + self.duration
         self.length = max(whole, float(length)) if length else whole
+        self.pan = clamp_pan(pan)
 
     @property
     def end(self):
@@ -468,6 +532,7 @@ class ClipModel:
             self.color,
             self.offset,
             self.length,
+            self.pan,
         )
         clone.waveform = self.waveform
         clone.source = self.source
@@ -482,6 +547,7 @@ class ClipModel:
             "start": self.start,
             "duration": self.duration,
             "gain": self.gain,
+            "pan": self.pan,
             "muted": self.muted,
             "solo": self.solo,
             "kind": self.kind,
@@ -514,6 +580,7 @@ class ClipModel:
             data.get("color"),
             _seconds(data.get("offset")),
             _seconds(data.get("length")) or None,
+            data.get("pan", PAN_CENTRE),
         )
 
 
@@ -668,6 +735,7 @@ class EditorModel:
         self._next_clip_id = 1
         self._undo_stack = []
         self._redo_stack = []
+        self._history_changes = 0
         self.max_undo_steps = MAX_UNDO_STEPS
 
     def clear(self):
@@ -994,6 +1062,7 @@ class EditorModel:
         kind="audio",
         gain=1.0,
         duration=None,
+        pan=PAN_CENTRE,
     ):
         if duration is None:
             duration = probe_audio_duration(path)
@@ -1005,6 +1074,7 @@ class EditorModel:
             duration,
             gain,
             kind=kind,
+            pan=pan,
         )
         self.clips.append(clip)
         return clip
@@ -1035,6 +1105,16 @@ class EditorModel:
         track = self.tracks.get(track_id)
         if track is not None:
             track.gain = clamp_track_gain(gain)
+
+    def set_track_pan(self, track_id, pan):
+        track = self.tracks.get(track_id)
+        if track is not None:
+            track.pan = clamp_pan(pan)
+
+    def set_clip_pan(self, clip_id, pan):
+        clip = self.clip_by_id(clip_id)
+        if clip is not None:
+            clip.pan = clamp_pan(pan)
 
     def set_clip_mute(self, clip_id, muted):
         clip = self.clip_by_id(clip_id)
@@ -1154,6 +1234,7 @@ class EditorModel:
                     program=int(inst.program),
                     is_drum=bool(inst.is_drum),
                 )
+                track.pan = _instrument_pan(inst)
             bends.sort(key=lambda point: point[0])
             slides, free = attach_slides(spans, bends, bend_range)
             for index, (note, (start, end)) in enumerate(
@@ -1230,10 +1311,14 @@ class EditorModel:
                 ]
                 if bend_range != DEFAULT_BEND_RANGE:
                     set_bend_range(inst, bend_range)
+            if track.pan != PAN_CENTRE:
+                inst.control_changes.append(
+                    pretty_midi.ControlChange(
+                        PAN_CONTROLLER, pan_to_controller(track.pan), 0.0
+                    )
+                )
             pm.instruments.append(inst)
-        pm.instruments = merge_by_instrument(
-            pm.instruments, keep_shared_names=True
-        )
+        pm.instruments = _merged_keeping_sides(pm.instruments)
         return pm
 
     def _retime(self, convert):
@@ -1252,6 +1337,7 @@ class EditorModel:
         self.grid_offset = max(0.0, float(convert(self.grid_offset)))
         self._undo_stack.clear()
         self._redo_stack.clear()
+        self._history_changes += 1
 
     def normalize_tempo(self, align_clip):
         tempo_map = self.tempo_map
@@ -1421,10 +1507,15 @@ class EditorModel:
         if overflow > 0:
             del self._undo_stack[:overflow]
         self._redo_stack.clear()
+        self._history_changes += 1
+
+    def history_mark(self):
+        return self._history_changes
 
     def discard_last_snapshot(self):
         if self._undo_stack:
             self._undo_stack.pop()
+            self._history_changes += 1
 
     def can_undo(self):
         return bool(self._undo_stack)
@@ -1437,6 +1528,7 @@ class EditorModel:
             return False
         self._redo_stack.append(self._capture())
         self._restore(self._undo_stack.pop())
+        self._history_changes += 1
         return True
 
     def redo(self):
@@ -1444,6 +1536,7 @@ class EditorModel:
             return False
         self._undo_stack.append(self._capture())
         self._restore(self._redo_stack.pop())
+        self._history_changes += 1
         return True
 
     def to_dict(self):
@@ -1469,6 +1562,7 @@ class EditorModel:
         self.clear()
         self._undo_stack.clear()
         self._redo_stack.clear()
+        self._history_changes += 1
         self.tempo = validate_bpm(data.get("tempo", self.tempo))
         self.grid_offset = _grid_offset_value(data.get("grid_offset", 0.0))
         self.tempo_map = _tempo_map_from_pairs(data.get("tempo_map"))

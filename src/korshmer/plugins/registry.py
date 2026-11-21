@@ -1,14 +1,54 @@
+import hashlib
+import hmac
 import importlib.util
+import json
 import logging
+import os
+import sys
 
 from korshmer.plugins.base import (
     AudioEffectPlugin,
     ExporterPlugin,
     MidiProcessorPlugin,
 )
-from korshmer.utils.audit_log import OUTCOME_FAILED, audit
+from korshmer.utils.audit_log import OUTCOME_DENIED, OUTCOME_FAILED, audit
 
 _logger = logging.getLogger(__name__)
+
+USER_PLUGINS_ENV_VAR = "KORSHMER_ENABLE_USER_PLUGINS"
+APPROVED_PLUGINS_FILENAME = "approved_plugins.json"
+_ENABLED_VALUES = frozenset({"1", "true", "yes", "on"})
+_PLUGIN_BASES = (MidiProcessorPlugin, AudioEffectPlugin, ExporterPlugin)
+
+
+def user_plugins_enabled(environ=None):
+    env = os.environ if environ is None else environ
+    value = (env.get(USER_PLUGINS_ENV_VAR) or "").strip().lower()
+    return value in _ENABLED_VALUES
+
+
+def approved_plugins_path(plugin_dir):
+    parent = os.path.dirname(os.path.abspath(plugin_dir))
+    return os.path.join(parent, APPROVED_PLUGINS_FILENAME)
+
+
+def read_approved_plugins(plugin_dir):
+    try:
+        with open(approved_plugins_path(plugin_dir), encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        _logger.warning(f"Ignoring unreadable plugin approval list: {e}")
+        return {}
+    if not isinstance(data, dict):
+        _logger.warning("Ignoring plugin approval list: not a JSON object")
+        return {}
+    return {
+        str(name): digest.strip().lower()
+        for name, digest in data.items()
+        if isinstance(digest, str)
+    }
 
 
 class PluginRegistry:
@@ -91,47 +131,60 @@ class PluginRegistry:
                 )
         return count
 
-    def discover_directory(self, path):
-        import os
+    def _run_plugin_source(self, module_name, fpath, source):
+        spec = importlib.util.spec_from_file_location(module_name, fpath)
+        if spec is None:
+            raise ImportError(f"Cannot load {fpath}")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = mod
+        try:
+            exec(compile(source, fpath, "exec"), mod.__dict__)
+        except BaseException:
+            sys.modules.pop(module_name, None)
+            raise
+        return mod
 
+    def discover_directory(self, path, approved=None):
         if not os.path.isdir(path):
             return 0
 
         count = 0
-        for fname in os.listdir(path):
+        for fname in sorted(os.listdir(path)):
             if not fname.endswith(".py") or fname.startswith("_"):
                 continue
             module_name = f"korshmer_plugin_{fname[:-3]}"
             fpath = os.path.join(path, fname)
             try:
-                spec = importlib.util.spec_from_file_location(
-                    module_name, fpath
-                )
-                if spec and spec.loader:
-                    mod = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(mod)
-                    audit("plugin.load", source="directory", path=fpath)
-                    for attr_name in dir(mod):
-                        attr = getattr(mod, attr_name)
-                        if (
-                            isinstance(attr, type)
-                            and issubclass(
-                                attr,
-                                (
-                                    MidiProcessorPlugin,
-                                    AudioEffectPlugin,
-                                    ExporterPlugin,
-                                ),
-                            )
-                            and attr
-                            not in (
-                                MidiProcessorPlugin,
-                                AudioEffectPlugin,
-                                ExporterPlugin,
-                            )
-                        ):
-                            if self.register(attr):
-                                count += 1
+                with open(fpath, "rb") as f:
+                    source = f.read()
+                digest = hashlib.sha256(source).hexdigest()
+                if approved is not None and not hmac.compare_digest(
+                    approved.get(fname, ""), digest
+                ):
+                    _logger.warning(
+                        f"Skipping plugin {fname}: not approved "
+                        f"(sha256 {digest}). Add it to "
+                        f"{approved_plugins_path(path)} or set "
+                        f"{USER_PLUGINS_ENV_VAR}=1 to load it."
+                    )
+                    audit(
+                        "plugin.load",
+                        OUTCOME_DENIED,
+                        source="directory",
+                        path=fpath,
+                        sha256=digest,
+                    )
+                    continue
+                mod = self._run_plugin_source(module_name, fpath, source)
+                audit("plugin.load", source="directory", path=fpath)
+                for attr in list(vars(mod).values()):
+                    if (
+                        isinstance(attr, type)
+                        and issubclass(attr, _PLUGIN_BASES)
+                        and attr not in _PLUGIN_BASES
+                        and self.register(attr)
+                    ):
+                        count += 1
             except Exception as e:
                 _logger.error(f"Failed to load plugin from {fname}: {e}")
                 audit(
@@ -157,7 +210,12 @@ class PluginRegistry:
         _logger.info(f"Discovered {n} plugins from entry_points")
 
         if plugin_dir:
-            n2 = self.discover_directory(plugin_dir)
+            approved = (
+                None
+                if user_plugins_enabled()
+                else read_approved_plugins(plugin_dir)
+            )
+            n2 = self.discover_directory(plugin_dir, approved=approved)
             _logger.info(f"Discovered {n2} plugins from {plugin_dir}")
 
     def get_by_protocol(self, protocol_cls):

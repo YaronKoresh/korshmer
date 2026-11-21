@@ -1,4 +1,6 @@
 import logging
+import os
+import shutil
 import subprocess
 from collections.abc import Sequence
 from datetime import datetime
@@ -14,6 +16,7 @@ from korshmer.project_management.validators.project_validator import (
 )
 from korshmer.utils.filesystem import is_safe_path
 
+FFMPEG_EXTRACT_TIMEOUT_S = 600
 MIDI_SUFFIXES = frozenset({".mid", ".midi"})
 MIDI_SIGNATURE = b"MThd"
 DEFAULT_IMPORT_EXTENSIONS = (
@@ -203,9 +206,12 @@ class ImportManager:
             output_path = output_dir / output_name
 
             cmd: list[str | Path] = [
-                "ffmpeg",
+                shutil.which("ffmpeg") or "ffmpeg",
+                "-v",
+                "error",
+                "-nostdin",
                 "-i",
-                video_path,
+                "file:" + os.path.abspath(video_path),
                 "-vn",
                 "-acodec",
                 "pcm_s16le" if output_format == "wav" else "libmp3lame",
@@ -218,7 +224,22 @@ class ImportManager:
             ]
 
             logger.debug("Extract audio started: %s", output_path)
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=FFMPEG_EXTRACT_TIMEOUT_S,
+                )
+            except subprocess.TimeoutExpired:
+                output_path.unlink(missing_ok=True)
+                logger.error(
+                    "Extract audio failed: %s (took too long, stopped "
+                    "after %d seconds)",
+                    output_path,
+                    FFMPEG_EXTRACT_TIMEOUT_S,
+                )
+                return None
 
             if result.returncode == 0 and output_path.exists():
                 logger.info(
@@ -241,7 +262,8 @@ class ImportManager:
 
         except FileNotFoundError:
             logging.error(
-                "ffmpeg not found. Please install ffmpeg to extract audio from videos."
+                "FFmpeg is not installed or not on the PATH. Install FFmpeg "
+                "to extract audio from video files."
             )
             return None
 

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pretty_midi
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QFont, QPainter
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
+from PySide6.QtGui import QCursor, QFont, QGuiApplication, QPainter
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QWidget
 
 from korshmer import __version__
 from korshmer.audio_processors import render_editor_mix
@@ -31,7 +31,7 @@ from korshmer.core.window_initializer import (
 )
 from korshmer.event_bus import Event, publish, subscribe
 from korshmer.mixins.actions import ActionsMixin
-from korshmer.mixins.files import FilesMixin
+from korshmer.mixins.files import FilesMixin, is_audio_path
 from korshmer.mixins.performance_mode import PerformanceModeMixin
 from korshmer.mixins.presets_window import PresetsMixin
 from korshmer.mixins.ui import UiMixin
@@ -66,6 +66,7 @@ from korshmer.ui.managers import (
 )
 from korshmer.ui.managers.accessibility import apply_accessible_names
 from korshmer.ui.managers.theme_initializer import init_theme_manager
+from korshmer.ui.managers.workspace import geometry_on_screen
 from korshmer.ui.theming.color_utils import (
     BEAT_INDICATOR_OFF,
     BEAT_INDICATOR_ON,
@@ -85,6 +86,23 @@ initialize_logging()
 
 
 UNSAVED_SONG_FILE = "Unsaved song.kproj"
+BACKGROUND_THREAD_NAMES = (
+    "preview_thread",
+    "worker",
+    "stem_thread",
+    "export_thread",
+    "chord_thread",
+    "clip_thread",
+    "_action_worker",
+)
+WINDOW_EDGE_EVENTS = frozenset(
+    (
+        QEvent.Type.HoverMove,
+        QEvent.Type.MouseMove,
+        QEvent.Type.MouseButtonPress,
+        QEvent.Type.MouseButtonRelease,
+    )
+)
 
 
 class MainWindow(
@@ -135,8 +153,9 @@ class MainWindow(
         self.beat_off_timer.timeout.connect(self._on_beat_off)
 
         self.setup_ui()
-        self._restart_beat_timer(float(self.spin_bpm.value()))
         self._subscribe_events()
+        if self.control_bar.audio_notice:
+            publish(Event.STATUS_UPDATE, text=self.control_bar.audio_notice)
         self.load_input_list()
         self.load_output_view()
 
@@ -152,6 +171,7 @@ class MainWindow(
         self.centralWidget().installEventFilter(self)
 
         self.keyboard_shortcuts = KeyboardShortcutManager(data_dir=DATA_DIR)
+        self.keyboard_shortcuts.load_user_shortcuts()
         self.theme_manager = init_theme_manager(DATA_DIR)
         self.undo_redo = UndoRedoManager()
         self.workspace_manager = WorkspaceManager(data_dir=DATA_DIR)
@@ -180,7 +200,87 @@ class MainWindow(
         self._start_recovery_timer()
 
         self.workspace_manager._load_from_disk()
+        self._remembers_layout = False
+        self._wire_time_display()
         apply_accessible_names(self)
+
+    def _wire_time_display(self):
+        bar = self.control_bar
+        bar.time_display_changed.connect(self._remember_time_display)
+        bar.set_beat_mapper(self._editor_beats_at)
+        signature_changed = getattr(
+            self.arranger, "time_signature_changed", None
+        )
+        if signature_changed is not None:
+            signature_changed.connect(bar.set_beats_per_bar)
+        beats = getattr(self.arranger.piano_roll, "beats_per_bar", None)
+        if type(beats) is int:
+            bar.set_beats_per_bar(beats)
+
+    def _editor_beats_at(self, seconds):
+        model = self.arranger.model
+        tempo_map = model.tempo_map
+        if tempo_map is not None:
+            return tempo_map.beats_at(seconds)
+        return (seconds - float(model.grid_offset)) * float(model.tempo) / 60.0
+
+    def restore_window_layout(self):
+        layout = self.workspace_manager.load_window_layout()
+        self._remembers_layout = True
+        screens = [
+            screen.availableGeometry().getRect()
+            for screen in QGuiApplication.screens()
+        ]
+        geometry = geometry_on_screen(
+            layout.get("geometry"),
+            screens,
+            self.minimumWidth(),
+            self.minimumHeight(),
+        )
+        if geometry is not None:
+            self.setGeometry(*geometry)
+        if layout.get("fullscreen") is True:
+            self.setWindowState(Qt.WindowFullScreen)
+        elif layout.get("maximized") is True:
+            self.setWindowState(Qt.WindowMaximized)
+        sizes = layout.get("splitter")
+        if (
+            isinstance(sizes, list)
+            and len(sizes) == self.splitter.count()
+            and all(type(size) is int and size >= 0 for size in sizes)
+            and sum(sizes) > 0
+        ):
+            self.splitter.setSizes(sizes)
+        tab = layout.get("tab")
+        if type(tab) is int and 0 <= tab < self.tabs.count():
+            self.tabs.setCurrentIndex(tab)
+        time_display = layout.get("time_display")
+        if isinstance(time_display, str):
+            self.control_bar.set_time_display_mode(time_display)
+
+    def save_window_layout(self):
+        layout = self.workspace_manager.load_window_layout()
+        fullscreen = self.isFullScreen()
+        maximized = self.isMaximized() and not fullscreen
+        shape = (
+            self.normalGeometry()
+            if fullscreen or maximized
+            else self.geometry()
+        )
+        if shape.isValid():
+            layout["geometry"] = list(shape.getRect())
+        layout["fullscreen"] = fullscreen
+        layout["maximized"] = maximized
+        sizes = self.splitter.sizes()
+        if sum(sizes) > 0:
+            layout["splitter"] = sizes
+        layout["tab"] = self.tabs.currentIndex()
+        layout["time_display"] = self.control_bar.time_display_mode()
+        return self.workspace_manager.save_window_layout(layout)
+
+    def _remember_time_display(self, mode):
+        if self._remembers_layout:
+            self.workspace_manager.remember_layout_value("time_display", mode)
 
     def _subscribe_events(self):
         subscribe(Event.STATUS_UPDATE, self._on_status_update)
@@ -320,6 +420,9 @@ class MainWindow(
             return
 
         try:
+            saved = self.project_manager.current_project_path
+            if saved or self._editor_has_content():
+                self._capture_song(self._recovery_song_path())
             success = self.project_manager.create_backup()
             if success:
                 logging.info("Auto-backup completed successfully")
@@ -426,61 +529,21 @@ class MainWindow(
                 )
 
     def _handle_save(self):
-        if hasattr(self, "save_project"):
-            self.save_project()
+        self.save_project_action()
 
     def _handle_select_all(self):
         if self._editor_tab_active():
             self.arranger.select_all()
 
+    def shortcut_help_text(self):
+        lines = [f"KORSHMER v{__version__} - Keyboard Shortcuts"]
+        lines.extend(self.shortcut_help_lines())
+        return "\n".join(lines)
+
     def _show_help(self):
-        help_text = f"""
-KORSHMER v{__version__} - Keyboard Shortcuts
-
-Playback:
-  Space - Play/Pause
-  Escape - Stop
-  R - Record
-
-Editing (EDITOR tab):
-  Ctrl+Z - Undo
-  Ctrl+Y / Ctrl+Shift+Z - Redo
-  Ctrl+A - Select All
-  Ctrl+D - Duplicate Selection
-  Delete - Delete Selection
-  Ctrl+C - Copy
-  Ctrl+V - Paste
-  Up / Down - Transpose 1 semitone
-  Shift+Up / Shift+Down - Transpose octave
-  Left / Right - Nudge by grid step
-  Click empty space - Add note on the active lane
-  Ctrl+Wheel over note - Change velocity
-  Drag audio/MIDI from the output list - Add clip / lanes
-
-Tools:
-  Q - Quantize Selection
-  U - Humanize Selection
-  N - Toggle Snap
-  Ctrl+B - Generate MIDI (MIDI Generator settings)
-
-View:
-  Ctrl++ - Zoom In
-  Ctrl+- - Zoom Out
-  H - Zoom Horizontal
-  V - Zoom Vertical
-  F11 - Fullscreen
-  F10 - Performance Mode
-
-File:
-  Ctrl+N - New Project
-  Ctrl+O - Open Project
-  Ctrl+S - Save Project
-  Ctrl+E - Export
-
-Help:
-  F1 - Show This Help
-"""
-        QMessageBox.information(self, "Keyboard Shortcuts", help_text)
+        QMessageBox.information(
+            self, "Keyboard Shortcuts", self.shortcut_help_text()
+        )
 
     def start_tutorial_action(self):
         try:
@@ -513,29 +576,35 @@ Help:
         )
 
     def _stop_background_threads(self, timeout_ms=3000):
-        for name in (
-            "preview_thread",
-            "worker",
-            "stem_thread",
-            "export_thread",
-            "chord_thread",
-        ):
-            thread = getattr(self, name, None)
-            if thread is None:
-                continue
-            try:
-                if thread.isRunning():
-                    if hasattr(thread, "stop"):
-                        thread.stop()
-                    if not thread.wait(timeout_ms):
-                        thread.terminate()
-                        thread.wait(1000)
-            except RuntimeError as e:
-                logging.debug(f"Thread {name} already gone: {e}")
-        if hasattr(self, "arranger") and hasattr(
-            self.arranger, "wait_for_waveforms"
-        ):
-            self.arranger.wait_for_waveforms(timeout_ms)
+        for name in BACKGROUND_THREAD_NAMES:
+            self._stop_thread(name, getattr(self, name, None), timeout_ms)
+        arranger = getattr(self, "arranger", None)
+        if arranger is None:
+            return
+        recorder = getattr(arranger, "recorder", None)
+        if recorder is not None:
+            self._stop_thread("recorder", recorder, timeout_ms)
+            arranger.recorder = None
+        if hasattr(arranger, "cancel_clip_edits"):
+            arranger.cancel_clip_edits()
+            arranger.wait_for_clip_edits(timeout_ms)
+        if hasattr(arranger, "wait_for_waveforms"):
+            arranger.wait_for_waveforms(timeout_ms)
+
+    def _stop_thread(self, name, thread, timeout_ms):
+        if thread is None:
+            return
+        try:
+            if thread.isRunning():
+                if hasattr(thread, "stop"):
+                    thread.stop()
+                if hasattr(thread, "requestInterruption"):
+                    thread.requestInterruption()
+                if not thread.wait(timeout_ms):
+                    thread.terminate()
+                    thread.wait(1000)
+        except RuntimeError as e:
+            logging.debug(f"Thread {name} already gone: {e}")
 
     def closeEvent(self, event):
         if not self.confirm_unsaved_changes():
@@ -551,6 +620,8 @@ Help:
             "backup_timer",
             "recovery_timer",
             "bpm_update_timer",
+            "beat_timer",
+            "beat_off_timer",
         ):
             timer = getattr(self, timer_name, None)
             if timer is not None:
@@ -570,8 +641,16 @@ Help:
         if self.obs_client is not None:
             self.obs_client.stop()
         self._stop_background_threads()
+        if self._remembers_layout:
+            self.save_window_layout()
         self.project_manager.clear_recovery_state()
         super().closeEvent(event)
+
+    def dragEnterEvent(self, event):
+        FilesMixin.dragEnterEvent(self, event)
+
+    def dropEvent(self, event):
+        FilesMixin.dropEvent(self, event)
 
     def paintEvent(self, event):
         with QPainter(self) as painter:
@@ -586,10 +665,32 @@ Help:
             self.update()
         super().changeEvent(event)
 
+    def _owns_event_target(self, obj):
+        if obj is self:
+            return True
+        if isinstance(obj, QWidget):
+            return obj.window() is self
+        return obj is self.windowHandle()
+
     def eventFilter(self, obj, event):
+        kind = event.type()
+        if kind == QEvent.ShortcutOverride:
+            if (
+                isinstance(obj, QWidget)
+                and obj.window() is self
+                and self.focus_widget_keeps_key(obj, event)
+            ):
+                event.accept()
+                return True
+            return False
+        if kind not in WINDOW_EDGE_EVENTS:
+            return False
         if not self.isVisible():
-            return super().eventFilter(obj, event)
-        if event.type() in (QEvent.HoverMove, QEvent.MouseMove):
+            return False
+        gesture = self.moving_window or self.resize_direction
+        if not gesture and not self._owns_event_target(obj):
+            return False
+        if kind in (QEvent.HoverMove, QEvent.MouseMove):
             if self.moving_window:
                 if self.drag_pos:
                     drag_window_to(self, event.globalPosition().toPoint())
@@ -609,8 +710,7 @@ Help:
                 return True
 
         elif (
-            event.type() == QEvent.MouseButtonPress
-            and event.button() == Qt.LeftButton
+            kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton
         ):
             global_pos = event.globalPosition().toPoint()
             local_pos = self.mapFromGlobal(global_pos)
@@ -626,7 +726,7 @@ Help:
                 self.start_geometry = self.geometry()
                 return True
 
-        elif event.type() == QEvent.MouseButtonRelease:
+        elif kind == QEvent.MouseButtonRelease:
             if self.resize_direction:
                 self.resize_direction = None
                 self.start_geometry = None
@@ -634,7 +734,7 @@ Help:
                 self.unsetCursor()
                 return True
 
-        return super().eventFilter(obj, event)
+        return False
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -869,6 +969,8 @@ Help:
 
     def on_playback_state_changed(self, state):
         is_playing = state == 1
+        self._sync_beat_timer(is_playing)
+        self.refresh_audio_latency()
         if hasattr(self, "visualizer"):
             self.visualizer.set_playing(is_playing)
         if hasattr(self, "control_bar"):
@@ -878,22 +980,7 @@ Help:
 
         if is_playing:
             path = getattr(self.control_bar.player, "current_path", None)
-            if (
-                path
-                and os.path.exists(path)
-                and path.lower().endswith(
-                    (
-                        ".wav",
-                        ".mp3",
-                        ".flac",
-                        ".ogg",
-                        ".oga",
-                        ".opus",
-                        ".aiff",
-                        ".aif",
-                    )
-                )
-            ):
+            if path and os.path.exists(path) and is_audio_path(path):
                 needs_spectrogram = (
                     self.spectrogram.spectrogram_image is None
                     and not self.spectrogram.loading
@@ -1306,16 +1393,31 @@ Help:
         self.spin_bpm.setValue(bpm)
 
     def _restart_beat_timer(self, bpm):
-        self.beat_timer.start(max(1, int(round(60000.0 / bpm))))
+        self.beat_timer.setInterval(max(1, int(round(60000.0 / bpm))))
+        if self.beat_timer.isActive():
+            self.beat_timer.start()
+
+    def _sync_beat_timer(self, is_playing):
+        if is_playing:
+            if not self.beat_timer.isActive():
+                self._restart_beat_timer(float(self.spin_bpm.value()))
+                self.beat_timer.start()
+            return
+        self.beat_timer.stop()
+        self.beat_off_timer.stop()
+        self._on_beat_off()
+
+    def _style_beat_indicator(self, style):
+        indicator = getattr(self, "beat_indicator", None)
+        if indicator is not None and indicator.styleSheet() != style:
+            indicator.setStyleSheet(style)
 
     def _on_beat(self):
-        if hasattr(self, "beat_indicator"):
-            self.beat_indicator.setStyleSheet(BEAT_INDICATOR_ON)
-            self.beat_off_timer.start(80)
+        self._style_beat_indicator(BEAT_INDICATOR_ON)
+        self.beat_off_timer.start(80)
 
     def _on_beat_off(self):
-        if hasattr(self, "beat_indicator"):
-            self.beat_indicator.setStyleSheet(BEAT_INDICATOR_OFF)
+        self._style_beat_indicator(BEAT_INDICATOR_OFF)
 
     def update_editor_tempo(self, val):
         val = validate_bpm(val)
@@ -1344,6 +1446,7 @@ Help:
 
         if hasattr(self, "control_bar") and hasattr(self.control_bar, "player"):
             self.control_bar.player.set_tempo(new_bpm)
+            self.control_bar.set_tempo(new_bpm)
 
         self.pending_bpm_value = None
 
@@ -1367,10 +1470,11 @@ def main():
     install_crash_handler()
     register_exit_cleanup()
     load_plugins()
-    app = QApplication()
+    app = QApplication.instance() or QApplication()
     f = QFont("Tahoma", 12)
     app.setFont(f)
     window = MainWindow()
+    window.restore_window_layout()
     window.show()
     sys.exit(app.exec())
 

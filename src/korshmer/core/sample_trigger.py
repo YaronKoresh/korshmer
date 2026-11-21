@@ -36,7 +36,7 @@ def _to_channels(data: np.ndarray, channels: int) -> np.ndarray:
     if arr.shape[1] == 1:
         return np.repeat(arr, channels, axis=1)
     if channels == 1:
-        return arr.mean(axis=1, keepdims=True)
+        return np.asarray(arr.mean(axis=1, keepdims=True))
     out = np.zeros((arr.shape[0], channels), dtype=np.float32)
     n = min(channels, arr.shape[1])
     out[:, :n] = arr[:, :n]

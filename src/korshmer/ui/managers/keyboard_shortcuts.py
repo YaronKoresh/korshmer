@@ -3,6 +3,65 @@ import logging
 import os
 from pathlib import Path
 
+USER_PRESET = "user"
+DEFAULT_SHORTCUTS = {
+    "play_pause": "Space",
+    "tap_tempo": "T",
+    "stop": "Escape",
+    "split": "S",
+    "mute": "M",
+    "solo": "O",
+    "record": "R",
+    "undo": "Ctrl+Z",
+    "redo": "Ctrl+Y",
+    "redo_alt": "Ctrl+Shift+Z",
+    "select_all": "Ctrl+A",
+    "deselect": "Ctrl+Shift+A",
+    "duplicate": "Ctrl+D",
+    "build_song": "Ctrl+B",
+    "octave_up": "Ctrl+Shift+Up",
+    "octave_down": "Ctrl+Shift+Down",
+    "delete": "Delete",
+    "cut": "Ctrl+X",
+    "copy": "Ctrl+C",
+    "paste": "Ctrl+V",
+    "save": "Ctrl+S",
+    "open": "Ctrl+O",
+    "new": "Ctrl+N",
+    "export": "Ctrl+E",
+    "zoom_in": "Ctrl+=",
+    "zoom_out": "Ctrl+-",
+    "zoom_h": "H",
+    "zoom_v": "V",
+    "home": "Home",
+    "end": "End",
+    "page_up": "PageUp",
+    "page_down": "PageDown",
+    "toggle_grid": "G",
+    "toggle_snap": "N",
+    "quantize": "Q",
+    "humanize": "U",
+    "transpose_up": "Ctrl+Up",
+    "transpose_down": "Ctrl+Down",
+    "help": "F1",
+    "fullscreen": "F11",
+    "performance_mode": "F10",
+    "find_tool": "Ctrl+K",
+}
+
+
+def find_clashes(shortcuts):
+    owners = {}
+    clashes = []
+    for action, keys in shortcuts.items():
+        if not keys:
+            continue
+        if keys in owners:
+            clashes.append((owners[keys], action, keys))
+        else:
+            owners[keys] = action
+    return clashes
+
 
 class KeyboardShortcutManager:
     def __init__(self, data_dir=None):
@@ -13,49 +72,7 @@ class KeyboardShortcutManager:
         self._init_default_shortcuts()
 
     def _init_default_shortcuts(self):
-        self.shortcuts = {
-            "play_pause": "Space",
-            "tap_tempo": "T",
-            "stop": "Escape",
-            "split": "S",
-            "mute": "M",
-            "solo": "O",
-            "record": "R",
-            "undo": "Ctrl+Z",
-            "redo": "Ctrl+Y",
-            "redo_alt": "Ctrl+Shift+Z",
-            "select_all": "Ctrl+A",
-            "deselect": "Ctrl+Shift+A",
-            "duplicate": "Ctrl+D",
-            "build_song": "Ctrl+B",
-            "octave_up": "Ctrl+Shift+Up",
-            "octave_down": "Ctrl+Shift+Down",
-            "delete": "Delete",
-            "cut": "Ctrl+X",
-            "copy": "Ctrl+C",
-            "paste": "Ctrl+V",
-            "save": "Ctrl+S",
-            "open": "Ctrl+O",
-            "new": "Ctrl+N",
-            "export": "Ctrl+E",
-            "zoom_in": "Ctrl+=",
-            "zoom_out": "Ctrl+-",
-            "zoom_h": "H",
-            "zoom_v": "V",
-            "home": "Home",
-            "end": "End",
-            "page_up": "PageUp",
-            "page_down": "PageDown",
-            "toggle_grid": "G",
-            "toggle_snap": "N",
-            "quantize": "Q",
-            "humanize": "U",
-            "transpose_up": "Ctrl+Up",
-            "transpose_down": "Ctrl+Down",
-            "help": "F1",
-            "fullscreen": "F11",
-            "performance_mode": "F10",
-        }
+        self.shortcuts = dict(DEFAULT_SHORTCUTS)
 
     def register(self, action, key_sequence):
         existing_key = self.shortcuts.get(action)
@@ -133,3 +150,38 @@ class KeyboardShortcutManager:
         except Exception as e:
             logging.error(f"Failed to load shortcut preset: {e}")
         return False
+
+    def load_user_shortcuts(self, name=USER_PRESET):
+        defaults = DEFAULT_SHORTCUTS
+        if not self.load_preset(name):
+            return False
+        custom = {
+            action: keys
+            for action, keys in self.shortcuts.items()
+            if keys != defaults.get(action)
+        }
+        merged = {**defaults, **self.shortcuts}
+        clashes = find_clashes(merged)
+        while clashes:
+            first, second, keys = clashes[0]
+            loser, keeper = (
+                (second, first) if second in custom else (first, second)
+            )
+            logging.warning(
+                f"Shortcut {keys} for {loser} is already used by {keeper}; "
+                f"{loser} keeps its default key"
+            )
+            custom.pop(loser, None)
+            merged[loser] = defaults.get(loser, "")
+            clashes = find_clashes(merged)
+        self.shortcuts = merged
+        return True
+
+    def customise(self, changes, name=USER_PRESET):
+        wanted = {**self.shortcuts, **changes}
+        clashes = find_clashes(wanted)
+        if clashes:
+            return clashes
+        self.shortcuts = wanted
+        self.save_preset(name)
+        return []

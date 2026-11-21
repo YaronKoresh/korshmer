@@ -1,7 +1,7 @@
 import traceback
 
 from PySide6.QtCore import QRectF, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QPainter
+from PySide6.QtGui import QBrush, QColor, QGradient, QLinearGradient, QPainter
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from korshmer.ui.viewmodels.visualizer_vm import VisualizerViewModel
@@ -23,14 +23,19 @@ class VisualizerDataWorker(QThread):
             traceback.print_exc()
 
 
+FRAME_MS = 50
+
+
 class AudioVisualizer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.vm = VisualizerViewModel()
 
         self.timer = QTimer(self)
+        self.timer.setInterval(FRAME_MS)
         self.timer.timeout.connect(self.animate)
-        self.timer.start(50)
+        self._bar_brush = None
+        self._bar_brush_rgb = None
 
         self.worker = None
 
@@ -92,6 +97,33 @@ class AudioVisualizer(QWidget):
 
     def set_playing(self, playing):
         self.vm.is_playing = playing
+        self.sync_animation()
+
+    def sync_animation(self):
+        if not self.isVisible() or self.vm.is_idle():
+            self.timer.stop()
+        elif not self.timer.isActive():
+            self.timer.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.sync_animation()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.sync_animation()
+
+    def bar_brush(self):
+        rgb = self.vm.bar_color_rgb()
+        if rgb != self._bar_brush_rgb:
+            bar_color = QColor(*rgb)
+            grad = QLinearGradient(0, 0, 0, 1)
+            grad.setCoordinateMode(QGradient.ObjectBoundingMode)
+            grad.setColorAt(0, bar_color)
+            grad.setColorAt(1, bar_color.lighter(130))
+            self._bar_brush = QBrush(grad)
+            self._bar_brush_rgb = rgb
+        return self._bar_brush
 
     def set_position(self, ms):
         self.vm.set_position(ms)
@@ -102,6 +134,7 @@ class AudioVisualizer(QWidget):
     def animate(self):
         self.vm.tick()
         self.update()
+        self.sync_animation()
 
     def paintEvent(self, event):
         with QPainter(self) as painter:
@@ -115,8 +148,8 @@ class AudioVisualizer(QWidget):
             gap = 1
             draw_w = max(1, bar_w - gap)
 
-            r, g, b = self.vm.bar_color_rgb()
-            bar_color = QColor(r, g, b)
+            painter.setBrush(self.bar_brush())
+            painter.setPen(Qt.NoPen)
 
             for i, val in enumerate(self.vm.values):
                 bar_h = val * h * 0.95
@@ -125,10 +158,4 @@ class AudioVisualizer(QWidget):
                 y = (h - bar_h) / 2
                 x = i * bar_w + (gap / 2)
 
-                grad = QLinearGradient(x, y, x, y + bar_h)
-                grad.setColorAt(0, bar_color)
-                grad.setColorAt(1, bar_color.lighter(130))
-
-                painter.setBrush(grad)
-                painter.setPen(Qt.NoPen)
                 painter.drawRoundedRect(QRectF(x, y, draw_w, bar_h), 2, 2)

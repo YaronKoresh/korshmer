@@ -89,7 +89,7 @@ class AudioMetering:
         stft = librosa.stft(audio_data, n_fft=n_fft, hop_length=hop_length)
         magnitude = np.abs(stft)
         magnitude_db = 20 * np.log10(magnitude + 1e-10)
-        return magnitude_db
+        return np.asarray(magnitude_db)
 
     @reject_empty_audio
     def spectral_centroid(

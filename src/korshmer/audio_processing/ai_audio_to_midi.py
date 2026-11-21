@@ -1,7 +1,11 @@
+import importlib.util
+import sys
+
 import librosa
 import numpy as np
 import pretty_midi
 
+from korshmer.exceptions import AudioToMidiError
 from korshmer.midi_algorithms import normalize_note_velocities
 from korshmer.utils.perf_metrics import measure
 
@@ -15,27 +19,42 @@ def _report(progress, fraction, message):
         pass
 
 
+def transcription_library_installed() -> bool:
+    if "basic_pitch" in sys.modules:
+        return sys.modules["basic_pitch"] is not None
+    try:
+        return importlib.util.find_spec("basic_pitch") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 class EnhancedAudioToMIDI:
     MODEL_FRAME_RATE = 100
 
     def __init__(self):
-
-        from korshmer.exceptions import AudioToMidiError
-
-        try:
-            from basic_pitch.inference import predict as basic_pitch_predict
-        except ImportError as err:
+        if not transcription_library_installed():
             raise AudioToMidiError(
                 "basic-pitch is required for AI audio-to-MIDI features. "
                 "Please install it with: pip install basic-pitch"
-            ) from err
-
-        self.basic_pitch_predict = basic_pitch_predict
+            )
+        self._predict = None
         self.confidence_threshold = 0.5
         self.onset_threshold = 0.4
         self.frame_threshold = 0.2
         self.minimum_note_length = 40
         self.velocity_sensitivity = 1.0
+
+    @property
+    def basic_pitch_predict(self):
+        if self._predict is None:
+            try:
+                from basic_pitch.inference import predict
+            except Exception as err:
+                raise AudioToMidiError(
+                    f"basic-pitch could not be loaded: {err}"
+                ) from err
+            self._predict = predict
+        return self._predict
 
     @measure("audio.midi_transcription")
     def transcribe_with_confidence(
@@ -194,8 +213,8 @@ class EnhancedAudioToMIDI:
 
         f0_all, _, _ = librosa.pyin(
             audio,
-            fmin=librosa.note_to_hz("C1"),
-            fmax=librosa.note_to_hz("C8"),
+            fmin=float(librosa.note_to_hz("C1")),
+            fmax=float(librosa.note_to_hz("C8")),
             sr=sr,
         )
         f0_times = librosa.times_like(f0_all, sr=sr)

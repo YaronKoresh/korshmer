@@ -42,7 +42,7 @@ class SmartMixingAssistant:
         magnitude = np.abs(stft)
         spectrum = np.mean(magnitude, axis=1)
 
-        return spectrum
+        return np.asarray(spectrum)
 
     def _compute_stereo_width(self, audio: np.ndarray) -> float:
         if audio.ndim == 1:

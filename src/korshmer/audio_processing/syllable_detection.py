@@ -102,7 +102,7 @@ class SyllableDetector:
             onset_frames, sr=self.sr, hop_length=512
         )
 
-        return onset_times
+        return np.asarray(onset_times)
 
     def _segment_onsets(
         self,

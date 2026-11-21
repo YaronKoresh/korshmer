@@ -17,7 +17,13 @@ from urllib.parse import urlsplit
 
 _logger = logging.getLogger(__name__)
 
-INGEST_URL = "rtmp://a.rtmp.youtube.com/live2"
+PLATFORM_INGEST = {
+    "youtube": ("YouTube Live", "rtmps://a.rtmps.youtube.com:443/live2"),
+    "twitch": ("Twitch", "rtmps://live.twitch.tv:443/app"),
+    "facebook": ("Facebook Live", "rtmps://live-api-s.facebook.com:443/rtmp"),
+}
+INGEST_URL = PLATFORM_INGEST["youtube"][1]
+KEY_MASK = "****"
 
 
 DEFAULT_LADDER = (64, 96, 128, 192)
@@ -169,6 +175,12 @@ def build_command(
     ]
 
 
+def masked_command(command: list[str], stream_key: str) -> list[str]:
+    if not stream_key:
+        return list(command)
+    return [part.replace(stream_key, KEY_MASK) for part in command]
+
+
 QUALITY_GOOD, QUALITY_FAIR, QUALITY_POOR = "good", "fair", "poor"
 
 
@@ -313,17 +325,23 @@ class YouTubeLiveStreamer:
         if not ffmpeg:
             self._status(f"{self._label} needs ffmpeg, which was not found.")
             return False
+        command = build_command(
+            ffmpeg,
+            self._key,
+            self.bitrate,
+            self.sample_rate,
+            self.channels,
+            self._ingest_url,
+            self._listen,
+        )
+        _logger.debug(
+            "%s starting: %s",
+            self._label,
+            " ".join(masked_command(command, self._key)),
+        )
         try:
             self._proc = self._popen(
-                build_command(
-                    ffmpeg,
-                    self._key,
-                    self.bitrate,
-                    self.sample_rate,
-                    self.channels,
-                    self._ingest_url,
-                    self._listen,
-                ),
+                command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

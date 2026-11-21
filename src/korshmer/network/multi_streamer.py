@@ -7,19 +7,13 @@ from typing import Any
 
 from korshmer.network.delay_buffer import DelayBuffer
 from korshmer.network.youtube_live import (
+    PLATFORM_INGEST,
     BitrateAdapter,
     YouTubeLiveStreamer,
     valid_stream_key,
 )
 
 _logger = logging.getLogger(__name__)
-
-
-PLATFORM_INGEST = {
-    "youtube": ("YouTube Live", "rtmp://a.rtmp.youtube.com/live2"),
-    "twitch": ("Twitch", "rtmp://live.twitch.tv/app"),
-    "facebook": ("Facebook Live", "rtmps://live-api-s.facebook.com:443/rtmp"),
-}
 
 
 def make_platform_streamer(

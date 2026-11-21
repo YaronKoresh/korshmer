@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 from korshmer.constants import DATA_DIR, FLUID_DIR, NOTE_NAMES, SF3_PATH
 from korshmer.event_bus import Event, publish
 from korshmer.key_finding import find_key, midi_notes
+from korshmer.mixins.files import audio_file_filter
 from korshmer.mixins.path_guard import reject_unsafe_path
 from korshmer.utils.tempo import validate_bpm
 
@@ -175,7 +176,7 @@ class EditorActionsMixin:
             self,
             "Add Audio Clip to Editor",
             str(DATA_DIR),
-            "Audio (*.wav *.mp3 *.flac *.ogg *.oga *.opus *.aiff *.aif)",
+            audio_file_filter("Audio"),
         )
         if path and hasattr(self, "send_audio_to_editor"):
             self.send_audio_to_editor(path)

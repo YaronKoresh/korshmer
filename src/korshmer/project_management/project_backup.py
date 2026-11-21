@@ -4,7 +4,6 @@ import glob
 import json
 import logging
 import os
-import shutil
 import zipfile
 from collections.abc import Callable
 from datetime import datetime
@@ -50,10 +49,7 @@ def create_backup_file(
     try:
         with logged_file_op("Create backup", backup_path):
             partial_dir.mkdir(parents=True, exist_ok=True)
-            if current_project_path.suffix == ".kproj":
-                shutil.copy2(current_project_path, partial_path)
-            else:
-                save_compressed(partial_path)
+            save_compressed(partial_path)
             os.replace(partial_path, backup_path)
     finally:
         partial_path.unlink(missing_ok=True)

@@ -1,3 +1,5 @@
+from .save_audio import save_audio as save_audio
+
 __all__ = [
     "RangeEQ",
     "generate_bands",
@@ -103,7 +105,6 @@ _IMPORT_MAP = {
     "MusicGenerator": "music_generation",
     "StyleTransfer": "music_generation",
     "RangeEQ": "range_eq",
-    "save_audio": "save_audio",
     "SmartMastering": "smart_mastering",
     "benchmark": "smart_mastering",
     "validation_report": "smart_mastering",

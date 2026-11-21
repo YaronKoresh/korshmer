@@ -3,16 +3,34 @@ import os
 import numpy as np
 import soundfile as sf
 
+from korshmer import constants
+
+WAV_SUBTYPES = {16: "PCM_16", 32: "FLOAT", 64: "DOUBLE"}
+
+
+def _format_for(path: str, file_format: str | None) -> str:
+    if file_format is not None:
+        return file_format.lower()
+    if os.path.splitext(path)[1].lower() == ".mp3":
+        return "mp3"
+    return "wav"
+
+
+def _wav_container(y: np.ndarray, bits: int) -> str:
+    if y.size * (bits // 8) > constants.WAV_MAX_DATA_BYTES:
+        return "RF64"
+    return "WAV"
+
 
 def save_audio(
     path: str,
     y: np.ndarray,
     sr: int = 44100,
-    file_format: str = "MP3",
+    file_format: str | None = None,
     *,
     bits: int = 32,
     bitrate: int = 320,
-) -> None:
+) -> str:
     ceiling_db = -0.1
     lin_amp = 10 ** (ceiling_db / 20.0)
 
@@ -20,7 +38,7 @@ def save_audio(
 
     base_path = os.path.splitext(path)[0]
 
-    if file_format.lower() == "mp3":
+    if _format_for(path, file_format) == "mp3":
         import lameenc
 
         final_path = f"{base_path}.mp3"
@@ -48,7 +66,7 @@ def save_audio(
 
         with open(final_path, "wb") as f:
             f.write(mp3_data)
-        return
+        return final_path
 
     final_path = f"{base_path}.wav"
     if bits == 16:
@@ -76,5 +94,11 @@ def save_audio(
     if y.ndim == 2 and y.shape[0] < y.shape[1]:
         y = y.T
 
-    subtype_map = {16: "PCM_16", 32: "FLOAT", 64: "DOUBLE"}
-    sf.write(final_path, y, sr, subtype=subtype_map[bits], format="RF64")
+    sf.write(
+        final_path,
+        y,
+        sr,
+        subtype=WAV_SUBTYPES[bits],
+        format=_wav_container(y, bits),
+    )
+    return final_path

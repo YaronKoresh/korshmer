@@ -18,6 +18,8 @@ from korshmer.utils.filesystem import sanitize_path
 
 PROJECT_SUFFIXES = (".kproj", ".json")
 FOLDER_PROVIDER = "folder"
+SUPPORTED_PROVIDERS = (FOLDER_PROVIDER,)
+SONG_SUFFIX = ".kproj"
 STATE_FILE_NAME = "sync_state.json"
 RESOLUTIONS = ("local", "remote")
 MIN_AUTO_SYNC_MINUTES = 1
@@ -53,7 +55,9 @@ class CloudSyncManager:
     def __init__(self, base_dir: Path):
         self.base_dir = Path(base_dir)
         self.sync_dir = self.base_dir / "saved_data" / "cloud_sync"
-        self.projects_dir = self.base_dir / "saved_data" / "projects"
+        self.saved_data_dir = self.base_dir / "saved_data"
+        self.projects_dir = self.saved_data_dir / "projects"
+        self.last_error: str | None = None
         self.enabled = False
         self.provider: str | None = None
         self.remote_dir: Path | None = None
@@ -115,8 +119,14 @@ class CloudSyncManager:
         return remote_path
 
     def connect(self, provider: str, _credentials: dict[str, str]) -> bool:
-        if provider != FOLDER_PROVIDER:
-            logging.warning(f"Cloud sync for {provider} not yet implemented")
+        if provider not in SUPPORTED_PROVIDERS:
+            self.last_error = (
+                f"Unsupported cloud provider {provider!r}; supported "
+                f"providers: {', '.join(SUPPORTED_PROVIDERS)} (a folder "
+                "that a sync program such as Dropbox or OneDrive keeps "
+                "up to date)"
+            )
+            logging.error(self.last_error)
             return False
         try:
             raw = _credentials["path"]
@@ -137,12 +147,14 @@ class CloudSyncManager:
             OSError,
             InvalidFileError,
         ) as e:
-            logging.error(f"Cloud sync could not use the folder: {e}")
+            self.last_error = f"Cloud sync could not use the folder: {e}"
+            logging.error(self.last_error)
             return False
         with self._lock:
             self.remote_dir = remote
             self.provider = FOLDER_PROVIDER
             self.enabled = True
+            self.last_error = None
             self._conflicts = {}
             self._load_state()
         return True
@@ -267,14 +279,24 @@ class CloudSyncManager:
             return projects
 
     def _local_projects(self) -> list[Path]:
-        try:
-            return sorted(
-                p
-                for p in self.projects_dir.iterdir()
-                if self._valid_id(p.name) and p.is_file()
-            )
-        except OSError:
-            return []
+        found: dict[str, Path] = {}
+        for folder in (self.projects_dir, self.saved_data_dir):
+            try:
+                entries = list(folder.iterdir())
+            except OSError:
+                continue
+            for entry in entries:
+                song = (
+                    entry
+                    if folder == self.projects_dir
+                    else entry / f"{entry.name}{SONG_SUFFIX}"
+                )
+                try:
+                    if self._valid_id(song.name) and song.is_file():
+                        found[song.name] = song
+                except OSError:
+                    continue
+        return [found[name] for name in sorted(found)]
 
     def sync_all(self) -> dict[str, bool]:
         results = {}
@@ -348,6 +370,7 @@ class CloudSyncManager:
                 "enabled": self.enabled,
                 "provider": self.provider,
                 "last_sync": self.last_sync,
+                "last_error": self.last_error,
                 "pending_uploads": pending_uploads,
                 "pending_downloads": pending_downloads,
                 "conflicts": sorted(str(k) for k in self._conflicts),

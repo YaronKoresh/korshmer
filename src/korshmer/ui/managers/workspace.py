@@ -9,6 +9,43 @@ from korshmer.project_management.validators.project_validator import (
 )
 
 WORKSPACE_FILE_PREFIX = "workspace_"
+WINDOW_LAYOUT_FILE = "window_layout.json"
+
+
+def _whole_numbers(values, count):
+    if not isinstance(values, (list, tuple)) or len(values) != count:
+        return None
+    if any(type(value) is not int for value in values):
+        return None
+    return tuple(values)
+
+
+def _shared_area(first, second):
+    width = min(first[0] + first[2], second[0] + second[2]) - max(
+        first[0], second[0]
+    )
+    height = min(first[1] + first[3], second[1] + second[3]) - max(
+        first[1], second[1]
+    )
+    return max(0, width) * max(0, height)
+
+
+def geometry_on_screen(geometry, screens, min_width, min_height):
+    wanted = _whole_numbers(geometry, 4)
+    areas = [area for area in screens if _whole_numbers(area, 4)]
+    if wanted is None or not areas:
+        return None
+    x, y, width, height = wanted
+    width = max(width, min_width)
+    height = max(height, min_height)
+    home = max(
+        areas, key=lambda area: _shared_area((x, y, width, height), area)
+    )
+    width = min(width, home[2])
+    height = min(height, home[3])
+    x = min(max(x, home[0]), home[0] + home[2] - width)
+    y = min(max(y, home[1]), home[1] + home[3] - height)
+    return x, y, width, height
 
 
 class WorkspaceManager:
@@ -90,6 +127,45 @@ class WorkspaceManager:
                 self.workspaces[name] = workspace
             except Exception as e:
                 logging.error(f"Failed to load workspace {name}: {e}")
+
+    def load_window_layout(self):
+        if self.data_dir is None:
+            return {}
+        try:
+            with open(
+                self.data_dir / WINDOW_LAYOUT_FILE, encoding="utf-8"
+            ) as f:
+                layout = json.load(f)
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as e:
+            logging.warning(f"Could not read the saved window layout: {e}")
+            return {}
+        return layout if isinstance(layout, dict) else {}
+
+    def save_window_layout(self, layout):
+        if self.data_dir is None:
+            return False
+        layout_path = self.data_dir / WINDOW_LAYOUT_FILE
+        tmp = layout_path.parent / f".{layout_path.name}.tmp"
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(layout, f, indent=2)
+                os.replace(tmp, layout_path)
+            except BaseException:
+                tmp.unlink(missing_ok=True)
+                raise
+        except (OSError, TypeError, ValueError) as e:
+            logging.error(f"Failed to save the window layout: {e}")
+            return False
+        return True
+
+    def remember_layout_value(self, key, value):
+        layout = self.load_window_layout()
+        layout[key] = value
+        return self.save_window_layout(layout)
 
     def get_all_workspaces(self):
         return list(self.workspaces.keys())

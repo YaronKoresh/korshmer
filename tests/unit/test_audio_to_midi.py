@@ -1,4 +1,3 @@
-import builtins
 import sys
 
 import numpy as np
@@ -12,15 +11,7 @@ class Dummy:
 
 
 def test_missing_basic_pitch_raises(monkeypatch):
-
-    orig_import = builtins.__import__
-
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name.startswith("basic_pitch"):
-            raise ImportError("no module named basic_pitch")
-        return orig_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setitem(sys.modules, "basic_pitch", None)
 
     from korshmer.audio_processing.ai_audio_to_midi import EnhancedAudioToMIDI
 

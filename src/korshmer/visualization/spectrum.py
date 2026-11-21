@@ -45,7 +45,9 @@ def create_spectrum_visualization(audio_path: str) -> str | None:
         magnitude = np.abs(stft_result)
         avg_magnitude = np.mean(magnitude, axis=1)
         freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
-        magnitude_db = librosa.amplitude_to_db(avg_magnitude, ref=np.max)
+        magnitude_db = np.asarray(
+            librosa.amplitude_to_db(avg_magnitude, ref=np.max)
+        )
 
         del y, stft_result, magnitude, avg_magnitude
 

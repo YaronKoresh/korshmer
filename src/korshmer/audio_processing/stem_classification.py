@@ -156,8 +156,8 @@ class StemClassifier:
         try:
             f0, voiced_flag, _ = librosa.pyin(
                 audio,
-                fmin=librosa.note_to_hz("C2"),
-                fmax=librosa.note_to_hz("C7"),
+                fmin=float(librosa.note_to_hz("C2")),
+                fmax=float(librosa.note_to_hz("C7")),
                 sr=sr,
             )
 
@@ -260,8 +260,8 @@ class VocalProcessingAI:
         try:
             f0, voiced_flag, _ = librosa.pyin(
                 audio,
-                fmin=librosa.note_to_hz("C2"),
-                fmax=librosa.note_to_hz("C7"),
+                fmin=float(librosa.note_to_hz("C2")),
+                fmax=float(librosa.note_to_hz("C7")),
                 sr=sr,
             )
 

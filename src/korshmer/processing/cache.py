@@ -1,14 +1,76 @@
 import hashlib
+import io
 import json
 import logging
 import os
-import pickle
 import time
+import zipfile
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
+import numpy as np
+
 _logger = logging.getLogger(__name__)
+
+ENTRY_SUFFIX = ".npz"
+OLD_ENTRY_SUFFIX = ".pkl"
+_STRUCTURE = "structure"
+
+
+def _pack(value: Any, arrays: dict[str, np.ndarray]) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (np.ndarray, np.generic)):
+        array = np.asarray(value)
+        if array.dtype.hasobject:
+            raise TypeError("arrays of Python objects cannot be cached")
+        name = f"a{len(arrays)}"
+        arrays[name] = array
+        return ["array" if isinstance(value, np.ndarray) else "scalar", name]
+    if isinstance(value, (list, tuple)):
+        kind = "tuple" if isinstance(value, tuple) else "list"
+        return [kind, [_pack(item, arrays) for item in value]]
+    if isinstance(value, dict):
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("only text keys can be cached")
+        return ["dict", {k: _pack(v, arrays) for k, v in value.items()}]
+    raise TypeError(f"{type(value).__name__} values cannot be cached")
+
+
+def _unpack(node: Any, arrays: Any) -> Any:
+    if not isinstance(node, list):
+        return node
+    kind, payload = node
+    if kind == "array":
+        return arrays[payload]
+    if kind == "scalar":
+        return arrays[payload][()]
+    if kind == "list":
+        return [_unpack(item, arrays) for item in payload]
+    if kind == "tuple":
+        return tuple(_unpack(item, arrays) for item in payload)
+    if kind == "dict":
+        return {k: _unpack(v, arrays) for k, v in payload.items()}
+    raise ValueError(f"unknown cache node {kind!r}")
+
+
+def _serialize(value: Any) -> bytes:
+    arrays: dict[str, np.ndarray] = {}
+    structure = json.dumps(_pack(value, arrays)).encode("utf-8")
+    arrays[_STRUCTURE] = np.frombuffer(structure, dtype=np.uint8)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        for name, array in arrays.items():
+            with archive.open(f"{name}.npy", "w", force_zip64=True) as member:
+                np.lib.format.write_array(member, array, allow_pickle=False)
+    return buffer.getvalue()
+
+
+def _deserialize(path: Path) -> Any:
+    with np.load(path, allow_pickle=False) as data:
+        structure = json.loads(data[_STRUCTURE].tobytes().decode("utf-8"))
+        return _unpack(structure, data)
 
 
 class ProcessingCache:
@@ -32,10 +94,17 @@ class ProcessingCache:
     def _load_index(self) -> None:
         now = time.time()
         try:
-            files = list(self.cache_dir.glob("??/*.pkl"))
+            files = list(self.cache_dir.glob(f"??/*{ENTRY_SUFFIX}"))
+            old_files = list(self.cache_dir.glob(f"??/*{OLD_ENTRY_SUFFIX}"))
         except OSError as e:
             _logger.error(f"Failed to scan cache dir {self.cache_dir}: {e}")
             return
+
+        for old_path in old_files:
+            try:
+                old_path.unlink()
+            except OSError:
+                pass
 
         for pkl_path in files:
             try:
@@ -98,7 +167,7 @@ class ProcessingCache:
             entry["accessed_at"] = time.time()
 
         pkl_subdir = self.cache_dir / key[:2]
-        pkl_path = pkl_subdir / f"{key}.pkl"
+        pkl_path = pkl_subdir / f"{key}{ENTRY_SUFFIX}"
 
         try:
             if not pkl_path.exists():
@@ -116,8 +185,7 @@ class ProcessingCache:
                     pass
                 return None
 
-            with open(pkl_path, "rb") as f:
-                result = pickle.load(f)
+            result = _deserialize(pkl_path)
 
             with self._lock:
                 self._hit_count += 1
@@ -142,10 +210,10 @@ class ProcessingCache:
             _logger.error(f"Failed to create cache subdir {pkl_subdir}: {e}")
             return False
 
-        pkl_path = pkl_subdir / f"{key}.pkl"
+        pkl_path = pkl_subdir / f"{key}{ENTRY_SUFFIX}"
 
         try:
-            payload = pickle.dumps(value)
+            payload = _serialize(value)
         except Exception as e:
             _logger.error(f"Failed to serialize cache value for {key}: {e}")
             return False
@@ -207,7 +275,7 @@ class ProcessingCache:
             self._index.pop(key, None)
 
         try:
-            (self.cache_dir / key[:2] / f"{key}.pkl").unlink()
+            (self.cache_dir / key[:2] / f"{key}{ENTRY_SUFFIX}").unlink()
         except OSError:
             pass
 

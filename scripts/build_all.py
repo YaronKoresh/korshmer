@@ -178,6 +178,7 @@ def main():
             print("Wheel build successful")
         else:
             print("Wheel build failed")
+            sys.exit(1)
 
     if args.pyinstaller:
         print("Building PyInstaller executable...")
@@ -185,8 +186,7 @@ def main():
             print("PyInstaller build successful")
         else:
             print("PyInstaller build failed")
-            if args.sign:
-                sys.exit(1)
+            sys.exit(1)
         if args.sign:
             print("Signing executable...")
             if sign_executable(executable_path()):

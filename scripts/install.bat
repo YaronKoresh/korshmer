@@ -53,6 +53,8 @@ set "INSTALLER_PATH=%TEMP%\python_installer.exe"
 echo Downloading Python 3.11.5 installer...
 powershell -NoProfile -Command "(New-Object System.Net.WebClient).DownloadFile('%PYTHON_INSTALLER_URL%', '%INSTALLER_PATH%')"
 if %errorlevel% neq 0 ( goto end_error )
+call :verify_signature "%INSTALLER_PATH%" "Python Software Foundation"
+if errorlevel 1 ( del "%INSTALLER_PATH%" >nul 2>nul & goto end_error )
 start /wait "" "%INSTALLER_PATH%" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 TargetDir="%PYTHON_DIR%"
 del "%INSTALLER_PATH%"
 powershell -NoProfile -Command "$d='%PYTHON_DIR%'; $s=$d+'\Scripts'; $p=[Environment]::GetEnvironmentVariable('Path','User'); $parts=@($p -split ';' | Where-Object { $_ -and $_ -ne $d -and $_ -ne $s }); [Environment]::SetEnvironmentVariable('Path',((@($d,$s)+$parts) -join ';'),'User')"
@@ -88,6 +90,8 @@ if %errorlevel% neq 0 (
     echo [ERROR] Failed to download Windows SDK.
     goto end_error
 )
+call :verify_signature "%WSDK_INSTALLER_PATH%" "Microsoft Corporation"
+if errorlevel 1 ( del "%WSDK_INSTALLER_PATH%" >nul 2>nul & goto end_error )
 start /wait "" "%WSDK_INSTALLER_PATH%" /features OptionId.SigningTools /quiet /norestart
 del "%WSDK_INSTALLER_PATH%"
 echo [SUCCESS] Windows SDK has been installed manually. Please re-run this script from a new command prompt.
@@ -142,9 +146,11 @@ set "INSTALLER_PATH=%TEMP%\clang_installer.exe"
 powershell -NoProfile -Command "(New-Object System.Net.WebClient).DownloadFile('%CLANG_INSTALLER_URL%', '%INSTALLER_PATH%')"
 if %errorlevel% neq 0 ( goto end_error )
 echo Starting Clang installation (this may take a few minutes)...
-setx /M LLVM_INSTALL_DIR "%ProgramFiles%\LLVM" >nul
+call :verify_signature "%INSTALLER_PATH%" "LLVM Foundation"
+if errorlevel 1 ( del "%INSTALLER_PATH%" >nul 2>nul & goto end_error )
 start /wait "" "%INSTALLER_PATH%" /S /D=%ProgramFiles%\LLVM
 powershell -NoProfile -Command "$p=[Environment]::GetEnvironmentVariable('Path','Machine'); if($p -notlike '*\LLVM\bin*'){[Environment]::SetEnvironmentVariable('Path',($p.TrimEnd(';')+';%ProgramFiles%\LLVM\bin'),'Machine')}"
+setx /M LLVM_INSTALL_DIR "%ProgramFiles%\LLVM" >nul
 del "%INSTALLER_PATH%"
 echo [SUCCESS] Clang C++ Compiler has been installed. Please re-run this script from a new command prompt.
 goto end_success
@@ -187,6 +193,14 @@ if not exist "%~1" exit /b 1
 "%~1" -c "import sys; sys.exit(0 if sys.version_info[:2] >= (%MIN_MAJOR%,%MIN_MINOR%) else 1)" >nul 2>nul
 if errorlevel 1 exit /b 1
 set "PYTHON_EXE=%~1"
+exit /b 0
+
+:verify_signature
+set "KORSHMER_VERIFY_PATH=%~1"
+set "KORSHMER_VERIFY_SIGNER=%~2"
+echo Checking the digital signature of the download...
+powershell -NoProfile -Command "$s = Get-AuthenticodeSignature -LiteralPath $env:KORSHMER_VERIFY_PATH; if ($s.Status -ne 'Valid') { Write-Host ('[ERROR] The download is not validly signed (' + $s.Status + '). It will not be run.'); exit 1 }; if (-not $s.SignerCertificate.Subject.Contains($env:KORSHMER_VERIFY_SIGNER)) { Write-Host ('[ERROR] Unexpected signer: ' + $s.SignerCertificate.Subject + '. It will not be run.'); exit 1 }; Write-Host ('[INFO] Signed by: ' + $s.SignerCertificate.Subject); exit 0"
+if errorlevel 1 exit /b 1
 exit /b 0
 
 :end_error

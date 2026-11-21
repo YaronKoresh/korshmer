@@ -250,18 +250,11 @@ class TestAudioToMIDITranscription:
         assert len(cleaned.instruments[0].notes) == 5
 
     def test_missing_dependency_behaviour(self, tmp_path, monkeypatch):
-        import builtins
+        import sys
 
         from korshmer.exceptions import AudioToMidiError
 
-        orig_import = builtins.__import__
-
-        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name.startswith("basic_pitch"):
-                raise ImportError("no module named basic_pitch")
-            return orig_import(name, globals, locals, fromlist, level)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setitem(sys.modules, "basic_pitch", None)
         from korshmer.audio_processing.ai_audio_to_midi import (
             EnhancedAudioToMIDI,
         )

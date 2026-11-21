@@ -30,6 +30,7 @@ HELP_MENU = (
     ("Find a Tool…", "focus_tool_finder"),
     ("Start Tutorial", "start_tutorial_action"),
     ("Keyboard Shortcuts", "_show_help"),
+    ("Customise Shortcuts…", "customise_shortcuts_action"),
 )
 
 

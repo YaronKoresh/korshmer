@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from korshmer.core.control_bar import ControlBar
 from korshmer.core.window_initializer import frame_margin
 from korshmer.event_bus import Event, publish
+from korshmer.mixins.files import is_audio_path
 from korshmer.services.file_management import FileManagementService
 from korshmer.ui.layout_config import (
     LEFT_PANEL_HEADER_HEIGHT,
@@ -396,18 +397,7 @@ class UiMixin(MainPagesMixin, GeneratorPageMixin, ToolsPageMixin):
                     lambda: self.add_midi_lanes_to_editor(file_path)
                 )
                 l.addWidget(b_merge)
-            elif lower_path.endswith(
-                (
-                    ".wav",
-                    ".mp3",
-                    ".flac",
-                    ".ogg",
-                    ".oga",
-                    ".opus",
-                    ".aiff",
-                    ".aif",
-                )
-            ):
+            elif is_audio_path(lower_path):
                 b_clip = QPushButton("🎤\ufe0e")
                 b_clip.setToolTip("Send to editor as audio clip")
                 setup_btn(b_clip)

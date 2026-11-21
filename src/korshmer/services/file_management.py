@@ -62,6 +62,9 @@ class FileManagementService:
         ".opus",
         ".aiff",
         ".aif",
+        ".au",
+        ".m4a",
+        ".aac",
     )
     VALID_MIDI_EXTENSIONS = MIDI_EXTENSIONS
     VALID_EXTENSIONS = VALID_AUDIO_EXTENSIONS + VALID_MIDI_EXTENSIONS

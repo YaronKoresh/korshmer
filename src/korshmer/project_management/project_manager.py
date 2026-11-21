@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Concatenate, ParamSpec, TypeVar
 
 from korshmer import __version__
+from korshmer.exceptions import ProjectError, ProjectVersionError
 from korshmer.project_management.file_io_log import logged_file_op
 from korshmer.project_management.project_backup import (
     build_snapshot_data,
@@ -23,9 +24,16 @@ from korshmer.project_management.project_loader import (
     load_compressed,
     load_uncompressed,
 )
+from korshmer.project_management.project_migration import (
+    PROJECT_FORMAT_VERSION,
+    opened_project,
+    with_current_sections,
+)
 from korshmer.project_management.project_recovery import (
+    REFUSED_SUFFIX,
     clear_recovery_file,
     load_recovery_file,
+    quarantine_recovery_file,
     save_recovery_file,
 )
 from korshmer.project_management.project_saver import (
@@ -41,6 +49,7 @@ from korshmer.project_management.validators.project_validator import (
 from korshmer.utils.filesystem import is_safe_path
 
 SONG_SUFFIX = ".kproj"
+UNSAVED_SONG_NAME = "Untitled"
 VERSIONS_FOLDER = "Versions"
 BACKUPS_FOLDER = "Backups"
 RESERVED_FOLDERS = frozenset(
@@ -60,17 +69,33 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+def project_digest(project_data: dict[str, Any]) -> str:
+    content = {
+        key: value for key, value in project_data.items() if key != "modified"
+    }
+    canonical = json.dumps(
+        content,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 class ReadWriteLock:
     def __init__(self) -> None:
         self._cond = threading.Condition(threading.Lock())
         self._readers = 0
         self._writer: int | None = None
         self._write_depth = 0
+        self._reads_by_writer = 0
 
     def acquire_read(self) -> None:
         me = threading.get_ident()
         with self._cond:
             if self._writer == me:
+                self._reads_by_writer += 1
                 return
             while self._writer is not None:
                 self._cond.wait()
@@ -78,6 +103,12 @@ class ReadWriteLock:
 
     def release_read(self) -> None:
         with self._cond:
+            if (
+                self._writer == threading.get_ident()
+                and self._reads_by_writer > 0
+            ):
+                self._reads_by_writer -= 1
+                return
             self._readers -= 1
             if self._readers == 0:
                 self._cond.notify_all()
@@ -143,9 +174,12 @@ class ProjectManager:
         self.auto_backup_interval = 300
         self.last_backup_time: float = 0
         self.last_load_backup: Path | None = None
+        self.last_load_error = ""
+        self._refused_as_newer = False
         self.backup_enabled = True
         self.max_backups = 10
-        self._last_saved_hash: str | None = None
+        self._last_saved: tuple[str, Path] | None = None
+        self._last_recovery: tuple[str, Path | None] | None = None
         self._incremental_save_enabled = True
 
     def _ensure_directories(self):
@@ -197,6 +231,7 @@ class ProjectManager:
         project_data = {
             "name": name,
             "version": __version__,
+            "format_version": PROJECT_FORMAT_VERSION,
             "created": datetime.now().isoformat(),
             "modified": datetime.now().isoformat(),
             "metadata": {
@@ -279,6 +314,12 @@ class ProjectManager:
     def save_project(
         self, project_path: Path | None = None, compress: bool = True
     ) -> bool:
+        return self._write_project(project_path, compress, None)
+
+    def _write_project(
+        self, project_path: Path | None, compress: bool, digest: str | None
+    ) -> bool:
+        self._last_saved = None
         try:
             if project_path is None:
                 project_path = self.current_project_path
@@ -304,10 +345,14 @@ class ProjectManager:
 
             self.current_project_data["modified"] = datetime.now().isoformat()
 
-            if compress:
-                return self._save_compressed(project_path)
-            else:
+            if not compress:
                 return self._save_uncompressed(project_path)
+            self._save_compressed(project_path)
+            self._last_saved = (
+                digest or project_digest(self.current_project_data),
+                final_path,
+            )
+            return True
 
         except Exception as e:
             logging.error(f"Failed to save project: {e}")
@@ -315,7 +360,9 @@ class ProjectManager:
 
     def _save_compressed(self, project_path: Path) -> bool:
         self.current_project_path = save_compressed(
-            self.current_project_data,
+            with_current_sections(
+                self.current_project_data, Path(project_path).stem
+            ),
             project_path,
             Path(self.base_dir) / "temp",
         )
@@ -323,12 +370,17 @@ class ProjectManager:
 
     def _save_uncompressed(self, project_path: Path) -> bool:
         self.current_project_path = save_uncompressed(
-            self.current_project_data, project_path
+            with_current_sections(
+                self.current_project_data, Path(project_path).stem
+            ),
+            project_path,
         )
         return True
 
     @_write_locked
     def load_project(self, project_path: Path) -> dict[str, Any] | None:
+        self.last_load_error = ""
+        self._refused_as_newer = False
         try:
             if not is_safe_path(project_path):
                 logging.error(f"Unsafe project path: {project_path!r}")
@@ -348,8 +400,14 @@ class ProjectManager:
                     self.current_project_path, self.current_project_data = (
                         previous
                     )
+                    self.last_load_error = str(e)
                     logging.error(f"Rejected project {project_path}: {e}")
                     return None
+                self._last_saved = (
+                    (project_digest(self.current_project_data), project_path)
+                    if project_path.suffix == SONG_SUFFIX
+                    else None
+                )
                 return project_data
             else:
                 logging.error(
@@ -358,6 +416,8 @@ class ProjectManager:
                 return None
 
         except Exception as e:
+            self.last_load_error = str(e)
+            self._refused_as_newer = isinstance(e, ProjectVersionError)
             logging.error(f"Failed to load project: {e}")
             return None
 
@@ -368,11 +428,15 @@ class ProjectManager:
         project_path = Path(project_path)
         self.last_load_backup = None
         data = self.load_project(project_path)
-        if data is not None:
+        if data is not None or self._refused_as_newer:
             return data
 
         source = (self.current_project_path, self.current_project_data)
-        for backup in self.list_backups(project_path.stem):
+        problem = self.last_load_error
+        own_backups = self._backups_in(
+            project_path.parent / BACKUPS_FOLDER, project_path.stem
+        )
+        for backup in own_backups:
             data = self.load_project(backup)
             if data is not None:
                 logging.warning(
@@ -383,20 +447,26 @@ class ProjectManager:
                 self.current_project_data = data
                 return data
         self.current_project_path, self.current_project_data = source
+        self.last_load_error = problem
         return None
 
     def _load_compressed(self, project_path: Path) -> dict[str, Any] | None:
-        project_data: dict[str, Any] = load_compressed(
-            project_path,
-            self.base_dir / "temp",
-            self.base_dir / "saved_data" / "assets",
+        project_data: dict[str, Any] = opened_project(
+            load_compressed(
+                project_path,
+                self.base_dir / "temp",
+                self.base_dir / "saved_data" / "assets",
+            ),
+            Path(project_path).stem,
         )
         self.current_project_path = project_path
         self.current_project_data = project_data
         return project_data
 
     def _load_uncompressed(self, project_path: Path) -> dict[str, Any] | None:
-        project_data: dict[str, Any] = load_uncompressed(project_path)
+        project_data: dict[str, Any] = opened_project(
+            load_uncompressed(project_path), Path(project_path).stem
+        )
         self.current_project_path = project_path
         self.current_project_data = project_data
         return project_data
@@ -552,6 +622,11 @@ class ProjectManager:
 
     @_read_locked
     def list_backups(self, project_name: str | None = None) -> list[Path]:
+        return self._backups_in(self.backups_dir, project_name)
+
+    def _backups_in(
+        self, folder: Path | None, project_name: str | None
+    ) -> list[Path]:
         if project_name:
             if not is_safe_name(project_name):
                 logging.error(f"Rejected unsafe project name: {project_name!r}")
@@ -560,7 +635,6 @@ class ProjectManager:
         else:
             pattern = "*_backup_*.kproj"
 
-        folder = self.backups_dir
         if folder is None or not folder.is_dir():
             return []
         return sorted(
@@ -692,30 +766,6 @@ class ProjectManager:
             return 0
         return self.current_project_path.stat().st_size
 
-    def _calculate_project_hash(self) -> str:
-        def serialize_dict(obj):
-            if isinstance(obj, dict):
-                return tuple(
-                    sorted((k, serialize_dict(v)) for k, v in obj.items())
-                )
-            elif isinstance(obj, list):
-                return tuple(serialize_dict(item) for item in obj)
-            elif isinstance(obj, (str, int, float, bool, type(None))):
-                return obj
-            else:
-                return str(obj)
-
-        try:
-            serialized = serialize_dict(self.current_project_data)
-            hash_str = str(serialized)
-            return hashlib.sha256(hash_str.encode()).hexdigest()
-        except Exception as e:
-            logging.warning(
-                f"Failed to calculate structured hash, falling back to JSON: {e}"
-            )
-            project_json = json.dumps(self.current_project_data, sort_keys=True)
-            return hashlib.sha256(project_json.encode()).hexdigest()
-
     @_write_locked
     def save_project_incremental(
         self, project_path: Path | None = None
@@ -724,17 +774,18 @@ class ProjectManager:
             return self.save_project(project_path)
 
         try:
-            current_hash = self._calculate_project_hash()
+            target = project_path or self.current_project_path
+            if target is None:
+                return self.save_project(project_path)
+            target = Path(target).with_suffix(SONG_SUFFIX)
+            with_current_sections(self.current_project_data, target.stem)
+            digest = project_digest(self.current_project_data)
 
-            if self._last_saved_hash == current_hash:
+            if self._last_saved == (digest, target) and target.is_file():
                 logging.debug("No changes detected, skipping save")
                 return True
 
-            success = self.save_project(project_path, compress=True)
-            if success:
-                self._last_saved_hash = current_hash
-
-            return success
+            return self._write_project(project_path, True, digest)
 
         except Exception as e:
             logging.error(f"Incremental save failed: {e}")
@@ -744,15 +795,42 @@ class ProjectManager:
         return self.base_dir / "saved_data" / ".recovery.gz"
 
     def enable_auto_recovery(self):
-        return load_recovery_file(self._recovery_file())
+        recovery_file = self._recovery_file()
+        recovery_data = load_recovery_file(recovery_file)
+        if recovery_data is None:
+            return None
+        saved_as = recovery_data.get("project_path")
+        try:
+            recovery_data["project_data"] = opened_project(
+                recovery_data["project_data"],
+                Path(saved_as).stem if saved_as else UNSAVED_SONG_NAME,
+            )
+        except ProjectError as e:
+            self.last_load_error = str(e)
+            kept = quarantine_recovery_file(recovery_file, REFUSED_SUFFIX)
+            logging.error(
+                f"Recovery file cannot be opened ({e}); "
+                + (f"kept as {kept}" if kept else "it could not be set aside")
+            )
+            return None
+        return recovery_data
 
     @_write_locked
     def save_recovery_state(self):
-        return save_recovery_file(
-            self._recovery_file(),
+        recovery_file = self._recovery_file()
+        kept = (
+            project_digest(self.current_project_data),
+            self.current_project_path,
+        )
+        if self._last_recovery == kept and recovery_file.is_file():
+            return True
+        saved = save_recovery_file(
+            recovery_file,
             self.current_project_path,
             self.current_project_data,
         )
+        self._last_recovery = kept if saved else None
+        return saved
 
     def clear_recovery_state(self):
         return clear_recovery_file(self._recovery_file())

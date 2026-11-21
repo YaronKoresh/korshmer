@@ -15,7 +15,7 @@ def cache(tmp_path):
 
 
 def _entry_path(cache, key):
-    return cache.cache_dir / key[:2] / f"{key}.pkl"
+    return cache.cache_dir / key[:2] / f"{key}.npz"
 
 
 def test_round_trip(cache):
@@ -105,7 +105,7 @@ def test_size_limit_counts_files_from_earlier_runs(tmp_path):
 
     second = ProcessingCache(cache_dir, max_size_mb=1)
     assert second.stats()["total_size_mb"] <= 1
-    assert len(list(cache_dir.glob("??/*.pkl"))) == 1
+    assert len(list(cache_dir.glob("??/*.npz"))) == 1
 
 
 def test_set_of_unpicklable_value_returns_false_and_leaves_no_file(cache):

@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 
 from korshmer.constants import MAX_EFFECT_CHAIN_DEPTH, RESERVED_WINDOWS_NAMES
+from korshmer.exceptions import ProjectCorruptedError
 from korshmer.utils.audit_log import OUTCOME_DENIED, audit
 
 MAX_FILESYSTEM_NAME_LENGTH = 255
@@ -89,3 +90,91 @@ def validate_project_effects_chain(project_data) -> None:
             f"Project effects chain depth must be at most "
             f"{MAX_EFFECT_CHAIN_DEPTH} effects, got {len(chain)}"
         )
+
+
+SECTION_TYPES: dict[str, type] = {
+    "metadata": dict,
+    "tracks": list,
+    "markers": list,
+    "assets": list,
+    "settings": dict,
+}
+TYPE_WORDS = {dict: "an object", list: "a list", str: "text"}
+EDITOR_WHOLE_NUMBERS = {
+    "tracks": ("id",),
+    "notes": ("id", "track_id"),
+    "clips": ("id",),
+}
+EDITOR_NUMBERS = {
+    "tracks": (),
+    "notes": ("start", "duration"),
+    "clips": ("start", "duration", "gain"),
+}
+EDITOR_ENTRY_WORDS = {"tracks": "track", "notes": "note", "clips": "clip"}
+BROKEN_SONG_HINT = "Open one of the backups of this song instead."
+
+
+def _broken(problem) -> ProjectCorruptedError:
+    return ProjectCorruptedError(
+        f"The song file is damaged: {problem}", recovery_hint=BROKEN_SONG_HINT
+    )
+
+
+def _require_type(value, expected, label) -> None:
+    if not isinstance(value, expected):
+        raise _broken(
+            f"{label} should be {TYPE_WORDS[expected]}, found "
+            f"{type(value).__name__}"
+        )
+
+
+def _reads_as(value, number_type) -> bool:
+    try:
+        number_type(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def _require_numbers(entry, keys, number_type, label) -> None:
+    for key in keys:
+        if key in entry and not _reads_as(entry[key], number_type):
+            raise _broken(
+                f"{key} of {label} should be a number, found {entry[key]!r}"
+            )
+
+
+def _validate_editor_entries(editor, section) -> None:
+    entries = editor.get(section)
+    if entries is None:
+        return
+    _require_type(entries, list, f"editor {section}")
+    word = EDITOR_ENTRY_WORDS[section]
+    for position, entry in enumerate(entries, 1):
+        label = f"editor {word} {position}"
+        _require_type(entry, dict, label)
+        _require_numbers(entry, EDITOR_WHOLE_NUMBERS[section], int, label)
+        _require_numbers(entry, EDITOR_NUMBERS[section], float, label)
+        program = entry.get("program", 0)
+        if section == "tracks" and not isinstance(program, (int, float)):
+            raise _broken(
+                f"program of {label} should be a number, found {program!r}"
+            )
+
+
+def validate_project_structure(project_data, complete=True) -> None:
+    _require_type(project_data, dict, "the song")
+    if complete or project_data.get("name") is not None:
+        _require_type(project_data.get("name"), str, "name")
+    for key, expected in SECTION_TYPES.items():
+        if project_data.get(key) is None:
+            if complete:
+                raise _broken(f"the {key} section is missing")
+            continue
+        _require_type(project_data[key], expected, key)
+    editor = project_data.get("editor")
+    if editor is None:
+        return
+    _require_type(editor, dict, "editor")
+    for section in EDITOR_ENTRY_WORDS:
+        _validate_editor_entries(editor, section)

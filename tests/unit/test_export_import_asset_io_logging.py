@@ -81,7 +81,7 @@ def test_export_that_leaves_no_file_warns(
     output = manager.exports_dir / "out.mp3"
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    assert manager._export_file(source_wav, output, "MP3 High", {})
+    assert not manager._export_file(source_wav, output, "MP3 High", {})
 
     assert f"Export audio left no file: {output}" in _messages(
         caplog, logging.WARNING
@@ -170,7 +170,7 @@ def test_video_extraction_logs_result(tmp_path, caplog, monkeypatch):
     video.write_bytes(b"\0" * 16)
     manager = ImportManager(tmp_path)
 
-    def fake_ffmpeg(cmd, capture_output, text):
+    def fake_ffmpeg(cmd, capture_output, text, timeout):
         output = cmd[-1]
         output.write_bytes(b"RIFF" + b"\0" * 60)
         return SimpleNamespace(returncode=0, stderr="")
@@ -193,7 +193,7 @@ def test_failed_video_extraction_names_output(tmp_path, caplog, monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, capture_output, text: SimpleNamespace(
+        lambda cmd, capture_output, text, timeout: SimpleNamespace(
             returncode=1, stderr="bad input"
         ),
     )

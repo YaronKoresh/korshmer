@@ -17,6 +17,15 @@ from korshmer.audio_processing.validation import (
     validate_bit_depth,
     validate_normalize_target_db,
 )
+from korshmer.constants import (
+    EXPORT_FFMPEG_TIMEOUT_SECONDS,
+    EXPORT_LUFS_TARGET_MIN,
+    EXPORT_TRUE_PEAK_CEILING_DB,
+    EXPORT_TRUE_PEAK_CEILING_MIN_DB,
+    EXPORT_TRUE_PEAK_CHUNK_FRAMES,
+    EXPORT_TRUE_PEAK_OVERSAMPLING,
+    EXPORT_TRUE_PEAK_PAD_FRAMES,
+)
 from korshmer.project_management.file_io_log import logged_file_op, logger
 from korshmer.utils.filesystem import is_safe_path
 
@@ -65,6 +74,10 @@ QUALITY_RANGES: dict[str, tuple[float, float]] = {
     "mp3": (0, 9),
 }
 AAC_FORMATS = ("m4a", "aac")
+PCM_FORMATS = ("wav", "flac", "aiff")
+PCM_SUBTYPE_BITS = {"PCM_16": 16, "PCM_24": 24}
+SOURCE_PCM_BITS = {"PCM_S8": 8, "PCM_U8": 8, "PCM_16": 16, "PCM_24": 24}
+EXPORT_THREAD_NAME = "korshmer-export"
 RIFF_INFO_TAGS = {
     "title": b"INAM",
     "artist": b"IART",
@@ -108,6 +121,85 @@ def validate_preset_encoder(config: dict[str, Any]) -> None:
         _require_range("quality", config["quality"], *quality_range)
 
 
+def validate_true_peak_ceiling(value: Any) -> float:
+    _require_range(
+        "true_peak_ceiling", value, EXPORT_TRUE_PEAK_CEILING_MIN_DB, 0
+    )
+    return float(value)
+
+
+def validate_target_lufs(value: Any) -> float:
+    _require_range("target_lufs", value, EXPORT_LUFS_TARGET_MIN, 0)
+    return float(value)
+
+
+def validate_preset_finishing(config: dict[str, Any]) -> None:
+    if not isinstance(config, dict):
+        raise ValueError(
+            f"Export preset must be a mapping of settings, got {config!r}"
+        )
+    if config.get("normalize") == "lufs" and "target_lufs" in config:
+        validate_target_lufs(config["target_lufs"])
+    if "true_peak_ceiling" in config:
+        validate_true_peak_ceiling(config["true_peak_ceiling"])
+    if "dither" in config and not isinstance(config["dither"], bool):
+        raise ValueError(
+            f"Invalid 'dither': must be true or false, got {config['dither']!r}"
+        )
+    seed = config.get("dither_seed")
+    if seed is not None and (
+        isinstance(seed, bool) or not isinstance(seed, int) or seed < 0
+    ):
+        raise ValueError(
+            f"Invalid 'dither_seed': must be a whole number of 0 or more, "
+            f"got {seed!r}"
+        )
+
+
+def true_peak(audio_data: np.ndarray) -> float:
+    from scipy import signal
+
+    frames = len(audio_data)
+    channels = audio_data.reshape(frames, -1)
+    up = EXPORT_TRUE_PEAK_OVERSAMPLING
+    chunk = EXPORT_TRUE_PEAK_CHUNK_FRAMES
+    pad = EXPORT_TRUE_PEAK_PAD_FRAMES
+    peak = 0.0
+    for channel in range(channels.shape[1]):
+        for first in range(0, frames, chunk):
+            low = max(0, first - pad)
+            last = min(frames, first + chunk)
+            piece = np.asarray(
+                channels[low : min(frames, last + pad), channel],
+                dtype=np.float64,
+            )
+            if len(piece) > 1:
+                piece = signal.resample_poly(piece, up, 1)
+                piece = piece[(first - low) * up : (last - low) * up]
+            peak = max(peak, float(np.max(np.abs(piece))))
+    return peak
+
+
+def quantize_pcm(
+    audio_data: np.ndarray,
+    bit_depth: int,
+    dither: bool = False,
+    seed: int | None = None,
+) -> np.ndarray:
+    full_scale = 2 ** (bit_depth - 1)
+    scaled = np.asarray(audio_data, dtype=np.float64) * full_scale
+    if dither:
+        rng = np.random.default_rng(seed)
+        scaled += rng.random(scaled.shape) - rng.random(scaled.shape)
+    steps = np.clip(np.rint(scaled), -full_scale, full_scale - 1)
+    samples: np.ndarray
+    if bit_depth == 16:
+        samples = steps.astype(np.int16)
+    else:
+        samples = steps.astype(np.int32) * 2 ** (32 - bit_depth)
+    return samples
+
+
 def write_riff_info(path: Path, metadata: dict[str, str]) -> bool:
     entries = b""
     for key, tag in RIFF_INFO_TAGS.items():
@@ -140,6 +232,7 @@ def validate_export_preset(config: dict[str, Any]) -> None:
     validate_preset_normalize_target(config)
     validate_preset_bit_depth(config)
     validate_preset_encoder(config)
+    validate_preset_finishing(config)
 
 
 class ExportManager:
@@ -155,6 +248,7 @@ class ExportManager:
         self.current_export: dict[str, Any] | None = None
         self._queue_lock = threading.Lock()
         self._export_lock = threading.Lock()
+        self._last_error: str | None = None
 
     def _ensure_directories(self):
         self.exports_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +261,7 @@ class ExportManager:
                 "bit_depth": 16,
                 "normalize": "lufs",
                 "target_lufs": -14,
+                "true_peak_ceiling": EXPORT_TRUE_PEAK_CEILING_DB,
                 "metadata": True,
             },
             "YouTube": {
@@ -175,6 +270,8 @@ class ExportManager:
                 "bit_depth": 24,
                 "normalize": "lufs",
                 "target_lufs": -13,
+                "true_peak_ceiling": EXPORT_TRUE_PEAK_CEILING_DB,
+                "dither": False,
                 "metadata": True,
             },
             "CD Quality": {
@@ -184,6 +281,7 @@ class ExportManager:
                 "normalize": "peak",
                 "target_peak": -0.1,
                 "dither": True,
+                "dither_seed": None,
                 "metadata": True,
             },
             "Mastering": {
@@ -199,6 +297,7 @@ class ExportManager:
                 "sample_rate": 44100,
                 "normalize": "rms",
                 "target_rms": -18,
+                "true_peak_ceiling": EXPORT_TRUE_PEAK_CEILING_DB,
                 "metadata": True,
             },
             "MP3 Medium": {
@@ -207,6 +306,7 @@ class ExportManager:
                 "sample_rate": 44100,
                 "normalize": "rms",
                 "target_rms": -18,
+                "true_peak_ceiling": EXPORT_TRUE_PEAK_CEILING_DB,
                 "metadata": True,
             },
             "FLAC Lossless": {
@@ -338,46 +438,52 @@ class ExportManager:
             self.is_exporting = True
 
         thread = threading.Thread(
-            target=self._process_queue_thread, daemon=True
+            target=self._process_queue_thread,
+            name=EXPORT_THREAD_NAME,
+            daemon=True,
         )
         thread.start()
 
     def _process_queue_thread(self):
-        while True:
-            with self._queue_lock:
-                if not self.export_queue:
-                    break
-                job = self.export_queue.popleft()
+        try:
+            while True:
+                with self._queue_lock:
+                    if not self.export_queue:
+                        break
+                    job = self.export_queue.popleft()
+                self._run_job(job)
+        finally:
+            with self._export_lock:
+                self.is_exporting = False
+                self.current_export = None
 
-            self.current_export = job
-            job["status"] = "processing"
-
+    def _run_job(self, job: dict[str, Any]) -> None:
+        self.current_export = job
+        job["status"] = "processing"
+        try:
+            success = self._export_file(
+                Path(job["source"]),
+                Path(job["output"]),
+                job["preset"],
+                job["metadata"],
+            )
+            if not success:
+                job["error"] = self._last_error or "Export failed"
+        except Exception as e:
+            logging.error(f"Export failed: {e}")
+            success = False
+            job["error"] = str(e)
+        job["status"] = "completed" if success else "failed"
+        if job["callback"]:
             try:
-                success = self._export_file(
-                    Path(job["source"]),
-                    Path(job["output"]),
-                    job["preset"],
-                    job["metadata"],
-                )
-
-                job["status"] = "completed" if success else "failed"
-
-                if job["callback"]:
-                    job["callback"](job, success)
-
+                job["callback"](job, success)
             except Exception as e:
-                logging.error(f"Export failed: {e}")
-                job["status"] = "failed"
-                if job["callback"]:
-                    job["callback"](job, False)
-
-        with self._export_lock:
-            self.is_exporting = False
-            self.current_export = None
+                logging.error(f"Export listener failed: {e}")
 
     def _export_file(
         self, source: Path, output: Path, preset: str, metadata: dict[str, str]
     ) -> bool:
+        self._last_error = None
         try:
             import soundfile as sf
 
@@ -387,38 +493,36 @@ class ExportManager:
 
             with logged_file_op("Read export source", source):
                 audio_data, source_sr = sf.read(str(source))
+                source_bits = SOURCE_PCM_BITS.get(sf.info(str(source)).subtype)
 
             target_sr = preset_config.get("sample_rate", source_sr)
             if target_sr != source_sr:
                 audio_data = self._resample(audio_data, source_sr, target_sr)
 
             normalize_mode = preset_config.get("normalize", "none")
+            if target_sr != source_sr or normalize_mode != "none":
+                source_bits = None
             if normalize_mode != "none":
                 try:
                     audio_data = self._normalize_audio(
-                        audio_data, normalize_mode, preset_config
+                        audio_data, normalize_mode, preset_config, target_sr
                     )
                 except ValueError as e:
-                    logging.error(
-                        f"Export file failed: invalid normalize target in "
-                        f"export preset {preset!r}: {e}"
+                    return self._refuse(
+                        f"invalid normalize target in export preset "
+                        f"{preset!r}: {e}"
                     )
-                    return False
 
             output_format = preset_config.get("format", "wav")
 
             bit_depth = preset_config.get("bit_depth", 16)
-            if output_format in ("wav", "flac", "aiff"):
+            if output_format in PCM_FORMATS:
                 try:
                     bit_depth = validate_bit_depth(bit_depth)
                 except ValueError as e:
-                    logging.error(
-                        f"Export file failed: invalid bit depth in export "
-                        f"preset {preset!r}: {e}"
+                    return self._refuse(
+                        f"invalid bit depth in export preset {preset!r}: {e}"
                     )
-                    return False
-            if bit_depth == 16 and preset_config.get("dither", False):
-                audio_data = self._apply_dither(audio_data)
 
             with logged_file_op("Export audio", output):
                 self._write_output(
@@ -429,18 +533,25 @@ class ExportManager:
                     bit_depth,
                     preset_config,
                     metadata,
+                    source_bits,
                 )
                 if preset_config.get("metadata", True) and metadata:
                     self._embed_metadata(output, metadata)
 
             if not output.exists():
                 logger.warning("Export audio left no file: %s", output)
+                self._last_error = f"The export wrote no file at {output}"
+                return False
 
             return True
 
         except Exception as e:
-            logging.error(f"Export file failed: {e}")
-            return False
+            return self._refuse(str(e))
+
+    def _refuse(self, reason: str) -> bool:
+        self._last_error = reason
+        logging.error(f"Export file failed: {reason}")
+        return False
 
     def _write_output(
         self,
@@ -451,11 +562,23 @@ class ExportManager:
         bit_depth: int,
         preset_config: dict[str, Any],
         metadata: dict[str, str],
+        source_bits: int | None = None,
     ) -> None:
         import soundfile as sf
 
-        if output_format in ["wav", "flac", "aiff"]:
+        if output_format in PCM_FORMATS:
             subtype = self._get_subtype(bit_depth, output_format)
+            if subtype in PCM_SUBTYPE_BITS:
+                pcm_bits = PCM_SUBTYPE_BITS[subtype]
+                reduces_depth = source_bits is None or source_bits > pcm_bits
+                audio_data = quantize_pcm(
+                    audio_data,
+                    pcm_bits,
+                    preset_config.get(
+                        "dither", pcm_bits == 16 and reduces_depth
+                    ),
+                    preset_config.get("dither_seed"),
+                )
             fmt_map = {"flac": "FLAC", "aiff": "AIFF"}
             write_kwargs = {"subtype": subtype}
             if output_format in fmt_map:
@@ -484,7 +607,12 @@ class ExportManager:
         elif output_format == "mp3":
             temp_wav = output.with_suffix(".temp.wav")
             try:
-                sf.write(str(temp_wav), audio_data, target_sr, subtype="PCM_16")
+                sf.write(
+                    str(temp_wav),
+                    quantize_pcm(audio_data, 16),
+                    target_sr,
+                    subtype="PCM_16",
+                )
 
                 bitrate = preset_config.get("bitrate", 320)
                 if preset_config.get("vbr", False):
@@ -504,7 +632,12 @@ class ExportManager:
         elif output_format in AAC_FORMATS:
             temp_wav = output.with_suffix(".temp.wav")
             try:
-                sf.write(str(temp_wav), audio_data, target_sr, subtype="PCM_16")
+                sf.write(
+                    str(temp_wav),
+                    quantize_pcm(audio_data, 16),
+                    target_sr,
+                    subtype="PCM_16",
+                )
                 self._convert_to_aac(
                     temp_wav, output, preset_config.get("bitrate", 256)
                 )
@@ -521,13 +654,28 @@ class ExportManager:
             result: np.ndarray = librosa.resample(
                 audio_data.T, orig_sr=source_sr, target_sr=target_sr
             ).T
-            return result
-        except (ImportError, ValueError, TypeError):
-            return audio_data
+        except (ImportError, ValueError, TypeError) as e:
+            raise RuntimeError(
+                f"Could not convert the sample rate from {source_sr} Hz to "
+                f"{target_sr} Hz: {e}"
+            ) from e
+        return result
 
     def _normalize_audio(
-        self, audio_data: np.ndarray, mode: str, config: dict[str, Any]
+        self,
+        audio_data: np.ndarray,
+        mode: str,
+        config: dict[str, Any],
+        sample_rate: int = 44100,
     ) -> np.ndarray:
+        if mode not in ("peak", "rms", "lufs"):
+            return audio_data
+        ceiling_db: float | None = None
+        if "true_peak_ceiling" in config:
+            ceiling_db = validate_true_peak_ceiling(config["true_peak_ceiling"])
+        elif mode != "peak":
+            ceiling_db = EXPORT_TRUE_PEAK_CEILING_DB
+
         if mode == "peak":
             target_peak = validate_normalize_target_db(
                 config.get("target_peak", -0.1)
@@ -546,27 +694,44 @@ class ExportManager:
                 target_rms = 10 ** (target_rms_db / 20)
                 audio_data = audio_data * (target_rms / current_rms)
 
-        elif mode == "lufs":
-            target_lufs = config.get("target_lufs", -14)
-            current_lufs = self._measure_lufs(audio_data)
-            adjustment = target_lufs - current_lufs
-            audio_data = audio_data * (10 ** (adjustment / 20))
+        else:
+            target_lufs = validate_target_lufs(config.get("target_lufs", -14))
+            current_lufs = self._measure_lufs(audio_data, sample_rate)
+            if np.isfinite(current_lufs):
+                audio_data = audio_data * (
+                    10 ** ((target_lufs - current_lufs) / 20)
+                )
 
-        audio_data = np.clip(audio_data, -1.0, 1.0)
+        if ceiling_db is not None:
+            audio_data = self._hold_true_peak_under(audio_data, ceiling_db)
         return audio_data
 
-    def _measure_lufs(self, audio_data: np.ndarray) -> float:
-        rms = np.sqrt(np.mean(audio_data**2))
-        if rms > 0:
-            return float(20 * np.log10(rms) - 0.691)
-        return -100
-
-    def _apply_dither(self, audio_data: np.ndarray) -> np.ndarray:
-        dither_amount = 1.0 / (2**15)
-        dither = np.random.triangular(
-            -dither_amount, 0, dither_amount, audio_data.shape
+    def _hold_true_peak_under(
+        self, audio_data: np.ndarray, ceiling_db: float
+    ) -> np.ndarray:
+        ceiling = 10 ** (ceiling_db / 20)
+        peak = true_peak(audio_data)
+        if peak <= ceiling:
+            return audio_data
+        logging.info(
+            f"Export gain lowered by {20 * np.log10(peak / ceiling):.2f} dB "
+            f"to keep the true peak under {ceiling_db} dBTP"
         )
-        return audio_data + dither
+        return audio_data * (ceiling / peak)
+
+    def _measure_lufs(
+        self, audio_data: np.ndarray, sample_rate: int = 44100
+    ) -> float:
+        try:
+            import pyloudnorm
+
+            meter = pyloudnorm.Meter(sample_rate)
+            return float(meter.integrated_loudness(audio_data))
+        except (ImportError, ValueError):
+            rms = np.sqrt(np.mean(audio_data**2))
+            if rms > 0:
+                return float(20 * np.log10(rms) - 0.691)
+            return float("-inf")
 
     def _get_subtype(self, bit_depth: int, fmt: str = "wav") -> str:
         subtype_map = {
@@ -586,6 +751,40 @@ class ExportManager:
             f"No export subtype for bit depth {bit_depth!r} in format {fmt!r}"
         )
 
+    def _run_ffmpeg(
+        self, kind: str, source: Path, output: Path, options: list[str]
+    ) -> None:
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            raise RuntimeError(
+                f"{kind} export needs ffmpeg, which is not installed or not "
+                f"on the PATH"
+            )
+        cmd = [ffmpeg, "-nostdin", "-v", "error"]
+        cmd += ["-i", f"file:{os.path.abspath(source)}"]
+        cmd += [*options, "-y", f"file:{os.path.abspath(output)}"]
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                capture_output=True,
+                timeout=EXPORT_FFMPEG_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                f"ffmpeg did not finish the {kind} file within "
+                f"{EXPORT_FFMPEG_TIMEOUT_SECONDS} seconds"
+            ) from e
+        except subprocess.CalledProcessError as e:
+            detail = (e.stderr or b"").decode("utf-8", "replace").strip()
+            raise RuntimeError(
+                f"ffmpeg could not write the {kind} file: {detail[-300:] or e}"
+            ) from e
+        except OSError as e:
+            raise RuntimeError(
+                f"{kind} export could not run ffmpeg: {e}"
+            ) from e
+
     def _convert_to_mp3(
         self,
         input_wav: Path,
@@ -594,30 +793,17 @@ class ExportManager:
         metadata: dict[str, str],
         vbr_quality: int | None = None,
     ):
-        try:
-            cmd = ["ffmpeg", "-i", str(input_wav)]
-            if vbr_quality is None:
-                cmd.extend(["-b:a", f"{bitrate}k"])
-            else:
-                cmd.extend(["-q:a", str(int(vbr_quality))])
-
-            if metadata:
-                for key, value in metadata.items():
-                    cmd.extend(["-metadata", f"{key}={value}"])
-
-            cmd.extend(["-y", str(output_mp3)])
-
-            subprocess.run(cmd, check=True, capture_output=True)
-        except Exception as e:
-            logging.warning(f"MP3 conversion requires ffmpeg: {e}")
+        if vbr_quality is None:
+            options = ["-b:a", f"{bitrate}k"]
+        else:
+            options = ["-q:a", str(int(vbr_quality))]
+        for key, value in (metadata or {}).items():
+            options.extend(["-metadata", f"{key}={value}"])
+        self._run_ffmpeg("MP3", input_wav, output_mp3, options)
 
     def _convert_to_aac(self, input_wav: Path, output: Path, bitrate: int):
-        try:
-            cmd = ["ffmpeg", "-i", str(input_wav), "-c:a", "aac"]
-            cmd.extend(["-b:a", f"{bitrate}k", "-y", str(output)])
-            subprocess.run(cmd, check=True, capture_output=True)
-        except Exception as e:
-            logging.warning(f"AAC conversion requires ffmpeg: {e}")
+        options = ["-c:a", "aac", "-b:a", f"{bitrate}k"]
+        self._run_ffmpeg("AAC", input_wav, output, options)
 
     def _embed_metadata(self, file_path: Path, metadata: dict[str, str]):
         try:

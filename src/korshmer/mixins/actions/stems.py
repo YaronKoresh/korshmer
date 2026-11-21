@@ -9,21 +9,12 @@ from korshmer.mixins.actions.project_management import (
     SAVED_EDITS_QUESTION,
     saved_song_in,
 )
+from korshmer.mixins.files import is_audio_path
 from korshmer.utils.filesystem import is_safe_path
 from korshmer.utils.tempo import BPM_DECIMALS, validate_bpm
 
 logger = logging.getLogger(__name__)
 
-SEPARABLE_AUDIO_EXTENSIONS = (
-    ".wav",
-    ".mp3",
-    ".flac",
-    ".ogg",
-    ".oga",
-    ".opus",
-    ".aiff",
-    ".aif",
-)
 EDITOR_TAB_INDEX = 0
 
 
@@ -57,7 +48,7 @@ class StemsActionsMixin:
         path = self._get_selected_file(is_input=None)
         if not path:
             return
-        if not path.lower().endswith(SEPARABLE_AUDIO_EXTENSIONS):
+        if not is_audio_path(path):
             QMessageBox.warning(
                 self,
                 "Error",

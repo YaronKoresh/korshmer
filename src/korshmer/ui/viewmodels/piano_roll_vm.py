@@ -43,6 +43,7 @@ class PianoRollViewModel:
         self._root_note_idx = 0
         self.scale_intervals = SCALES["Chromatic"]
         self.grid_offset = 0.0
+        self.beats_per_bar = 4
         self.tempo_map = None
 
     @property

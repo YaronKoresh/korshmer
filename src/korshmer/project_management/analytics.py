@@ -1,7 +1,18 @@
+import csv
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+EXPORT_FORMATS = ("json", "csv")
+CSV_COLUMNS = ("timestamp", "action", "details")
+_FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _spreadsheet_text(value: Any) -> str:
+    text = str(value)
+    return "'" + text if text.startswith(_FORMULA_STARTS) else text
 
 
 class AnalyticsManager:
@@ -61,30 +72,48 @@ class AnalyticsManager:
             )[:5],
         }
 
+    def _write_json(self, output_path: Path) -> None:
+        report = {
+            "session_start": self.session_start.isoformat(),
+            "session_end": datetime.now().isoformat(),
+            "statistics": self.get_action_stats(),
+            "productivity": self.get_productivity_report(),
+            "action_log": self.action_log,
+        }
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+
+    def _write_csv(self, output_path: Path) -> None:
+        with open(output_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(CSV_COLUMNS)
+            for entry in self.action_log:
+                details = json.dumps(
+                    entry["details"], ensure_ascii=False, default=str
+                )
+                writer.writerow(
+                    [
+                        _spreadsheet_text(entry["timestamp"]),
+                        _spreadsheet_text(entry["action"]),
+                        _spreadsheet_text(details),
+                    ]
+                )
+
     def export_report(
         self, output_path: Path, export_format: str = "json"
     ) -> bool:
+        chosen = str(export_format).strip().lower()
+        if chosen not in EXPORT_FORMATS:
+            raise ValueError(
+                f"Unsupported report format {export_format!r}; "
+                f"use one of: {', '.join(EXPORT_FORMATS)}"
+            )
         try:
-            import json
-
-            report = {
-                "session_start": self.session_start.isoformat(),
-                "session_end": datetime.now().isoformat(),
-                "statistics": self.get_action_stats(),
-                "productivity": self.get_productivity_report(),
-                "action_log": self.action_log,
-            }
-
-            if export_format == "json":
-                with open(output_path, "w", encoding="utf-8") as f:
-                    json.dump(report, f, indent=2, ensure_ascii=False)
-                return True
+            if chosen == "csv":
+                self._write_csv(Path(output_path))
             else:
-                logging.warning(
-                    f"Export format '{export_format}' not yet implemented"
-                )
-                return False
-
+                self._write_json(Path(output_path))
+            return True
         except Exception as e:
             logging.error(f"Failed to export analytics report: {e}")
             return False

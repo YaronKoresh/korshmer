@@ -42,7 +42,7 @@ class Distortion:
     ) -> np.ndarray:
         if curve == "sigmoid":
             shaped = 2 / (1 + np.exp(-5 * audio_data)) - 1
-            return np.clip(shaped, -1.0, 1.0)
+            return np.asarray(np.clip(shaped, -1.0, 1.0))
         elif curve == "cubic":
             return audio_data - (audio_data**3) / 3
         else:

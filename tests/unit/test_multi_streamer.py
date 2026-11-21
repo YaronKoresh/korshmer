@@ -28,8 +28,10 @@ def test_three_targets_receive_the_same_bytes():
     assert wait_for(
         lambda: all(procs[n][0].written == [b"\x01\x02"] for n in procs)
     )
-    assert procs["yt"][0].cmd[-1] == "rtmp://a.rtmp.youtube.com/live2/key-yt"
-    assert procs["tw"][0].cmd[-1] == "rtmp://live.twitch.tv/app/key-tw"
+    assert procs["yt"][0].cmd[-1] == (
+        "rtmps://a.rtmps.youtube.com:443/live2/key-yt"
+    )
+    assert procs["tw"][0].cmd[-1] == "rtmps://live.twitch.tv:443/app/key-tw"
     assert procs["fb"][0].cmd[-1].startswith("rtmps://")
     multi.stop()
     assert not multi.running
