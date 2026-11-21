@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "korshmer"
-version = "1.0.0"
+version = "1.1.0"
 description = "Redefining the DAW"
 requires-python = ">=3.10"
 authors = [
@@ -226,7 +226,7 @@ strict_optional = true
 [tool.briefcase]
 project_name = "KORSHMER"
 bundle = "io.github.yaronkoresh.korshmer"
-version = "1.0.0"
+version = "1.1.0"
 url = "https://github.com/YaronKoresh/korshmer"
 license = "MIT"
 

@@ -6,9 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-21
+
 ### Added
 
-- Several tracks and audio clips can be selected together in the track list: Ctrl-click (Cmd-click on macOS) adds or removes a row, Shift-click selects every row in between, Ctrl+A selects all, Escape clears. Mute, solo, show/hide, delete, colour, instrument, level and pan set on any selected row apply to the whole selection, as one undo step and with a single redraw of the editor, so changing 30 tracks takes one action instead of 30. With the track list focused, Delete removes the selection, M and S switch mute and solo, and a right-click menu offers the same actions.
+- Remove background noise, Improve level and quality and Fix clip automatically first split a clip whose content is not known yet into a vocals clip and a music clip (with the vocal separation model), and then fix each with the chain made for it. A part that is essentially silent is dropped, so a clip of only singing or only instruments stays one clip and is marked as vocals or music. Both parts keep the clip's place, trim, level, pan, colour, mute and solo; splitting and fixing run as one job with one progress bar and are one undo step. When a take is split, both parts are moved onto the beat together by the same amount, measured on the original take. Clips already marked as vocals or music (for example the vocals from stem separation) are not split again. The vocal model (66 MB) is downloaded the first time it is needed; if it cannot run, the clip is simply fixed whole as before.
+- Music clips have their own clean-up: rumble under 25 Hz and steady noise are removed and stretches holding only noise are lowered, while the bass, the tone, noisy sounds that belong to the music and the level are kept; their level is set to the level of the instruments rather than above the song's notes.
+- Vocal clean-up turns breaths down by 12 dB (only noise-like sounds of at least 0.15 s, mostly under 4 kHz and 12 dB or more under the singing around them, so an h inside a word and s-sounds are kept), takes out pops of air on the microphone (lows that jump at least 12 dB more than the middle range and are louder than it), lifts phrases that are much quieter than the rest (80 % of the gap beyond 1.5 dB, at most 9 dB, never lowering the loud parts), and balances the tone in sections of 2 seconds so a duller phrase gets the same brightness as the rest.
+- Several tracks and audio clips can be selected together in the track list: Ctrl-click (Cmd-click on macOS) adds or removes a row, Shift-click selects every row in between, Ctrl+A selects all, Escape clears. Mute, solo, show/hide, delete, colour, instrument, level and pan set on any selected row apply to the whole selection, as one undo step and one update of the editor, so changing 30 tracks takes one action instead of 30. With the track list focused, Delete removes the selection, M and S switch mute and solo, and a right-click menu offers the same actions.
 - Editor: time signatures 2/4, 3/4, 4/4, 5/4, 6/8, 7/8 and 12/8, drawn in the grid and saved with the song (in the x/8 signatures the tempo beat is the eighth note); a Follow playhead toggle; Zoom to fit.
 - Transport and window: Ctrl+S saves the song; the time display cycles through mm:ss, milliseconds, h:mm:ss and bars|beats on click; shortcuts Escape, Home, Ctrl+N, Ctrl+O and Ctrl+E; a Keyboard Shortcuts window generated from the real bindings; custom shortcuts loaded from `saved_data/shortcuts_user.json`; the window layout is remembered in `saved_data/window_layout.json`; files can be dropped anywhere on the window.
 - Audio preferences card: output device and buffer size, saved in `saved_data/audio_host.json`.
@@ -24,6 +29,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Vocal clean-up (after stem separation and for Remove background noise) is one steady chain: steady noise is turned down under the singing as well as in pauses, measured between the voice's harmonics so held notes are kept; pauses are lowered by a smooth expander that opens slightly before each phrase and closes after it, instead of a gate that switched on and off every 12 ms; and the tone is balanced against a typical vocal, cutting muddy low middles and giving a dull or muffled voice its presence and air back (at most 9 dB, never on bright s-sounds). The loudness of the phrases is kept.
+- Splitting a clip into separate sounds measures the background noise as it really is in that clip and compares each stretch with the sound around it (within 1.5 seconds) instead of with the loudest moment of the whole clip, so the same soft phrase is kept or cut alike in every clip, and noise is still cut.
+- Changes made from the track list (mute, solo, show/hide, colour, rename, instrument, delete) and clip edits (move by a beat, align, tempo follow, split, fixes) update only the notes and clips they affect instead of redrawing the whole song. Deleting selected notes does the same. On a song with 9,000 notes one mute now takes about 0.1 s instead of 1.3 s, and showing or hiding a track about 0.05 s.
 - Startup: the transcription library is loaded the first time a conversion needs it, so the application opens even when that library cannot load; the model download script no longer loads it on import.
 - Separated vocals start 1.5 dB under the notes (was 2.5 dB).
 - Editor drawing: a moving playhead repaints only the strips that changed and no longer sends note-change notifications; fonts, colours and waveform shapes are cached; clearing or loading the editor no longer waits for waveform analysis.
@@ -43,6 +51,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Separated vocals no longer pump in level when a phrase swells or fades, and no longer sound muffled.
+- A clip with one loud part no longer loses soft phrases that a clip without it keeps.
 - Smart mastering now keeps to the memory it asks for on any computer: it no longer starts one band per processor core, so a song accepted as fitting in free memory can no longer use several times more on a machine with many cores. The result is unchanged.
 - Notes that use exactly the notes of a major scale with no clear home note are now named by their relative minor in every key and at any loudness, not only in some keys.
 - Playback position is clamped at the end of the song.
@@ -66,6 +76,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Migration notes
 
+- `clip_polish.remove_noise_file`, `improve_quality_file`, `fix_clip` and `fix_clip_parts` take a `kind` (`"vocals"` or `"music"`; anything else is treated as vocals, as before). `clip_level.improve` takes `kind` too. Cleaned files are named with `_cleanvocals_` or `_cleanmusic_`.
+- `vocal_cleanup` makes its noise tools public: `highpass`, `noise_floor_power`, `noise_gains`, `pause_gains`, `loudness_gain`, `istft`.
+- New `separation_engine.read_stereo` and `separation_engine.vocals_of`.
+- Cleaned vocals sound different from 1.0.0: noise under the singing is reduced and the tone may be corrected by up to 9 dB per band. Clips that were already cleaned are not changed until they are cleaned again.
+- A sound standing on its own well above the noise is now kept as its own part even when another part of the clip is much louder; before, anything 15 dB under the loudest part was cut.
 - Smart mastering estimates its peak memory as 15 copies of the song instead of 12, and works on at most two bands at once, so a song slightly shorter than before may be refused when free memory is low.
 Plugins and servers
 

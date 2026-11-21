@@ -9,6 +9,7 @@ from scipy.ndimage import (
     uniform_filter1d,
 )
 
+from korshmer.audio_processing.clip_stems import MUSIC, VOCALS
 from korshmer.audio_processing.validation import validate_sample_rate
 from korshmer.audio_processing.vocal_cleanup import (
     HOP_LENGTH,
@@ -187,6 +188,21 @@ def measure(data, sample_rate, music=None):
     return found
 
 
+def music_level_goal_db():
+    from korshmer.audio_processors import RENDER_TARGET_RMS_DB
+
+    return float(RENDER_TARGET_RMS_DB)
+
+
+def music_goals():
+    return {
+        LEVEL: music_level_goal_db(),
+        PEAK: PEAK_LIMIT_DB,
+        OFFSET: OFFSET_GOAL,
+        NOISE: NOISE_GOAL_DB,
+    }
+
+
 def goals(before=None, music_level=None):
     level = level_goal_db()
     wanted = {
@@ -303,7 +319,7 @@ def _at_level(audio, sample_rate, goal):
     return audio
 
 
-def improve(data, sample_rate, music=None):
+def improve(data, sample_rate, music=None, kind=VOCALS):
     sample_rate = validate_sample_rate(sample_rate)
     audio = np.nan_to_num(
         np.asarray(data, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
@@ -311,8 +327,13 @@ def improve(data, sample_rate, music=None):
     before = measure(audio, sample_rate, music)
     if before[LEVEL] <= SILENT_DB:
         return audio, []
-    beside_notes = notes_levels(_mono(audio), music)
-    wanted = goals(before, None if beside_notes is None else beside_notes[0])
+    if kind == MUSIC:
+        wanted = music_goals()
+    else:
+        beside_notes = notes_levels(_mono(audio), music)
+        wanted = goals(
+            before, None if beside_notes is None else beside_notes[0]
+        )
     met = {name: meets(name, before[name], wanted[name]) for name in wanted}
     if all(met.values()):
         return audio, _readings(before, wanted, before, met)
@@ -325,7 +346,7 @@ def improve(data, sample_rate, music=None):
         audio = _quieter_pauses(
             audio, noise - wanted[NOISE] + NOISE_TOLERANCE_DB
         )
-    for _ in range(MAX_PASSES):
+    for _ in range(MAX_PASSES if PHRASES in wanted else 0):
         spread = measure(audio, sample_rate)[PHRASES]
         if meets(PHRASES, spread, wanted[PHRASES]):
             break

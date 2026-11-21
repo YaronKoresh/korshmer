@@ -10,6 +10,7 @@ from scipy import signal
 from scipy.ndimage import maximum_filter1d
 
 from korshmer.audio_processing import clip_elastic, clip_level, clip_tempo
+from korshmer.audio_processing.clip_stems import KINDS, MUSIC, VOCALS
 from korshmer.constants import DATA_DIR
 
 POLISHED_FOLDER = "clip_edits"
@@ -34,7 +35,8 @@ NOISE = "noise"
 QUALITY = "quality"
 ALIGN = "align"
 EARLIER_TAGS = re.compile(
-    rf"(_({NOISE_TAG}|{QUALITY_TAG}|{ELASTIC_TAG}|{TEMPO_TAG}[0-9.]*)"
+    rf"(_({NOISE_TAG}(?:{VOCALS}|{MUSIC})?|{QUALITY_TAG}|{ELASTIC_TAG}"
+    rf"|{TEMPO_TAG}[0-9.]*|{VOCALS}|{MUSIC})"
     rf"(_[0-9a-f]{{8}})?)+$"
 )
 NOISE_STAGE = "Removing background noise"
@@ -60,6 +62,7 @@ LOWEST_HEARD_HZ = 30.0
 MIN_PART_S = 0.6
 PART_EDGE_S = 0.05
 PART_BELOW_LOUDEST_DB = 15.0
+PART_NEARBY_S = 3.0
 PART_SILENT_DB = -120.0
 PART_LOUD_PERCENTILE = 90.0
 PART_SPARSE_SOUND_DB = 10.0
@@ -212,6 +215,16 @@ def clip_beat_shift(
     return None, SILENT
 
 
+def clip_file_beat_shift(
+    path, beats_at, start=0.0, offset=0.0, duration=None, grid_steps=None
+):
+    data, sample_rate = _read(path)
+    shift, _anchor = clip_beat_shift(
+        data, sample_rate, beats_at, start, offset, duration, grid_steps
+    )
+    return shift
+
+
 def clip_own_tempo(data, sample_rate, song_bpm, offset=0.0, duration=None):
     mono = _kept_part(data, sample_rate, offset, duration)
     if mono.shape[0] < MIN_PULSE_SECONDS * sample_rate:
@@ -220,18 +233,23 @@ def clip_own_tempo(data, sample_rate, song_bpm, offset=0.0, duration=None):
     return clip_tempo.own_tempo(seconds, weights, float(song_bpm))
 
 
-def remove_noise_file(path, folder=None):
-    from korshmer.audio_processing.vocal_cleanup import clean_vocal
+def remove_noise_file(path, folder=None, kind=VOCALS):
+    if kind == MUSIC:
+        from korshmer.audio_processing.music_cleanup import clean_music as clean
+    else:
+        from korshmer.audio_processing.vocal_cleanup import clean_vocal as clean
 
     data, sample_rate = _read(path)
     return _write(
-        fixed_clip_path(path, NOISE_TAG, folder),
-        clean_vocal(data, sample_rate),
+        fixed_clip_path(path, f"{NOISE_TAG}{kind}", folder),
+        clean(data, sample_rate),
         sample_rate,
     )
 
 
-def improve_quality_file(path, folder=None, notes=None, origin=0.0):
+def improve_quality_file(
+    path, folder=None, notes=None, origin=0.0, kind=VOCALS
+):
     from korshmer.audio_processing.clip_notes import beside_clip
 
     data, sample_rate = _read(path)
@@ -241,7 +259,7 @@ def improve_quality_file(path, folder=None, notes=None, origin=0.0):
         if heard is None
         else beside_clip(heard, sample_rate, origin, data.shape[0])
     )
-    improved, readings = clip_level.improve(data, sample_rate, music)
+    improved, readings = clip_level.improve(data, sample_rate, music, kind)
     if not readings or clip_level.unchanged(readings):
         return path, readings
     target = fixed_clip_path(path, QUALITY_TAG, folder)
@@ -303,7 +321,9 @@ def fix_clip(
     folder=None,
     notes=None,
     grid_steps=None,
+    kind=None,
 ):
+    kind = kind if kind in KINDS else VOCALS
     stages = _stages(steps, clip, song_bpm, notes, grid_steps)
     made = []
     done = 0
@@ -335,7 +355,7 @@ def fix_clip(
                     continue
                 if step == NOISE:
                     enter(NOISE_STAGE)
-                    fixed = remove_noise_file(current[role], folder)
+                    fixed = remove_noise_file(current[role], folder, kind)
                 else:
                     enter(QUALITY_STAGE)
                     fixed, readings = improve_quality_file(
@@ -343,6 +363,7 @@ def fix_clip(
                         folder,
                         notes if role == "path" else None,
                         clip.start - clip.offset,
+                        kind,
                     )
                     if role == "path":
                         result["readings"] = readings
@@ -505,19 +526,19 @@ def _usual_sound_db(levels):
     return max(usual, float(levels.max()) - PART_SPARSE_SOUND_DB)
 
 
-def _sound_threshold_db(levels, sample_rate, change=None):
-    loud = _usual_sound_db(levels)
-    lowest = loud - PART_BELOW_LOUDEST_DB
+def _nearby_sound_db(levels, sample_rate):
+    frames = max(1, int(PART_NEARBY_S * sample_rate / PART_FRAME)) | 1
+    return maximum_filter1d(levels, size=frames, mode="nearest")
+
+
+def _noise_threshold_db(levels, sample_rate, change, loud):
     lasting = _lasting_levels(levels, sample_rate)
-    pauses = np.maximum(
-        lasting[lasting <= np.percentile(lasting, PART_PAUSE_PERCENTILE)],
-        lowest,
-    )
+    pauses = lasting[lasting <= np.percentile(lasting, PART_PAUSE_PERCENTILE)]
     floor = float(np.max(pauses))
     steady = floor - float(np.min(pauses)) <= PART_STEADY_PAUSE_DB
     contrast = loud - floor
     if not steady:
-        return lowest
+        return loud - PART_BELOW_LOUDEST_DB
     if contrast >= PART_MIN_CONTRAST_DB:
         return floor + min(PART_RISE_OVER_PAUSE_DB, contrast / 2.0)
     if (
@@ -526,7 +547,14 @@ def _sound_threshold_db(levels, sample_rate, change=None):
         and _noise_between_sounds(levels, change, floor, loud)
     ):
         return floor + contrast / 2.0
-    return lowest
+    return loud - PART_BELOW_LOUDEST_DB
+
+
+def _sound_threshold_db(levels, sample_rate, change=None):
+    loud = _usual_sound_db(levels)
+    noise = _noise_threshold_db(levels, sample_rate, change, loud)
+    nearby = _nearby_sound_db(levels, sample_rate) - PART_BELOW_LOUDEST_DB
+    return np.maximum(noise, nearby)
 
 
 def _joined_spans(heard, frame, pause):
@@ -620,6 +648,7 @@ def fix_clip_parts(
     folder=None,
     notes=None,
     grid_steps=None,
+    kind=None,
 ):
     def whole():
         return fix_clip(
@@ -632,6 +661,7 @@ def fix_clip_parts(
             folder,
             notes,
             grid_steps,
+            kind,
         )
 
     if clip.source_path is not None:
@@ -655,6 +685,7 @@ def fix_clip_parts(
                 folder,
                 notes,
                 grid_steps,
+                kind,
             ),
         )
     if len(spans) < 2:
@@ -687,6 +718,7 @@ def fix_clip_parts(
                 folder,
                 notes,
                 grid_steps,
+                kind,
             )
             fixed["start"] = piece.start
             fixed["seconds"] = end - begin

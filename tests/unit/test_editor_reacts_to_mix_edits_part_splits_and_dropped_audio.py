@@ -135,7 +135,9 @@ def test_dropping_a_compressed_or_sun_audio_file_is_taken_as_audio(
 
     event = drop(roll, path)
 
-    assert [d.replace("\\", "/") for d in dropped] == [str(path).replace("\\", "/")]
+    assert [d.replace("\\", "/") for d in dropped] == [
+        str(path).replace("\\", "/")
+    ]
     assert event.isAccepted()
 
 

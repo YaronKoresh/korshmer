@@ -89,3 +89,10 @@ def _no_song_left_open():
     set_open_song_folder(None)
     yield
     set_open_song_folder(None)
+
+
+@pytest.fixture(autouse=True)
+def clips_are_not_split_by_a_real_vocal_model(monkeypatch):
+    from korshmer.audio_processing import clip_stems
+
+    monkeypatch.setattr(clip_stems, "vocals_of", lambda mix, **kwargs: None)

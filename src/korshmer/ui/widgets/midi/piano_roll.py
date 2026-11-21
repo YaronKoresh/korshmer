@@ -158,9 +158,10 @@ class PianoKeyItem(QGraphicsRectItem):
     def set_track_style(self, color, track_name, muted=False):
         if color:
             self.color = QColor(color)
+        renamed = self.track_name != (track_name or "")
         self.track_name = track_name or ""
         self.dim_alpha = MUTED_TRACK_ALPHA if muted else 1.0
-        self.refresh_style()
+        self.refresh_style(tooltip=renamed)
 
     def set_velocity(self, velocity):
         self.velocity = clamp_velocity(velocity)
@@ -172,13 +173,14 @@ class PianoKeyItem(QGraphicsRectItem):
         self.update_tooltip()
         self.update()
 
-    def refresh_style(self):
+    def refresh_style(self, tooltip=True):
         fill, pen_color = NoteRenderer.note_colors(
             self.color, self.velocity, self.dim_alpha
         )
         self.setBrush(QBrush(fill))
         self.setPen(QPen(pen_color, 1))
-        self.update_tooltip()
+        if tooltip:
+            self.update_tooltip()
 
     def current_pitch(self):
         pitch = int(round(127 - self.y() / self.grid_y))
@@ -358,6 +360,7 @@ class InteractivePianoRoll(QGraphicsView):
         self._current_track_id = None
         self._note_items = {}
         self._clip_items = {}
+        self._applied_looks = {}
         self._lane_item = None
         self._clipboard = []
         self._press_pos = None
@@ -1058,6 +1061,7 @@ class InteractivePianoRoll(QGraphicsView):
         self._press_item = None
         self.scene.clear()
         self.playhead = self._create_playhead()
+        self._applied_looks = self._track_looks()
 
         tracks = self.model.tracks
         for note in self.model.notes:
@@ -1077,6 +1081,75 @@ class InteractivePianoRoll(QGraphicsView):
 
         self._update_scene_rect()
         self.viewport().update()
+        self.notes_changed.emit()
+
+    def _track_looks(self):
+        return {
+            track_id: (
+                track.color,
+                track.name,
+                track.muted,
+                track.visible,
+                track.program,
+                track.is_drum,
+            )
+            for track_id, track in self.model.tracks.items()
+        }
+
+    def sync_with_model(self):
+        tracks = self.model.tracks
+        looks = self._track_looks()
+        changed = {
+            track_id
+            for track_id in set(looks) | set(self._applied_looks)
+            if looks.get(track_id) != self._applied_looks.get(track_id)
+        }
+        sounds_changed = any(
+            looks.get(track_id, ())[4:]
+            != self._applied_looks.get(track_id, ())[4:]
+            for track_id in changed
+        )
+        self._applied_looks = looks
+        present = {note.id for note in self.model.notes}
+        reshaped = False
+        for note_id, item in list(self._note_items.items()):
+            if item.track_id not in changed and note_id in present:
+                continue
+            track = tracks.get(item.track_id)
+            if track is None or not track.visible or note_id not in present:
+                if self._press_item is item:
+                    self._press_item = None
+                self.scene.removeItem(item)
+                del self._note_items[note_id]
+                reshaped = True
+            else:
+                item.set_track_style(track.color, track.name, track.muted)
+        for note in self.model.notes:
+            if note.id in self._note_items:
+                continue
+            track = tracks.get(note.track_id)
+            if track is None or not track.visible:
+                continue
+            item = self._make_note_item(note, track)
+            self.scene.addItem(item)
+            self._note_items[note.id] = item
+            reshaped = True
+        clips = {clip.id: clip for clip in self.model.clips}
+        for clip_id, item in list(self._clip_items.items()):
+            if clip_id not in clips:
+                self.scene.removeItem(item)
+                del self._clip_items[clip_id]
+                reshaped = True
+            else:
+                item.refresh_geometry(self.vm.pixels_per_second)
+        for clip_id, clip in clips.items():
+            if clip_id not in self._clip_items:
+                self._add_clip_item(clip)
+                reshaped = True
+        if reshaped or clips:
+            self._update_scene_rect()
+        if reshaped or sounds_changed:
+            self.viewport().update()
         self.notes_changed.emit()
 
     def _adopt_orphan_items(self):
@@ -1203,7 +1276,7 @@ class InteractivePianoRoll(QGraphicsView):
         self.model.remove_notes(note_ids)
         for clip_id in clip_ids:
             self.model.remove_clip(clip_id)
-        self.load_model()
+        self.sync_with_model()
         if clip_ids:
             self.clips_changed.emit()
         self.model_changed.emit()

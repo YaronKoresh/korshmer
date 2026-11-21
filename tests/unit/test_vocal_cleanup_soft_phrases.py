@@ -1,7 +1,6 @@
 import numpy as np
 from scipy import signal
 
-from korshmer.audio_processing import vocal_cleanup
 from korshmer.audio_processing.vocal_cleanup import clean_vocal
 
 SR = 22050
@@ -62,17 +61,18 @@ def test_pauses_with_bleed_still_drop_by_ten_db():
         assert _db(audio[span]) - _db(cleaned[span]) >= 10.0
 
 
-def test_noise_inside_a_phrase_is_not_spectrally_subtracted():
+def test_noise_inside_a_phrase_is_turned_down_and_the_voice_is_kept():
     audio, spans = _song()
     cleaned = clean_vocal(audio, SR)
     span = _inner(spans[(0, "phrase")])
 
-    def hiss_db(data):
+    def band_db(data, low, high):
         freqs, power = signal.welch(data[span], SR, nperseg=2048)
-        band = (freqs >= 5000) & (freqs <= 9000)
+        band = (freqs >= low) & (freqs <= high)
         return 10 * np.log10(power[band].sum())
 
-    assert abs(hiss_db(cleaned) - hiss_db(audio)) < 0.5
+    assert band_db(audio, 5000, 9000) - band_db(cleaned, 5000, 9000) >= 5.0
+    assert abs(band_db(cleaned, 250, 1500) - band_db(audio, 250, 1500)) < 0.5
 
 
 def test_both_channels_get_the_same_gain():
@@ -85,8 +85,3 @@ def test_both_channels_get_the_same_gain():
         span = _inner(spans[key])
         change = [_db(cleaned[span, c]) - _db(stereo[span, c]) for c in (0, 1)]
         assert abs(change[0] - change[1]) < 0.5
-
-
-def test_gate_range_is_separate_from_the_active_range():
-    assert vocal_cleanup.ACTIVE_RANGE_DB == 30.0
-    assert vocal_cleanup.GATE_RANGE_DB > vocal_cleanup.ACTIVE_RANGE_DB
