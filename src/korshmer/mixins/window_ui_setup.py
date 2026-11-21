@@ -230,6 +230,15 @@ class MainWindowUiSetupMixin:
             return
         handler()
 
+    def _an_owner_keeps_key(self, widget, event):
+        owner = widget
+        while owner is not None and owner is not self:
+            keeps_key = getattr(owner, "keeps_key", None)
+            if callable(keeps_key) and keeps_key(event):
+                return True
+            owner = owner.parentWidget()
+        return False
+
     def focus_widget_keeps_key(self, widget, event):
         pressed = QKeySequence(event.keyCombination()).toString()
         binding = self._bindings_by_keys.get(pressed)
@@ -239,6 +248,8 @@ class MainWindowUiSetupMixin:
             return not binding.while_typing
         if isinstance(widget, QComboBox) and widget.isEditable():
             return not binding.while_typing
+        if self._an_owner_keeps_key(widget, event):
+            return True
         if event.key() in NAVIGATION_KEYS:
             return isinstance(widget, KEY_NAVIGATED_WIDGETS)
         plain = not event.modifiers() & ~(Qt.ShiftModifier | Qt.KeypadModifier)

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Several tracks and audio clips can be selected together in the track list: Ctrl-click (Cmd-click on macOS) adds or removes a row, Shift-click selects every row in between, Ctrl+A selects all, Escape clears. Mute, solo, show/hide, delete, colour, instrument, level and pan set on any selected row apply to the whole selection, as one undo step and with a single redraw of the editor, so changing 30 tracks takes one action instead of 30. With the track list focused, Delete removes the selection, M and S switch mute and solo, and a right-click menu offers the same actions.
 - Editor: time signatures 2/4, 3/4, 4/4, 5/4, 6/8, 7/8 and 12/8, drawn in the grid and saved with the song (in the x/8 signatures the tempo beat is the eighth note); a Follow playhead toggle; Zoom to fit.
 - Transport and window: Ctrl+S saves the song; the time display cycles through mm:ss, milliseconds, h:mm:ss and bars|beats on click; shortcuts Escape, Home, Ctrl+N, Ctrl+O and Ctrl+E; a Keyboard Shortcuts window generated from the real bindings; custom shortcuts loaded from `saved_data/shortcuts_user.json`; the window layout is remembered in `saved_data/window_layout.json`; files can be dropped anywhere on the window.
 - Audio preferences card: output device and buffer size, saved in `saved_data/audio_host.json`.

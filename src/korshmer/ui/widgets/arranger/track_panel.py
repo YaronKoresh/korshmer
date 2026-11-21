@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -61,6 +62,51 @@ def swatch_style(color):
 
 def clip_swatch_style(color):
     return f"background-color: {color}; border-radius: 8px;"
+
+
+TRACK = "track"
+CLIP = "clip"
+SELECTED_BACKGROUND = "#D2E3FC"
+ACTIVE_BACKGROUND = "#E8F0FE"
+SELECTED_BORDER = "#9DB8F0"
+ADD_TO_SELECTION = (
+    Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier
+)
+SELECTION_HELP = (
+    "Delete removes them · M mutes · S solos · right-click for more"
+)
+
+
+def row_style(kind, active, selected):
+    if active:
+        border = MAT_PRIMARY
+    elif selected:
+        border = SELECTED_BORDER
+    else:
+        border = "transparent"
+    if selected:
+        background = SELECTED_BACKGROUND
+    elif active:
+        background = ACTIVE_BACKGROUND
+    else:
+        background = "transparent"
+    return (
+        f"{kind} {{ border: 1px solid {border}; border-radius: 6px; "
+        f"background-color: {background}; }}"
+    )
+
+
+def counted_text(count, word):
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
+def selection_text(track_count, clip_count):
+    parts = []
+    if track_count:
+        parts.append(counted_text(track_count, "track"))
+    if clip_count:
+        parts.append(counted_text(clip_count, "clip"))
+    return " and ".join(parts)
 
 
 def make_small_toggle(text, color, tooltip):
@@ -167,10 +213,57 @@ def make_level_box(percent, maximum, on_change):
     return box
 
 
-class TrackRow(QFrame):
-    def __init__(self, panel, track):
+class SelectableRow(QFrame):
+    def __init__(self, panel, key):
         super().__init__(panel)
         self.panel = panel
+        self.row_key = key
+        self._active = False
+        self._selected = False
+
+    def is_selected(self):
+        return self._selected
+
+    def set_active(self, active):
+        if active != self._active:
+            self._active = active
+            self._restyle()
+
+    def set_selected(self, selected):
+        if selected != self._selected:
+            self._selected = selected
+            self._restyle()
+
+    def _restyle(self):
+        self.setStyleSheet(
+            row_style(type(self).__name__, self._active, self._selected)
+        )
+
+    def select_from_click(self, event):
+        self.panel.click_row(self.row_key, event.modifiers())
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.select_from_click(event)
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        self.panel.show_selection_menu(self.row_key, event.globalPos())
+
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.LeftButton
+        ):
+            self.select_from_click(event)
+            if event.modifiers() & (ADD_TO_SELECTION | Qt.ShiftModifier):
+                return True
+        return super().eventFilter(watched, event)
+
+
+class TrackRow(SelectableRow):
+    def __init__(self, panel, track):
+        super().__init__(panel, (TRACK, track.id))
         self.track_id = track.id
         self.setFixedHeight(ROW_HEIGHT)
         self.setCursor(Qt.PointingHandCursor)
@@ -191,6 +284,7 @@ class TrackRow(QFrame):
         self.name_edit.setMinimumWidth(60)
         self.name_edit.setToolTip(self._name_help(track))
         self.name_edit.editingFinished.connect(self._commit_name)
+        self.name_edit.installEventFilter(self)
 
         self.instrument_combo = QComboBox()
         self.instrument_combo.addItems(PROGRAM_NAMES)
@@ -259,7 +353,7 @@ class TrackRow(QFrame):
         layout.addWidget(self.btn_solo)
         layout.addWidget(self.btn_visible)
         layout.addWidget(self.btn_delete)
-        self.set_active(False)
+        self._restyle()
 
     def _commit_name(self):
         self.panel.rename_track(self.track_id, self.name_edit.text())
@@ -292,27 +386,14 @@ class TrackRow(QFrame):
         self.pan_slider.show_pan(track.pan)
         self.pan_slider.name_owner(track.name)
 
-    def set_active(self, active):
-        border = MAT_PRIMARY if active else "transparent"
-        background = "#E8F0FE" if active else "transparent"
-        self.setStyleSheet(
-            f"TrackRow {{ border: 1px solid {border}; border-radius: 6px; "
-            f"background-color: {background}; }}"
-        )
-
-    def mousePressEvent(self, event):
-        self.panel.set_active_track(self.track_id)
-        super().mousePressEvent(event)
-
     def mouseDoubleClickEvent(self, event):
         self.panel.request_select_track_notes(self.track_id)
         super().mouseDoubleClickEvent(event)
 
 
-class ClipRow(QFrame):
+class ClipRow(SelectableRow):
     def __init__(self, panel, clip):
-        super().__init__(panel)
-        self.panel = panel
+        super().__init__(panel, (CLIP, clip.id))
         self.clip_id = clip.id
         self.setFixedHeight(ROW_HEIGHT)
 
@@ -374,6 +455,7 @@ class ClipRow(QFrame):
         layout.addWidget(self.level_box)
         layout.addWidget(self.pan_slider)
         layout.addWidget(self.btn_remove)
+        self._restyle()
 
     def _gain_changed(self, value):
         self.gain_slider.setToolTip(f"Clip gain {value}%")
@@ -412,7 +494,10 @@ class TrackPanel(QWidget):
         self._gesture_owner = None
         self._gesture_by_mouse = False
         self._gesture_step = None
+        self._selection = []
+        self._anchor = None
         self.mix_changed.connect(self.refresh)
+        self.setFocusPolicy(Qt.ClickFocus)
 
         self.setMinimumWidth(300)
         layout = QVBoxLayout(self)
@@ -456,6 +541,8 @@ class TrackPanel(QWidget):
     def set_model(self, model):
         self.model = model
         self.active_track_id = None
+        self._selection = []
+        self._anchor = None
         self._signature = None
         self._end_mix_gesture()
         self.refresh()
@@ -528,6 +615,7 @@ class TrackPanel(QWidget):
                 self._update_rows()
             else:
                 self._rebuild_rows()
+        self._forget_missing_rows()
         self.update_status()
         return changed
 
@@ -554,6 +642,7 @@ class TrackPanel(QWidget):
                 self._clip_rows.append(row)
                 insert_at += 1
         self._highlight_active()
+        self._show_selection()
 
     def update_status(self):
         text = self.model.summary_text()
@@ -568,6 +657,10 @@ class TrackPanel(QWidget):
                 keys=range_text(keys),
             )
             text = f"{text}\n{notice}"
+        tracks, clips = self.selected_track_ids(), self.selected_clip_ids()
+        if len(tracks) + len(clips) > 1:
+            chosen = selection_text(len(tracks), len(clips))
+            text = f"{chosen} selected · {SELECTION_HELP}\n{text}"
         if text != self._status_text:
             self._status_text = text
             self.lbl_status.setText(text)
@@ -587,6 +680,85 @@ class TrackPanel(QWidget):
         self.active_track_id = track_id
         self._highlight_active()
         self.active_track_changed.emit(track_id)
+
+    def _row_keys(self):
+        return [row.row_key for row in self._rows] + [
+            row.row_key for row in self._shown_clip_rows()
+        ]
+
+    def _key_exists(self, key):
+        kind, ident = key
+        if kind == TRACK:
+            return ident in self.model.tracks
+        return self.model.clip_by_id(ident) is not None
+
+    def _forget_missing_rows(self):
+        kept = [key for key in self._selection if self._key_exists(key)]
+        if kept != self._selection:
+            self._selection = kept
+            self._show_selection()
+        if self._anchor is not None and not self._key_exists(self._anchor):
+            self._anchor = None
+
+    def _show_selection(self):
+        chosen = set(self._selection)
+        for row in self._rows + self._shown_clip_rows():
+            row.set_selected(row.row_key in chosen)
+
+    def _set_selection(self, keys):
+        order = self._row_keys()
+        wanted = set(keys)
+        self._selection = [key for key in order if key in wanted]
+        self._show_selection()
+        self.update_status()
+
+    def selected_track_ids(self):
+        return [ident for kind, ident in self._selection if kind == TRACK]
+
+    def selected_clip_ids(self):
+        return [ident for kind, ident in self._selection if kind == CLIP]
+
+    def click_row(self, key, modifiers=Qt.NoModifier):
+        if not self._key_exists(key):
+            return
+        if modifiers & Qt.ShiftModifier and self._anchor is not None:
+            order = self._row_keys()
+            start, end = sorted((order.index(self._anchor), order.index(key)))
+            self._set_selection(order[start : end + 1])
+        elif modifiers & ADD_TO_SELECTION:
+            if key in self._selection:
+                self._set_selection([k for k in self._selection if k != key])
+            else:
+                self._set_selection([*self._selection, key])
+            self._anchor = key
+        else:
+            self._set_selection([key])
+            self._anchor = key
+        if key[0] == TRACK and key in self._selection:
+            self.set_active_track(key[1])
+        self.setFocus(Qt.MouseFocusReason)
+
+    def select_all_rows(self):
+        self._set_selection(self._row_keys())
+
+    def clear_selection(self):
+        self._set_selection([])
+
+    def _targets(self, key):
+        if key in self._selection and len(self._selection) > 1:
+            return list(self._selection)
+        return [key]
+
+    def _target_tracks(self, key):
+        return [ident for kind, ident in self._targets(key) if kind == TRACK]
+
+    def _target_clips(self, key):
+        return [ident for kind, ident in self._targets(key) if kind == CLIP]
+
+    def _change_together(self, apply):
+        self.model.snapshot()
+        apply()
+        self._commit()
 
     def _commit(self):
         self.refresh()
@@ -609,59 +781,221 @@ class TrackPanel(QWidget):
         self._commit()
 
     def change_track_instrument(self, track_id, index):
-        track = self.model.tracks.get(track_id)
-        if track is None:
+        if track_id not in self.model.tracks:
             return
         is_drum = index >= 128
-        program = track.program if is_drum else max(0, index)
-        if track.is_drum == is_drum and track.program == program:
+        targets = self._target_tracks((TRACK, track_id))
+        changing = [
+            ident
+            for ident in targets
+            if self.model.tracks[ident].is_drum != is_drum
+            or (not is_drum and self.model.tracks[ident].program != index)
+        ]
+        if not changing:
             return
-        self.model.snapshot()
-        self.model.set_track_drum(track_id, is_drum)
-        self.model.set_track_program(track_id, program)
-        self._commit()
+
+        def apply():
+            for ident in changing:
+                program = self.model.tracks[ident].program
+                self.model.set_track_drum(ident, is_drum)
+                self.model.set_track_program(
+                    ident, program if is_drum else max(0, index)
+                )
+
+        self._change_together(apply)
+
+    def _switch_flag(self, key, track_setter, clip_setter, value):
+        tracks = self._target_tracks(key)
+        clips = self._target_clips(key)
+
+        def apply():
+            for ident in tracks:
+                track_setter(ident, value)
+            for ident in clips:
+                clip_setter(ident, value)
+
+        self._change_together(apply)
 
     def set_track_mute(self, track_id, muted):
-        self.model.snapshot()
-        self.model.set_track_mute(track_id, muted)
-        self._commit()
+        self._switch_flag(
+            (TRACK, track_id),
+            self.model.set_track_mute,
+            self.model.set_clip_mute,
+            muted,
+        )
 
     def set_track_solo(self, track_id, solo):
-        self.model.snapshot()
-        self.model.set_track_solo(track_id, solo)
-        self._commit()
+        self._switch_flag(
+            (TRACK, track_id),
+            self.model.set_track_solo,
+            self.model.set_clip_solo,
+            solo,
+        )
+
+    def set_clip_mute(self, clip_id, muted):
+        self._switch_flag(
+            (CLIP, clip_id),
+            self.model.set_track_mute,
+            self.model.set_clip_mute,
+            muted,
+        )
+
+    def set_clip_solo(self, clip_id, solo):
+        self._switch_flag(
+            (CLIP, clip_id),
+            self.model.set_track_solo,
+            self.model.set_clip_solo,
+            solo,
+        )
 
     def set_track_visible(self, track_id, visible):
-        self.model.snapshot()
-        self.model.set_track_visible(track_id, visible)
-        self._commit()
+        tracks = self._target_tracks((TRACK, track_id))
+
+        def apply():
+            for ident in tracks:
+                self.model.set_track_visible(ident, visible)
+
+        self._change_together(apply)
 
     def cycle_track_color(self, track_id):
         track = self.model.tracks.get(track_id)
         if track is None:
             return
-        self.model.snapshot()
-        self.model.set_track_color(
-            track_id, self.model.next_palette_color(track.color)
-        )
-        self._commit()
+        color = self.model.next_palette_color(track.color)
+        tracks = self._target_tracks((TRACK, track_id))
+
+        def apply():
+            for ident in tracks:
+                self.model.set_track_color(ident, color)
+
+        self._change_together(apply)
+
+    def _remove_rows(self, keys):
+        tracks = [i for k, i in keys if k == TRACK and i in self.model.tracks]
+        clips = [
+            i
+            for k, i in keys
+            if k == CLIP and self.model.clip_by_id(i) is not None
+        ]
+        if not tracks and not clips:
+            return
+
+        def apply():
+            for ident in tracks:
+                self.model.remove_track(ident)
+            for ident in clips:
+                self.model.remove_clip(ident)
+
+        gone = set(keys)
+        self._selection = [key for key in self._selection if key not in gone]
+        self._change_together(apply)
 
     def delete_track(self, track_id):
-        if track_id not in self.model.tracks:
+        self._remove_rows(self._targets((TRACK, track_id)))
+
+    def remove_clip(self, clip_id):
+        self._remove_rows(self._targets((CLIP, clip_id)))
+
+    def delete_selection(self):
+        self._remove_rows(list(self._selection))
+
+    def _selection_flag(self, flag):
+        values = [
+            getattr(self.model.tracks[ident], flag)
+            for ident in self.selected_track_ids()
+        ] + [
+            getattr(self.model.clip_by_id(ident), flag)
+            for ident in self.selected_clip_ids()
+        ]
+        return values
+
+    def switch_selection(self, flag, value=None):
+        if not self._selection:
             return
-        self.model.snapshot()
-        self.model.remove_track(track_id)
-        self._commit()
+        if value is None:
+            value = not all(self._selection_flag(flag))
+        first = self._selection[0]
+        if flag == "muted":
+            setters = (self.model.set_track_mute, self.model.set_clip_mute)
+        else:
+            setters = (self.model.set_track_solo, self.model.set_clip_solo)
+        self._switch_flag(first, *setters, value)
 
-    def set_clip_mute(self, clip_id, muted):
-        self.model.snapshot()
-        self.model.set_clip_mute(clip_id, muted)
-        self._commit()
+    def show_selection_tracks(self, visible):
+        tracks = self.selected_track_ids()
+        if tracks:
+            self.set_track_visible(tracks[0], visible)
 
-    def set_clip_solo(self, clip_id, solo):
-        self.model.snapshot()
-        self.model.set_clip_solo(clip_id, solo)
-        self._commit()
+    def selection_menu(self):
+        menu = QMenu(self)
+        tracks = self.selected_track_ids()
+        clips = self.selected_clip_ids()
+        if tracks or clips:
+            menu.addAction(
+                "Mute selected", lambda: self.switch_selection("muted", True)
+            )
+            menu.addAction(
+                "Unmute selected",
+                lambda: self.switch_selection("muted", False),
+            )
+            menu.addAction(
+                "Solo selected", lambda: self.switch_selection("solo", True)
+            )
+            menu.addAction(
+                "Unsolo selected", lambda: self.switch_selection("solo", False)
+            )
+            if tracks:
+                menu.addAction(
+                    "Hide selected tracks",
+                    lambda: self.show_selection_tracks(False),
+                )
+                menu.addAction(
+                    "Show selected tracks",
+                    lambda: self.show_selection_tracks(True),
+                )
+            menu.addSeparator()
+        menu.addAction("Select all tracks and clips", self.select_all_rows)
+        if tracks or clips:
+            menu.addAction("Clear selection", self.clear_selection)
+            menu.addSeparator()
+            menu.addAction(
+                f"Delete {selection_text(len(tracks), len(clips))}",
+                self.delete_selection,
+            )
+        return menu
+
+    def show_selection_menu(self, key, position):
+        if key not in self._selection:
+            self.click_row(key)
+        self.selection_menu().exec(position)
+
+    def _key_action(self, event):
+        key = event.key()
+        modifiers = event.modifiers() & ~Qt.KeypadModifier
+        if key == Qt.Key_A and modifiers & ADD_TO_SELECTION:
+            return self.select_all_rows
+        if modifiers & ~Qt.ShiftModifier:
+            return None
+        if key in (Qt.Key_Delete, Qt.Key_Backspace) and self._selection:
+            return self.delete_selection
+        if key == Qt.Key_Escape and self._selection:
+            return self.clear_selection
+        if key == Qt.Key_M and self._selection:
+            return lambda: self.switch_selection("muted")
+        if key == Qt.Key_S and self._selection:
+            return lambda: self.switch_selection("solo")
+        return None
+
+    def keeps_key(self, event):
+        return self._key_action(event) is not None
+
+    def keyPressEvent(self, event):
+        action = self._key_action(event)
+        if action is None:
+            super().keyPressEvent(event)
+            return
+        action()
+        event.accept()
 
     def request_select_track_notes(self, track_id):
         if track_id in self.model.tracks:
@@ -710,13 +1044,24 @@ class TrackPanel(QWidget):
         apply()
         self.mix_changed.emit()
 
+    def _apply_to_all(self, setter, idents, value):
+        def apply():
+            for ident in idents:
+                setter(ident, value)
+
+        return apply
+
     def set_track_gain(self, track_id, gain):
         track = self.model.tracks.get(track_id)
         self._edit_mix(
             ("track gain", track_id),
             None if track is None else track.gain,
             clamp_track_gain(gain),
-            lambda: self.model.set_track_gain(track_id, gain),
+            self._apply_to_all(
+                self.model.set_track_gain,
+                self._target_tracks((TRACK, track_id)),
+                gain,
+            ),
         )
 
     def set_track_pan(self, track_id, pan):
@@ -725,7 +1070,11 @@ class TrackPanel(QWidget):
             ("track pan", track_id),
             None if track is None else track.pan,
             clamp_pan(pan),
-            lambda: self.model.set_track_pan(track_id, pan),
+            self._apply_to_all(
+                self.model.set_track_pan,
+                self._target_tracks((TRACK, track_id)),
+                pan,
+            ),
         )
 
     def set_clip_gain(self, clip_id, gain):
@@ -734,7 +1083,11 @@ class TrackPanel(QWidget):
             ("clip gain", clip_id),
             None if clip is None else clip.gain,
             max(0.0, min(MAX_CLIP_GAIN, float(gain))),
-            lambda: self.model.set_clip_gain(clip_id, gain),
+            self._apply_to_all(
+                self.model.set_clip_gain,
+                self._target_clips((CLIP, clip_id)),
+                gain,
+            ),
         )
 
     def set_clip_pan(self, clip_id, pan):
@@ -743,12 +1096,9 @@ class TrackPanel(QWidget):
             ("clip pan", clip_id),
             None if clip is None else clip.pan,
             clamp_pan(pan),
-            lambda: self.model.set_clip_pan(clip_id, pan),
+            self._apply_to_all(
+                self.model.set_clip_pan,
+                self._target_clips((CLIP, clip_id)),
+                pan,
+            ),
         )
-
-    def remove_clip(self, clip_id):
-        if self.model.clip_by_id(clip_id) is None:
-            return
-        self.model.snapshot()
-        self.model.remove_clip(clip_id)
-        self._commit()
