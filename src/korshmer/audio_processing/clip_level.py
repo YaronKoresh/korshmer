@@ -42,6 +42,12 @@ MIN_PHRASE_ACTIVE_SHARE = 0.25
 PHRASE_SPREAD_GOAL_DB = 6.0
 PHRASE_SPREAD_TOLERANCE_DB = 0.5
 MAX_PHRASE_RIDE_DB = 6.0
+WORD_CONTEXT_SECONDS = 1.0
+WORD_SPREAD_GOAL_DB = 9.0
+WORD_SPREAD_TOLERANCE_DB = 0.5
+MAX_WORD_RIDE_DB = 6.0
+WORD_SMOOTHING_SECONDS = 0.05
+WORD_RANGE_DB = 15.0
 OFFSET_GOAL = 2e-3
 NOISE_GOAL_DB = -40.0
 NOISE_TOLERANCE_DB = 0.5
@@ -71,6 +77,7 @@ SILENT_DB = -120.0
 LEVEL = "level"
 PEAK = "peak"
 PHRASES = "phrase spread"
+WORDS = "word spread"
 OFFSET = "offset"
 NOISE = "noise in pauses"
 OVER_NOTES = "over the notes"
@@ -130,6 +137,28 @@ def _phrase_spread(levels):
     if levels.shape[0] < 2:
         return 0.0
     return float(np.percentile(levels, 90) - np.percentile(levels, 10))
+
+
+def _word_deviations(mono, sample_rate):
+    levels = frame_levels_db(mono)
+    size = max(1, int(WORD_CONTEXT_SECONDS * sample_rate / HOP_LENGTH)) | 1
+    loudest = maximum_filter1d(levels, size, mode="nearest")
+    active = active_frames(levels) & (levels >= loudest - WORD_RANGE_DB)
+    share = uniform_filter1d(active.astype(np.float64), size, mode="nearest")
+    power = np.where(active, 10.0 ** (levels / 10.0), 0.0)
+    total = uniform_filter1d(power, size, mode="nearest")
+    nearby = 10.0 * np.log10(
+        np.maximum(total, 1e-30) / np.maximum(share, 1e-30)
+    )
+    return levels - nearby, active
+
+
+def _word_spread(mono, sample_rate):
+    deviations, active = _word_deviations(mono, sample_rate)
+    if np.count_nonzero(active) < 2:
+        return 0.0
+    sung = deviations[active]
+    return float(np.percentile(sung, 90) - np.percentile(sung, 10))
 
 
 def _pause_frames(levels):
@@ -256,6 +285,9 @@ def measure(data, sample_rate, music=None):
     )
     found = {
         LEVEL: level,
+        WORDS: _word_spread(mono, sample_rate)
+        if mono.shape[0] >= N_FFT
+        else 0.0,
         PEAK: _decibels(_true_peak(audio)) if audio.size else SILENT_DB,
         PHRASES: _phrase_spread(phrases),
         OFFSET: float(np.max(np.abs(np.mean(audio, axis=0))))
@@ -293,6 +325,7 @@ def goals(before=None, music_level=None):
         LEVEL: level,
         PEAK: PEAK_LIMIT_DB,
         PHRASES: PHRASE_SPREAD_GOAL_DB,
+        WORDS: WORD_SPREAD_GOAL_DB,
         OFFSET: OFFSET_GOAL,
         NOISE: NOISE_GOAL_DB,
     }
@@ -316,6 +349,8 @@ def meets(name, value, goal):
         return value <= goal + PEAK_TOLERANCE_DB
     if name == PHRASES:
         return value <= goal + PHRASE_SPREAD_TOLERANCE_DB
+    if name == WORDS:
+        return value <= goal + WORD_SPREAD_TOLERANCE_DB
     if name == OVER_NOTES:
         return value >= goal - OVER_NOTES_TOLERANCE_DB
     if name == NOISE:
@@ -413,6 +448,24 @@ def _evened_phrases(audio, sample_rate):
     return audio * (gain if audio.ndim == 1 else gain[:, np.newaxis])
 
 
+def _evened_words(audio, sample_rate):
+    mono = _mono(audio)
+    deviations, active = _word_deviations(mono, sample_rate)
+    spread = _word_spread(mono, sample_rate)
+    if spread <= WORD_SPREAD_GOAL_DB:
+        return audio
+    ride = -deviations * (1.0 - WORD_SPREAD_GOAL_DB / spread)
+    ride = np.where(
+        active, np.clip(ride, -MAX_WORD_RIDE_DB, MAX_WORD_RIDE_DB), 0.0
+    )
+    where = np.arange(ride.shape[0]) * HOP_LENGTH
+    curve = np.interp(np.arange(mono.shape[0]), where, ride)
+    smooth = max(1, int(WORD_SMOOTHING_SECONDS * sample_rate))
+    curve = uniform_filter1d(curve, size=smooth, mode="nearest")
+    gain = (10.0 ** (curve / 20.0)).astype(np.float32)
+    return audio * (gain if audio.ndim == 1 else gain[:, np.newaxis])
+
+
 def _tamed_peaks(audio, sample_rate, ceiling):
     loudest = np.abs(audio) if audio.ndim == 1 else np.abs(audio).max(axis=1)
     if float(loudest.max()) <= ceiling:
@@ -491,6 +544,11 @@ def improve(data, sample_rate, music=None, kind=VOCALS):
         if meets(PHRASES, spread, wanted[PHRASES]):
             break
         audio = _evened_phrases(audio, sample_rate)
+    for _ in range(MAX_PASSES if WORDS in wanted else 0):
+        spread = measure(audio, sample_rate)[WORDS]
+        if meets(WORDS, spread, wanted[WORDS]):
+            break
+        audio = _evened_words(audio, sample_rate)
     audio = _at_level(audio, sample_rate, wanted[LEVEL])
     audio = np.asarray(audio, dtype=np.float32)
     after = measure(audio, sample_rate, music)
@@ -526,7 +584,10 @@ def summary(readings):
             if not reading.was_reached:
                 parts.append("offset removed")
             continue
-        if reading.name in (PHRASES, NOISE, TONE) and reading.was_reached:
+        if (
+            reading.name in (PHRASES, WORDS, NOISE, TONE)
+            and reading.was_reached
+        ):
             continue
         note = "reached" if reading.reached else "not reached"
         parts.append(
