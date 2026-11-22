@@ -60,11 +60,11 @@ def autocorrelation_pitch(
     if len(search_range) == 0:
         return 0, 0.0
 
-    peak_idx = np.argmax(search_range) + min_period
+    peak_idx = int(np.argmax(search_range)) + min_period
     if peak_idx == 0:
         return 0, 0.0
 
-    confidence = autocorr[peak_idx]
+    confidence = float(autocorr[peak_idx])
 
     if confidence > confidence_threshold:
         pitch_hz = sr / peak_idx
