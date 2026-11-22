@@ -8,6 +8,7 @@ from scipy.ndimage import (
     uniform_filter,
     uniform_filter1d,
 )
+from scipy.signal import resample_poly
 
 from korshmer.audio_processing.clip_stems import MUSIC, VOCALS
 from korshmer.audio_processing.validation import validate_sample_rate
@@ -33,6 +34,7 @@ LEVEL_TOLERANCE_DB = 0.5
 PEAK_LIMIT_DB = -1.0
 PEAK_TOLERANCE_DB = 0.05
 MAX_PEAK_TAMING_DB = 6.0
+TRUE_PEAK_OVERSAMPLING = 4
 USUAL_PEAK_PERCENTILE = 99.9
 PHRASE_SECONDS = 3.0
 PHRASE_HOP_SECONDS = 1.0
@@ -87,6 +89,14 @@ def level_goal_db():
     from korshmer.audio_processors import RENDER_TARGET_RMS_DB
 
     return float(RENDER_TARGET_RMS_DB) + float(VOCAL_ABOVE_MIDI_DB)
+
+
+def _true_peak(audio):
+    if not audio.size:
+        return 0.0
+    samples = np.asarray(audio, dtype=np.float64)
+    finer = resample_poly(samples, TRUE_PEAK_OVERSAMPLING, 1, axis=0)
+    return float(np.abs(finer).max())
 
 
 def _decibels(value):
@@ -238,7 +248,7 @@ def measure(data, sample_rate, music=None):
     )
     found = {
         LEVEL: level,
-        PEAK: _decibels(np.max(np.abs(audio))) if audio.size else SILENT_DB,
+        PEAK: _decibels(_true_peak(audio)) if audio.size else SILENT_DB,
         PHRASES: _phrase_spread(phrases),
         OFFSET: float(np.max(np.abs(np.mean(audio, axis=0))))
         if audio.size
@@ -425,6 +435,17 @@ def _at_level(audio, sample_rate, goal):
         audio = _tamed_peaks(audio, sample_rate, ceiling)
         if over > MAX_PEAK_TAMING_DB:
             break
+    return _below_true_peak(audio, sample_rate, ceiling)
+
+
+def _below_true_peak(audio, sample_rate, ceiling):
+    limit = ceiling
+    for _ in range(MAX_PASSES):
+        peak = _true_peak(audio)
+        if _decibels(peak) <= PEAK_LIMIT_DB + PEAK_TOLERANCE_DB:
+            break
+        limit *= ceiling / peak
+        audio = _tamed_peaks(audio, sample_rate, limit)
     return audio
 
 
