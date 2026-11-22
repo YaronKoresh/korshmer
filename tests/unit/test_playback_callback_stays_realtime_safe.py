@@ -5,7 +5,6 @@ import tracemalloc
 import numpy as np
 import psutil
 import pytest
-import sounddevice as sd
 import soundfile as sf
 
 from korshmer.audio import loader
@@ -15,7 +14,7 @@ from korshmer.constants import (
     MIN_PLAYBACK_BUFFER_SIZE,
 )
 from korshmer.core import audio_engine
-from korshmer.core.audio_engine import AudioEngine, PlaybackState
+from korshmer.core.audio_engine import AudioEngine, PlaybackState, sd
 from korshmer.event_bus import Event, subscribe, unsubscribe
 
 RATE = 8000

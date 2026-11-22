@@ -12,12 +12,21 @@ from scipy.ndimage import (
 from korshmer.audio_processing.clip_stems import MUSIC, VOCALS
 from korshmer.audio_processing.validation import validate_sample_rate
 from korshmer.audio_processing.vocal_cleanup import (
+    BALANCE_CENTRES_HZ,
+    BALANCE_CUT_ONLY,
+    BALANCE_FADE_FROM_HZ,
+    BALANCE_FADE_TO_HZ,
+    BALANCE_MIN_SNR_DB,
+    BALANCE_TARGET_DB,
     HOP_LENGTH,
     N_FFT,
     VOCAL_ABOVE_MIDI_DB,
     active_frames,
     active_level_db,
+    band_levels,
     frame_levels_db,
+    noise_floor_power,
+    sibilance,
 )
 
 LEVEL_TOLERANCE_DB = 0.5
@@ -47,6 +56,11 @@ NOTES_SILENT_DB = -70.0
 MAIN_BAND_SHARES = (0.1, 0.9)
 LIMITER_LOOKAHEAD_S = 0.005
 LIMITER_RELEASE_S = 0.08
+TONE_GOAL_DB = 3.0
+TONE_TOLERANCE_DB = 0.5
+MAX_TONE_CHANGE_DB = 15.0
+VOICE_BANDS_HZ = (250.0, 4000.0)
+VOICE_BAND_RANGE_DB = 40.0
 MAX_PASSES = 4
 SILENT_DB = -120.0
 
@@ -56,6 +70,7 @@ PHRASES = "phrase spread"
 OFFSET = "offset"
 NOISE = "noise in pauses"
 OVER_NOTES = "over the notes"
+TONE = "tone"
 
 
 @dataclass(frozen=True)
@@ -122,6 +137,54 @@ def _noise_db(mono, level):
     return max(SILENT_DB, float(noise))
 
 
+def _spectrum(mono, sample_rate):
+    magnitude = np.abs(librosa.stft(mono, n_fft=N_FFT, hop_length=HOP_LENGTH))
+    freqs = librosa.fft_frequencies(sr=sample_rate, n_fft=N_FFT)
+    return magnitude**2, noise_floor_power(magnitude, sample_rate), freqs
+
+
+def _fills_voice_bands(relative, snr):
+    low, high = VOICE_BANDS_HZ
+    return all(
+        level is not None
+        and level >= -VOICE_BAND_RANGE_DB
+        and band_snr >= BALANCE_MIN_SNR_DB
+        for centre, level, band_snr in zip(
+            BALANCE_CENTRES_HZ, relative, snr, strict=True
+        )
+        if low <= centre <= high
+    )
+
+
+def _tone_changes(power, noise_power, freqs):
+    reading = band_levels(power, noise_power, freqs)
+    if reading is None:
+        return None
+    relative, snr = reading
+    if not _fills_voice_bands(relative, snr):
+        return None
+    changes = {}
+    for index, level in enumerate(relative):
+        if level is None:
+            continue
+        change = BALANCE_TARGET_DB[index] - level
+        if change > 0.0 and (
+            BALANCE_CUT_ONLY[index] or snr[index] < BALANCE_MIN_SNR_DB
+        ):
+            change = 0.0
+        changes[BALANCE_CENTRES_HZ[index]] = change
+    return changes or None
+
+
+def _tone_db(mono, sample_rate):
+    if mono.shape[0] < N_FFT:
+        return None
+    changes = _tone_changes(*_spectrum(mono, sample_rate))
+    if changes is None:
+        return None
+    return float(max(abs(change) for change in changes.values()))
+
+
 def _fitted(music, length):
     notes = np.zeros(length, dtype=np.float32)
     if music is not None:
@@ -182,6 +245,9 @@ def measure(data, sample_rate, music=None):
         else 0.0,
         NOISE: _noise_db(mono, level),
     }
+    tone = _tone_db(mono, sample_rate)
+    if tone is not None:
+        found[TONE] = tone
     beside_notes = notes_levels(mono, music)
     if beside_notes is not None:
         found[OVER_NOTES] = beside_notes[1]
@@ -212,6 +278,8 @@ def goals(before=None, music_level=None):
         OFFSET: OFFSET_GOAL,
         NOISE: NOISE_GOAL_DB,
     }
+    if before is not None and TONE in before:
+        wanted[TONE] = TONE_GOAL_DB
     if before is not None and music_level is not None and OVER_NOTES in before:
         level = max(level, music_level + float(VOCAL_ABOVE_MIDI_DB))
         at_level = before[OVER_NOTES] + level - before[LEVEL]
@@ -234,6 +302,8 @@ def meets(name, value, goal):
         return value >= goal - OVER_NOTES_TOLERANCE_DB
     if name == NOISE:
         return value <= goal + NOISE_TOLERANCE_DB
+    if name == TONE:
+        return value <= goal + TONE_TOLERANCE_DB
     return value <= goal
 
 
@@ -246,8 +316,12 @@ def _quieter_pauses(audio, cut_db):
     steady = uniform_filter(spectrum, size=NOISE_SMOOTHING, mode="nearest")
     kept = 1.0 - (NOISE_MARGIN * noise / np.maximum(steady, 1e-12)) ** 2
     gain = np.maximum(np.sqrt(np.maximum(kept, 0.0)), floor)
+    return _with_gains(audio, gain)
+
+
+def _with_gains(audio, gains):
     wide = audio[:, np.newaxis] if audio.ndim == 1 else audio
-    cleaned = np.stack(
+    shaped = np.stack(
         [
             librosa.istft(
                 librosa.stft(
@@ -255,7 +329,7 @@ def _quieter_pauses(audio, cut_db):
                     n_fft=N_FFT,
                     hop_length=HOP_LENGTH,
                 )
-                * gain,
+                * gains,
                 hop_length=HOP_LENGTH,
                 length=wide.shape[0],
             )
@@ -263,7 +337,42 @@ def _quieter_pauses(audio, cut_db):
         ],
         axis=1,
     ).astype(np.float32)
-    return cleaned[:, 0] if audio.ndim == 1 else cleaned
+    return shaped[:, 0] if audio.ndim == 1 else shaped
+
+
+def _tone_gains(curve, withheld):
+    boost = np.maximum(curve, 0.0)[:, np.newaxis]
+    cut = np.minimum(curve, 0.0)[:, np.newaxis]
+    return 10.0 ** ((cut + boost * (1.0 - withheld[np.newaxis, :])) / 20.0)
+
+
+def _balanced_tone(audio, sample_rate):
+    power, noise_power, freqs = _spectrum(_mono(audio), sample_rate)
+    withheld = sibilance(power, freqs)
+    fade = np.clip(
+        (BALANCE_FADE_TO_HZ - freqs)
+        / (BALANCE_FADE_TO_HZ - BALANCE_FADE_FROM_HZ),
+        0.0,
+        1.0,
+    )
+    places = np.log2(np.maximum(freqs, 1.0))
+    curve = np.zeros_like(freqs)
+    gains = np.ones_like(power)
+    for _ in range(MAX_PASSES):
+        shaping = gains**2
+        changes = _tone_changes(
+            power * shaping, noise_power * shaping.mean(axis=1), freqs
+        )
+        if changes is None or all(
+            abs(change) <= TONE_TOLERANCE_DB for change in changes.values()
+        ):
+            break
+        step = np.interp(places, np.log2(list(changes)), list(changes.values()))
+        curve = np.clip(curve + step, -MAX_TONE_CHANGE_DB, MAX_TONE_CHANGE_DB)
+        gains = _tone_gains(
+            np.where(curve > 0.0, curve * fade, curve), withheld
+        )
+    return _with_gains(audio, gains.astype(np.float32))
 
 
 def _without_offset(audio):
@@ -346,6 +455,8 @@ def improve(data, sample_rate, music=None, kind=VOCALS):
         audio = _quieter_pauses(
             audio, noise - wanted[NOISE] + NOISE_TOLERANCE_DB
         )
+    if TONE in wanted and not met[TONE]:
+        audio = _balanced_tone(audio, sample_rate)
     for _ in range(MAX_PASSES if PHRASES in wanted else 0):
         spread = measure(audio, sample_rate)[PHRASES]
         if meets(PHRASES, spread, wanted[PHRASES]):
@@ -386,7 +497,7 @@ def summary(readings):
             if not reading.was_reached:
                 parts.append("offset removed")
             continue
-        if reading.name in (PHRASES, NOISE) and reading.was_reached:
+        if reading.name in (PHRASES, NOISE, TONE) and reading.was_reached:
             continue
         note = "reached" if reading.reached else "not reached"
         parts.append(

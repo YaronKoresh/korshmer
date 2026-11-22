@@ -111,7 +111,7 @@ class StemClassifier:
         if total_energy_freq > 0:
             dominant_freq = np.sum(energy_by_freq) / total_energy_freq
         else:
-            dominant_freq = 0
+            dominant_freq = np.float64(0.0)
 
         max_freq_idx = np.argmax(avg_spectrum)
         peak_freq = freqs[max_freq_idx]

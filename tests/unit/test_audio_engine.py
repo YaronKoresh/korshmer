@@ -2,9 +2,8 @@ import threading
 import time
 
 import numpy as np
-import sounddevice as sd
 
-from korshmer.core.audio_engine import AudioEngine, PlaybackState
+from korshmer.core.audio_engine import AudioEngine, PlaybackState, sd
 
 
 class DummyTime:
@@ -122,7 +121,7 @@ class _FakeTimer:
 
 def test_stop_during_slow_stream_start_leaves_no_active_stream(monkeypatch):
 
-    import sounddevice as sd
+    from korshmer.core.audio_engine import sd
 
     created = []
 
@@ -257,7 +256,7 @@ def test_seek_during_prefetched_playback_plays_from_new_position(monkeypatch):
 
 
 def _retry_engine(monkeypatch, fail_times):
-    import sounddevice as sd
+    from korshmer.core.audio_engine import sd
 
     monkeypatch.setattr(sd, "query_devices", lambda *a, **k: [])
     calls = []

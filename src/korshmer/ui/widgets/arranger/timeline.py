@@ -5,7 +5,6 @@ from collections import deque
 
 import numpy as np
 import pretty_midi
-import sounddevice as sd
 import soundfile as sf
 from PySide6.QtCore import QEvent, QSemaphore, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
@@ -54,11 +53,13 @@ from korshmer.utils.audio_host import (
     compensation_frames,
     open_duplex_stream,
     open_input_stream,
+    sounddevice_module,
     stream_input_latency,
 )
 from korshmer.utils.filesystem import sanitize_path
 from korshmer.utils.tempo import midi_file_tempo, validate_bpm
 
+sd = sounddevice_module()
 DEFAULT_GRID_LABEL = "1/16"
 DEFAULT_TIME_SIGNATURE = "4/4"
 TIME_SIGNATURES = {

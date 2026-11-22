@@ -3,11 +3,10 @@ import logging
 import threading
 import time as _time
 from enum import IntEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import psutil
-import sounddevice as sd
 import soundfile as sf
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -45,11 +44,17 @@ from korshmer.exceptions import AudioFileTooLargeError, AudioFormatError
 from korshmer.utils.audio_host import (
     active_output_latency,
     open_and_start_output_stream,
+    sounddevice_module,
 )
 from korshmer.utils.playback import validate_loop_points
 from korshmer.utils.tempo import validate_bpm
 from korshmer.utils.tracked_lock import TrackedLock
 from korshmer.workers.audio_worker import AudioPrefetcher
+
+if TYPE_CHECKING:
+    import sounddevice
+
+sd = sounddevice_module()
 
 
 class PlaybackState(IntEnum):
@@ -70,7 +75,7 @@ class AudioEngine(QObject):
         self.idx: int = 0
         self.loop_start_idx: int | None = None
         self.loop_end_idx: int | None = None
-        self.stream: sd.OutputStream | None = None
+        self.stream: sounddevice.OutputStream | None = None
         self._volume: float = 1.0
         self.current_path: str | None = None
         self.timer = QTimer()

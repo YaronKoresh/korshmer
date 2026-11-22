@@ -2,7 +2,10 @@ import json
 import logging
 import sys
 import threading
+import types
 import weakref
+from functools import cache
+from typing import Any
 
 from korshmer.constants import (
     AUDIO_FALLBACK_DEVICE_TRIES,
@@ -135,20 +138,44 @@ def set_output_device_preference(name):
     return name
 
 
-def _load_sounddevice():
+def _unavailable_sounddevice(reason: str) -> types.ModuleType:
+    module = types.ModuleType("sounddevice")
+
+    class PortAudioError(Exception):
+        pass
+
+    class CallbackStop(Exception):
+        pass
+
+    def unavailable(*_args, **_kwargs):
+        raise PortAudioError(reason)
+
+    module.__dict__.update(
+        PortAudioError=PortAudioError,
+        CallbackStop=CallbackStop,
+        OutputStream=unavailable,
+        InputStream=unavailable,
+        Stream=unavailable,
+        query_devices=unavailable,
+        query_hostapis=unavailable,
+        default=types.SimpleNamespace(device=(None, None), reset=lambda: None),
+    )
+    return module
+
+
+@cache
+def sounddevice_module() -> Any:
     try:
         import sounddevice
-    except (ImportError, OSError) as e:
+    except Exception as e:
         _logger.warning(f"Audio devices are unavailable: {e}")
-        return None
+        return _unavailable_sounddevice(str(e))
     return sounddevice
 
 
 def list_output_devices(sd_module=None) -> list:
     if sd_module is None:
-        sd_module = _load_sounddevice()
-    if sd_module is None:
-        return []
+        sd_module = sounddevice_module()
     try:
         apis = [str(api.get("name", "")) for api in sd_module.query_hostapis()]
         found = []

@@ -159,7 +159,7 @@ def _band(freqs, low, high):
     return (freqs >= low) & (freqs < high)
 
 
-def _band_levels(power, noise_power, freqs):
+def band_levels(power, noise_power, freqs):
     levels = _power_db(power.sum(axis=0))
     talking = levels > np.percentile(levels, 95) - ACTIVE_RANGE_DB
     voice = power[:, talking].mean(axis=1)
@@ -186,7 +186,7 @@ def _band_levels(power, noise_power, freqs):
 
 
 def _clip_targets(power, noise_power, freqs):
-    reading = _band_levels(power, noise_power, freqs)
+    reading = band_levels(power, noise_power, freqs)
     if reading is None:
         return list(BALANCE_TARGET_DB)
     relative, _snr = reading
@@ -201,7 +201,7 @@ def _clip_targets(power, noise_power, freqs):
 
 
 def _balance_db(power, noise_power, freqs, targets):
-    reading = _band_levels(power, noise_power, freqs)
+    reading = band_levels(power, noise_power, freqs)
     if reading is None:
         return None
     relative, snr = reading
@@ -273,7 +273,7 @@ def _section_curves(power, noise_power, freqs, sample_rate):
     return table[:, after - 1] * (1.0 - share) + table[:, after] * share
 
 
-def _sibilance(power, freqs):
+def sibilance(power, freqs):
     hiss = power[_band(freqs, *SIBILANCE_HZ)].mean(axis=0)
     body = power[_band(freqs, *SIBILANCE_REFERENCE_HZ)].mean(axis=0)
     rise = _power_db(hiss) - _power_db(body) - SIBILANCE_NATURAL_RISE_DB
@@ -288,7 +288,7 @@ def _tone_gains(power, noise_power, sample_rate):
         return np.ones_like(power)
     boost = np.maximum(curves, np.float32(0.0))
     cut = np.minimum(curves, np.float32(0.0))
-    withheld = _sibilance(power, freqs).astype(np.float32)[np.newaxis, :]
+    withheld = sibilance(power, freqs).astype(np.float32)[np.newaxis, :]
     return np.float32(10.0) ** ((cut + boost * (1.0 - withheld)) / 20.0)
 
 

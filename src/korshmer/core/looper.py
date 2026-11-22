@@ -288,14 +288,13 @@ class Looper:
             return
         started = open_stream is None
         if open_stream is None:
-            import sounddevice as sd
-
             from korshmer.utils.audio_host import (
                 open_and_start_output_stream,
+                sounddevice_module,
             )
 
             def open_stream(**kw):
-                return open_and_start_output_stream(sd, **kw)
+                return open_and_start_output_stream(sounddevice_module(), **kw)
 
         def callback(outdata, frames, time, status):
             self.mix_out(outdata)

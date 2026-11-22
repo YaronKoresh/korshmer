@@ -94,6 +94,7 @@ test = [
 lint = [
     "ruff",
     "mypy>=1.0",
+    "numpy==2.2.6",
     "vulture>=2.10",
     "poethepoet",
     "pre-commit"
@@ -163,12 +164,15 @@ memray = { cmd = "python scripts/run_memray.py" }
 build-exe = { cmd = "python scripts/build_all.py --pyinstaller" }
 build-exe-signed = { cmd = "python scripts/build_all.py --pyinstaller --sign" }
 
-check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "test", "clean"]
+check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "check-types", "test-py", "clean"]
 coverage = ["_coverage-clean", "_coverage-run", "_coverage-clean"]
-test = ["test-py"]
 
 [tool.poe.tasks.test-py]
 cmd = "python -m pytest tests/"
+
+[tool.poe.tasks.test-py.env]
+QT_QPA_PLATFORM = "offscreen"
+PIP_DISABLE_PIP_VERSION_CHECK = "1"
 
 [tool.poe.tasks._coverage-run]
 cmd = "python -m pytest -q --cov=src --cov-branch --cov-report=term-missing:skip-covered tests/"
@@ -184,6 +188,9 @@ cmd = "python -m compileall -q ."
 
 [tool.poe.tasks.lint]
 cmd = "python -m ruff check ."
+
+[tool.poe.tasks.check-types]
+cmd = "python -m mypy src/ --ignore-missing-imports"
 
 [tool.poe.tasks.check-format]
 cmd = "python -m ruff format --check ."
