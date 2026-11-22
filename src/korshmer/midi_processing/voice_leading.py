@@ -497,7 +497,7 @@ class CanonDetector:
         if len(voice1) < 4 or len(voice2) < 4:
             return None, None
 
-        for time_offset in np.arange(0, max_offset, 0.25):
+        for time_offset in np.arange(0, max_offset, 0.25).tolist():
             for transposition in range(-12, 13):
                 if self._matches_canon(
                     voice1, voice2, time_offset, transposition
