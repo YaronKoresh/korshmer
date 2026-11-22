@@ -525,6 +525,8 @@ class ArrangerTimeline(QWidget):
         self.btn_layer_undo.clicked.connect(self.undo_loop_layer)
         self.btn_loop_clear = MaterialButton("Clear loop", "error")
         self.btn_loop_clear.clicked.connect(self.clear_loop_layers)
+        self.btn_loop.toggled.connect(self._show_loop_controls)
+        self._show_loop_controls(self.btn_loop.isChecked())
         self._perf_port = None
 
         self.btn_clear = MaterialButton("✕︎ Clear", "error")
@@ -1773,6 +1775,14 @@ class ArrangerTimeline(QWidget):
         pm = self.performance.to_pretty_midi(tempo=float(self.piano_roll.tempo))
         if any(inst.notes for inst in pm.instruments):
             self.load_midi_object(pm, replace=False, name_prefix="Performance")
+
+    def _show_loop_controls(self, shown):
+        for button in (
+            self.btn_layer,
+            self.btn_layer_undo,
+            self.btn_loop_clear,
+        ):
+            button.setVisible(shown)
 
     def add_loop_layer(self):
         if self.looper is None or self.recorder is None:

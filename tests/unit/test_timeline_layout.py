@@ -1,6 +1,7 @@
 import sys
 
 import pytest
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 if not QApplication.instance():
@@ -83,5 +84,46 @@ def test_drop_hint_wraps_instead_of_scrolling():
         label = arranger.lbl_placeholder
         assert label.wordWrap()
         assert label.text().startswith("Drop MIDI or Audio Here")
+    finally:
+        arranger.close()
+
+
+def test_looper_buttons_only_show_while_loop_is_on():
+    arranger = _shown(1200)
+    try:
+        for name in LOOP_BUTTONS:
+            assert not getattr(arranger, name).isVisible(), name
+        arranger.btn_loop.setChecked(True)
+        QApplication.processEvents()
+        for name in LOOP_BUTTONS:
+            assert getattr(arranger, name).isVisible(), name
+        arranger.btn_loop.setChecked(False)
+        QApplication.processEvents()
+        for name in LOOP_BUTTONS:
+            assert not getattr(arranger, name).isVisible(), name
+    finally:
+        arranger.close()
+
+
+def test_toolbar_keeps_two_rows_at_1000px_with_a_wider_font():
+    app = QApplication.instance()
+    normal = app.font()
+    wider = QFont(normal)
+    wider.setLetterSpacing(QFont.PercentageSpacing, 110)
+    app.setFont(wider)
+    try:
+        arranger = ArrangerTimeline()
+    finally:
+        app.setFont(normal)
+    arranger.resize(1000, 600)
+    arranger.show()
+    QApplication.processEvents()
+    try:
+        tops = {
+            getattr(arranger, name).geometry().top()
+            for name in vars(arranger)
+            if name.startswith("btn_") and getattr(arranger, name).isVisible()
+        }
+        assert len(tops) <= 2
     finally:
         arranger.close()

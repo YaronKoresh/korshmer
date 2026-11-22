@@ -56,3 +56,19 @@ def test_card_minimum_height_follows_its_content():
     card = MaterialCard()
     assert card.minimumHeight() == 0
     assert card.minimumSizeHint().height() >= CARD_MIN_HEIGHT
+
+
+def test_flow_layout_gives_no_room_to_hidden_widgets():
+    host, layout, boxes = _flow(3)
+    width = sum(b.sizeHint().width() + 4 for b in boxes) + 20
+    boxes[1].hide()
+    host.resize(width, 100)
+    layout.setGeometry(host.rect())
+    assert boxes[2].x() == boxes[0].x() + boxes[0].sizeHint().width() + 4
+
+
+def test_flow_layout_height_ignores_a_hidden_widget_that_would_wrap():
+    host, layout, boxes = _flow(2)
+    width = boxes[0].sizeHint().width() + 10
+    boxes[1].hide()
+    assert layout.heightForWidth(width) == boxes[0].sizeHint().height()

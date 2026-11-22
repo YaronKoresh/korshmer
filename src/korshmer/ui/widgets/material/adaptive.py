@@ -57,6 +57,8 @@ class FlowLayout(QLayout):
         )
         x, y, row_height = area.x(), area.y(), 0
         for item in self._items:
+            if item.isEmpty():
+                continue
             hint = item.sizeHint()
             if x > area.x() and x + hint.width() > area.right() + 1:
                 x = area.x()
