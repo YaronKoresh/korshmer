@@ -63,6 +63,8 @@ TONE_TOLERANCE_DB = 0.5
 MAX_TONE_CHANGE_DB = 15.0
 VOICE_BANDS_HZ = (250.0, 4000.0)
 VOICE_BAND_RANGE_DB = 40.0
+UPPER_VOICE_BANDS_FROM_HZ = 4000.0
+UPPER_VOICE_BAND_RANGE_DB = 60.0
 MAX_PASSES = 4
 SILENT_DB = -120.0
 
@@ -153,11 +155,17 @@ def _spectrum(mono, sample_rate):
     return magnitude**2, noise_floor_power(magnitude, sample_rate), freqs
 
 
+def _voice_band_range_db(centre):
+    if centre >= UPPER_VOICE_BANDS_FROM_HZ:
+        return UPPER_VOICE_BAND_RANGE_DB
+    return VOICE_BAND_RANGE_DB
+
+
 def _fills_voice_bands(relative, snr):
     low, high = VOICE_BANDS_HZ
     return all(
         level is not None
-        and level >= -VOICE_BAND_RANGE_DB
+        and level >= -_voice_band_range_db(centre)
         and band_snr >= BALANCE_MIN_SNR_DB
         for centre, level, band_snr in zip(
             BALANCE_CENTRES_HZ, relative, snr, strict=True
