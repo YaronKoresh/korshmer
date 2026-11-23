@@ -76,7 +76,9 @@ def _cache_key(name, prep, params):
 
 
 def run_model(name, prep=None, params=None, cache=True, variant=0):
-    from basic_pitch.inference import predict
+    from korshmer.lazy_imports import load_basic_pitch_predict
+
+    predict = load_basic_pitch_predict()
 
     prep = variants_for_stem(name, prep)[0 if variant == 0 else -1]
     params = dict(MODEL_PARAMS, **(params or {}))

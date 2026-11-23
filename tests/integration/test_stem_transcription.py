@@ -111,7 +111,9 @@ class TestAudioToMIDITranscription:
         sf.write(audio_file, audio, sample_rate)
 
         try:
-            from basic_pitch.inference import predict
+            from korshmer.lazy_imports import load_basic_pitch_predict
+
+            predict = load_basic_pitch_predict()
 
             model_output, midi_data, note_events = predict(str(audio_file))
 
@@ -136,7 +138,9 @@ class TestAudioToMIDITranscription:
         sf.write(audio_file, audio, sample_rate)
 
         try:
-            from basic_pitch.inference import predict
+            from korshmer.lazy_imports import load_basic_pitch_predict
+
+            predict = load_basic_pitch_predict()
 
             model_output, midi_data, note_events = predict(str(audio_file))
 
@@ -187,7 +191,9 @@ class TestAudioToMIDITranscription:
         sf.write(audio_file, audio, sample_rate)
 
         try:
-            from basic_pitch.inference import predict
+            from korshmer.lazy_imports import load_basic_pitch_predict
+
+            predict = load_basic_pitch_predict()
 
             model_output, midi_data, note_events = predict(str(audio_file))
 
@@ -278,7 +284,9 @@ class TestAudioToMIDITranscription:
         sf.write(audio_file, audio, sample_rate)
 
         try:
-            from basic_pitch.inference import predict
+            from korshmer.lazy_imports import load_basic_pitch_predict
+
+            predict = load_basic_pitch_predict()
 
             model_output, midi_data, note_events = predict(str(audio_file))
 
