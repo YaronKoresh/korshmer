@@ -78,6 +78,8 @@ PART_SOUND_SHARE_OF_NOISE = 0.5
 SHORT_PART_S = 2.0
 ON_NEIGHBOUR = "nearby part"
 PART_FRAME = 1024
+PART_ROOM_S = 0.5
+PART_MIN_FADE_S = 0.01
 
 
 class ClipFixCancelled(Exception):
@@ -624,6 +626,41 @@ def _fix_trimmed(clip, span, length, whole, options):
     return result
 
 
+def _part_cuts(spans, first, last):
+    cuts = []
+    for index, (begin, end) in enumerate(spans):
+        before = spans[index - 1][1] if index else first
+        after = spans[index + 1][0] if index + 1 < len(spans) else last
+        cuts.append(
+            (
+                max(before, first, begin - PART_ROOM_S),
+                min(after, last, end + PART_ROOM_S),
+            )
+        )
+    return cuts
+
+
+def _faded(part, sample_rate, head_s, tail_s):
+    faded = np.array(part, dtype=np.float32, copy=True)
+    count = faded.shape[0]
+    for seconds, at_start in ((head_s, True), (tail_s, False)):
+        length = min(
+            count, max(1, int(max(seconds, PART_MIN_FADE_S) * sample_rate))
+        )
+        ramp = np.sin(
+            0.5 * np.pi * (np.arange(length, dtype=np.float32) + 0.5) / length
+        ).astype(np.float32)
+        if not at_start:
+            ramp = ramp[::-1]
+        if faded.ndim > 1:
+            ramp = ramp[:, np.newaxis]
+        if at_start:
+            faded[:length] *= ramp
+        else:
+            faded[count - length :] *= ramp
+    return faded
+
+
 def _short_parts_follow_neighbours(parts):
     steady = [part for part in parts if part.get("anchor") == ON_PULSE]
     for part in parts:
@@ -693,12 +730,25 @@ def fix_clip_parts(
     made = []
     parts = []
     try:
-        for number, (begin, end) in enumerate(spans, 1):
+        whole_s = data.shape[0] / sample_rate
+        kept_end = (
+            whole_s
+            if clip.duration is None
+            else min(whole_s, clip.offset + clip.duration)
+        )
+        cuts = _part_cuts(spans, clip.offset, kept_end)
+        for number, ((begin, end), (head, tail)) in enumerate(
+            zip(spans, cuts, strict=True), 1
+        ):
             cut = fixed_clip_path(clip.path, f"part{number}", folder)
-            first, last = int(begin * sample_rate), int(end * sample_rate)
-            _write(cut, data[first:last], sample_rate)
+            first, last = int(head * sample_rate), int(tail * sample_rate)
+            _write(
+                cut,
+                _faded(data[first:last], sample_rate, begin - head, tail - end),
+                sample_rate,
+            )
             made.append(cut)
-            piece = ClipAudio(cut, clip.start + begin - clip.offset)
+            piece = ClipAudio(cut, clip.start + head - clip.offset)
 
             def part_report(stage, done, total, number=number):
                 if report is not None:

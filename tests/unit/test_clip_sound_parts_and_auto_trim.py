@@ -316,8 +316,8 @@ def test_each_separated_sound_takes_only_the_room_it_needs(
     timeline, _said = _fixed(qapp, recording)
 
     lengths = sorted(clip.duration for clip in timeline.model.clips)
-    assert lengths == pytest.approx([5.65, 5.65], abs=0.15)
-    assert sum(lengths) < 12.0
+    assert lengths == pytest.approx([6.65, 6.65], abs=0.15)
+    assert sum(lengths) < 14.0
 
 
 def test_a_clip_with_silence_at_both_ends_is_trimmed_to_its_sound(
