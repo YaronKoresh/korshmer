@@ -46,16 +46,19 @@ def test_a_song_is_mastered_within_the_memory_it_asks_for_whatever_the_core_coun
     assert peak <= mastering_memory_bytes(song.shape[-1], RATE, RATE)
 
 
+@pytest.mark.parametrize("seconds", [12, 60 * 60])
 def test_a_computer_with_many_cores_masters_with_as_little_memory_as_one_with_few(
-    monkeypatch,
+    monkeypatch, seconds
 ):
-    song = _song(12)
+    song_bytes = 2 * seconds * RATE * 8
+    bands = smart_mastering.EXCITER_BAND_COUNT
     monkeypatch.setattr(worker_count, "cpu_cores", lambda: 4)
-    few = _peak_while_mastering(song)
+    few = smart_mastering._bands_at_once(bands, song_bytes)
     monkeypatch.setattr(worker_count, "cpu_cores", lambda: 32)
-    many = _peak_while_mastering(song)
+    many = smart_mastering._bands_at_once(bands, song_bytes)
 
-    assert many <= few * 1.1
+    assert many == few
+    assert many <= smart_mastering.EXCITER_MAX_BANDS_AT_ONCE
 
 
 def test_more_cores_never_change_the_mastered_sound(monkeypatch):
