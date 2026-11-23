@@ -37,10 +37,11 @@ class TestAudioProcessingPerformance:
         audio = 0.3 * np.sin(2 * np.pi * 440 * t)
 
         detector = VocalSyllableDetector(sample_rate=sample_rate)
+        detector.detect_syllables(audio[: sample_rate // 2])
 
-        start = time.time()
+        start = time.perf_counter()
         syllables = detector.detect_syllables(audio)
-        elapsed = time.time() - start
+        elapsed = time.perf_counter() - start
 
         assert elapsed < 5.0, f"Detection took {elapsed:.3f}s, expected < 5.0s"
         assert isinstance(syllables, list)
