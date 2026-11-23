@@ -1,4 +1,8 @@
+from korshmer.numba_cache import use_private_cache
+
 __version__ = "1.1.0"
+
+use_private_cache()
 
 __all__ = [
     "audio",
