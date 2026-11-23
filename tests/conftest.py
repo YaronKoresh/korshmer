@@ -96,3 +96,43 @@ def clips_are_not_split_by_a_real_vocal_model(monkeypatch):
     from korshmer.audio_processing import clip_stems
 
     monkeypatch.setattr(clip_stems, "vocals_of", lambda mix, **kwargs: None)
+
+
+def _qt_application():
+    widgets = sys.modules.get("PySide6.QtWidgets")
+    return None if widgets is None else widgets.QApplication.instance()
+
+
+def _delete_widgets(app, widgets):
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    for widget in widgets:
+        try:
+            widget.close()
+            widget.deleteLater()
+        except RuntimeError:
+            continue
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def qt_windows_opened_by_a_test_are_deleted_after_it():
+    app = _qt_application()
+    before = set() if app is None else set(app.topLevelWidgets())
+    yield
+    app = _qt_application()
+    if app is None:
+        return
+    _delete_widgets(app, [w for w in app.topLevelWidgets() if w not in before])
+
+
+def pytest_sessionfinish(session, exitstatus):
+    import gc
+
+    app = _qt_application()
+    if app is None:
+        return
+    _delete_widgets(app, app.topLevelWidgets())
+    gc.collect()
+    _delete_widgets(app, app.topLevelWidgets())

@@ -1634,6 +1634,16 @@ class ArrangerTimeline(QWidget):
         self.piano_roll.refresh_clip(clip_id)
         self.track_panel.update_status()
 
+    def stop_workers(self, timeout_ms=10000):
+        self.cancel_waveforms()
+        self.cancel_clip_edits()
+        for worker in [*self._waveform_workers, *self._clip_edit_workers]:
+            worker.wait(timeout_ms)
+
+    def closeEvent(self, event):
+        self.stop_workers()
+        super().closeEvent(event)
+
     def wait_for_waveforms(self, timeout_ms=5000):
         for worker in list(self._waveform_workers):
             worker.wait(timeout_ms)
