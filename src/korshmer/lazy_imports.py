@@ -13,13 +13,40 @@ def _lazy_import(key, importer):
     return _cache[key]
 
 
-def _get_basic_pitch_predict():
-    def _import():
-        from basic_pitch.inference import predict
+def _onnx_model_path():
+    import importlib.util
 
+    if importlib.util.find_spec("onnxruntime") is None:
+        return None
+    try:
+        from basic_pitch import FilenameSuffix, build_icassp_2022_model_path
+
+        path = build_icassp_2022_model_path(FilenameSuffix.onnx)
+    except (ImportError, AttributeError):
+        return None
+    return path if path.exists() else None
+
+
+def load_basic_pitch_predict():
+    import functools
+
+    from basic_pitch.inference import predict
+
+    model = _onnx_model_path()
+    if model is None:
         return predict
 
-    return _lazy_import("basic_pitch_predict", _import)
+    @functools.wraps(predict)
+    def predict_with_onnx(audio_path, *args, **kwargs):
+        if not args:
+            kwargs.setdefault("model_or_model_path", model)
+        return predict(audio_path, *args, **kwargs)
+
+    return predict_with_onnx
+
+
+def _get_basic_pitch_predict():
+    return _lazy_import("basic_pitch_predict", load_basic_pitch_predict)
 
 
 def _get_demucs_modules():

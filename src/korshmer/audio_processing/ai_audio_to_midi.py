@@ -48,7 +48,9 @@ class EnhancedAudioToMIDI:
     def basic_pitch_predict(self):
         if self._predict is None:
             try:
-                from basic_pitch.inference import predict
+                from korshmer.lazy_imports import load_basic_pitch_predict
+
+                predict = load_basic_pitch_predict()
             except Exception as err:
                 raise AudioToMidiError(
                     f"basic-pitch could not be loaded: {err}"
