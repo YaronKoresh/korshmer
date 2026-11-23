@@ -44,6 +44,7 @@ BALANCE_PASSES = 3
 BALANCE_BLOCK_S = 2.0
 BALANCE_BLOCK_STEPS = 4
 BALANCE_BLOCK_TOLERANCE_DB = 1.0
+BALANCE_SMOOTHING_S = 1.0
 BREATH_FLAT_BAND_HZ = (500.0, 3000.0)
 BREATH_CENTROID_BAND_HZ = (300.0, 10000.0)
 BREATH_FLATNESS = 0.3
@@ -281,15 +282,34 @@ def sibilance(power, freqs):
     return maximum_filter1d(share, size=SIBILANCE_SPREAD_FRAMES, mode="nearest")
 
 
+def _curve_gains(curves, withheld):
+    boost = np.maximum(curves, np.float32(0.0))
+    cut = np.minimum(curves, np.float32(0.0))
+    return np.float32(10.0) ** ((cut + boost * (1.0 - withheld)) / 20.0)
+
+
+def _whole_take_curve(power, noise_power, freqs):
+    targets = _clip_targets(power, noise_power, freqs)
+    whole = _settled_balance_db(power, noise_power, freqs, targets)
+    return np.zeros_like(freqs) if whole is None else whole
+
+
 def _tone_gains(power, noise_power, sample_rate):
     freqs = librosa.fft_frequencies(sr=sample_rate, n_fft=N_FFT)
     curves = _section_curves(power, noise_power, freqs, sample_rate)
     if curves is None or not np.any(curves):
         return np.ones_like(power)
-    boost = np.maximum(curves, np.float32(0.0))
-    cut = np.minimum(curves, np.float32(0.0))
+    smoothing = max(1, _frames(BALANCE_SMOOTHING_S, sample_rate)) | 1
+    curves = uniform_filter1d(curves, size=smoothing, axis=1, mode="nearest")
     withheld = sibilance(power, freqs).astype(np.float32)[np.newaxis, :]
-    return np.float32(10.0) ** ((cut + boost * (1.0 - withheld)) / 20.0)
+    gains = _curve_gains(curves, withheld)
+    whole = _whole_take_curve(power, noise_power, freqs)
+    steady = _curve_gains(whole[:, np.newaxis].astype(np.float32), withheld)
+    nearby = uniform_filter1d(power, size=smoothing, axis=1, mode="nearest")
+    wanted = (nearby * steady**2).sum(axis=0)
+    got = np.maximum((nearby * gains**2).sum(axis=0), EPSILON**2)
+    level = np.sqrt(np.maximum(wanted, EPSILON**2) / got)
+    return (gains * level[np.newaxis, :]).astype(np.float32)
 
 
 def _breath_gains(power, sample_rate):
