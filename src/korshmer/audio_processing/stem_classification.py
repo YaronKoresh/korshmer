@@ -111,7 +111,7 @@ class StemClassifier:
         if total_energy_freq > 0:
             dominant_freq = np.sum(energy_by_freq) / total_energy_freq
         else:
-            dominant_freq = 0
+            dominant_freq = np.float64(0.0)
 
         max_freq_idx = np.argmax(avg_spectrum)
         peak_freq = freqs[max_freq_idx]
@@ -156,8 +156,8 @@ class StemClassifier:
         try:
             f0, voiced_flag, _ = librosa.pyin(
                 audio,
-                fmin=librosa.note_to_hz("C2"),
-                fmax=librosa.note_to_hz("C7"),
+                fmin=float(librosa.note_to_hz("C2")),
+                fmax=float(librosa.note_to_hz("C7")),
                 sr=sr,
             )
 
@@ -260,8 +260,8 @@ class VocalProcessingAI:
         try:
             f0, voiced_flag, _ = librosa.pyin(
                 audio,
-                fmin=librosa.note_to_hz("C2"),
-                fmax=librosa.note_to_hz("C7"),
+                fmin=float(librosa.note_to_hz("C2")),
+                fmax=float(librosa.note_to_hz("C7")),
                 sr=sr,
             )
 

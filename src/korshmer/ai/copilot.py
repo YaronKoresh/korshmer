@@ -29,12 +29,25 @@ class MusicalContext:
     mood: str = ""
 
 
+ANTHROPIC_API_VERSION = "2026-10-21"
+ANTHROPIC_MAX_TOKENS = 16000
+ANTHROPIC_TIMEOUT_S = 120
+DEFAULT_MODELS = {
+    "ollama": "llama3",
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-opus-5-5",
+}
+
+
 class MusicCopilot:
     def __init__(
-        self, provider: str = "ollama", model: str = "llama3", api_key: str = ""
+        self,
+        provider: str = "ollama",
+        model: str | None = None,
+        api_key: str = "",
     ):
         self.provider = provider
-        self.model = model
+        self.model = model or DEFAULT_MODELS.get(provider, "")
         self.api_key = api_key
         self.logger = logging.getLogger(__name__)
         self._breakers = {
@@ -142,7 +155,7 @@ class MusicCopilot:
             data=json.dumps(
                 {
                     "model": self.model,
-                    "max_tokens": 1024,
+                    "max_tokens": ANTHROPIC_MAX_TOKENS,
                     "system": self.SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": prompt}],
                 }
@@ -150,12 +163,21 @@ class MusicCopilot:
             headers={
                 "Content-Type": "application/json",
                 "x-api-key": self.api_key,
+                "anthropic-version": ANTHROPIC_API_VERSION,
             },
         )
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(
+            req, timeout=ANTHROPIC_TIMEOUT_S
+        ) as response:
             data = json.loads(response.read().decode("utf-8"))
-            text: str = data["content"][0]["text"]
-            return text
+        if data.get("stop_reason") == "refusal":
+            self.logger.warning("anthropic declined the request")
+            return ""
+        return "".join(
+            str(block.get("text", ""))
+            for block in data.get("content") or []
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
 
     def suggest(
         self,

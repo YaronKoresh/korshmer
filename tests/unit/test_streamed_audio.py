@@ -1,3 +1,5 @@
+import threading
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -61,15 +63,20 @@ def _render_to_end(engine):
     callback = stream_kwargs["callback"]
     total = len(engine.data)
     rendered = []
-    for _ in range(total // CALLBACK_FRAMES + 2):
+    waiting = threading.Event()
+    for _ in range(100 * (total // CALLBACK_FRAMES + 2)):
         outdata = np.full(
             (CALLBACK_FRAMES, stream_kwargs["channels"]), 9.0, dtype="float32"
         )
+        position = engine.idx
         try:
             callback(outdata, CALLBACK_FRAMES, None, None)
         except audio_engine_module.sd.CallbackStop:
             rendered.append(outdata.copy())
             break
+        if engine.idx == position:
+            waiting.wait(0.001)
+            continue
         rendered.append(outdata.copy())
     return np.concatenate(rendered)[:total]
 

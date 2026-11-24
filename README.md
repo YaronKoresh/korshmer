@@ -1,6 +1,6 @@
 # KORSHMER | Redefining the DAW.
 
-![Version](https://img.shields.io/badge/Version-1.0.0-red?style=flat-square)
+![Version](https://img.shields.io/badge/Version-1.1.0-red?style=flat-square)
 
 KORSHMER is a next-generation audio workstation (DAW), combining studio production and score editing in one interface. The system is built with Python and a unique hardware-inspired user interface, designed in a futuristic style.
 
@@ -8,19 +8,21 @@ KORSHMER is a next-generation audio workstation (DAW), combining studio producti
 
 * Hybrid Workflow: A unique combination of a linear timeline (DAW) and a classic score editor (Score Editor).
 * Multi-Lane MIDI Editor: Every instrument lives on its own colored lane with mute/solo/visibility, instrument selection, snapping grid, velocity editing, copy/paste/duplicate, quantize, humanize, transpose and full undo/redo.
-* Vocals & Stems On The Timeline: After stem separation the vocals are cleaned of separation leftovers (the original stem is kept untouched) and appear as a draggable audio clip, set to a loudness just under the MIDI render so it does not mask the instruments; instrument stems load as MIDI lanes, and the editor plays and exports everything mixed together.
+* Change Many Tracks At Once: In the track list, Ctrl-click (Cmd-click on macOS) adds tracks and audio clips to a selection, Shift-click selects a range and Ctrl+A selects everything. Any mute, solo, show/hide, delete, colour, instrument, level or pan change made on a selected row applies to all selected rows as a single undo step. With the track list focused, Delete removes the selection, M mutes, S solos and Escape clears the selection; right-click a row for the same actions.
+* Vocals & Stems On The Timeline: After stem separation the vocals are cleaned of separation leftovers (the original stem is kept untouched): rumble under 70 Hz is removed, steady noise is turned down under the singing as well as in the pauses (at most 12 dB, measured between the voice's own harmonics so held notes are never mistaken for noise), pauses are lowered smoothly and only where nothing but noise is left (the level never jumps inside a phrase), and the tone is balanced against a typical vocal (muddy low middles are cut, a dull or muffled voice gets its presence and air back, at most 9 dB and never on s-sounds that are already bright) and appear as a draggable audio clip, set to a loudness just under the MIDI render so it does not mask the instruments; instrument stems load as MIDI lanes, and the editor plays and exports everything mixed together.
 * Audio Clip Editing: Drag the left or right edge of an audio clip to cut its start or end (drag back to restore; the file itself is never changed). Right-click a clip to align it to the beat (a rhythm is moved onto the beats or half beats, and a clip without a steady beat, such as speech or a sung phrase, has its sounds moved onto the nearest lines of the editor's grid by less than half a grid step, so a phrase that starts before or after a beat keeps the beat it was dropped on), remove background noise, improve its level and quality, or do all three at once, and to move it exactly one beat earlier or later to try where a phrase sounds best; each fix is one undo step and writes a new file beside the app data. Aligning also matches the tempo of a clearly rhythmic clip, such as a drum loop, that was recorded up to a third slower or a quarter faster than a steady-tempo song. Improving is goal driven: it measures the level, the peaks and how much the phrases differ, changes only what misses its goal (level at 100% just under the instruments, peaks under -1 dB, phrases within 6 dB of each other), measures again and reports each goal as reached or not. It also listens to the song's notes that play at the same time as the clip: the clip is brought to just under their level (never lowered for quiet notes) and, when the notes cover the clip's own pitch range, lifted by up to 6 dB more until it is at least 3 dB over them there. Steady hiss in the pauses is cut by exactly the measured gap to its goal (40 dB under the sound, at most 18 dB of cut); it never changes the tone, and a clip that already meets the goals is left untouched. A progress bar with a Cancel button shows the current step, and fixed files that no undo step or saved song can reach are removed. OGG-family recordings (`.ogg`, `.oga`, `.opus`) that cannot be decoded directly are converted to WAV with FFmpeg when added.
 * One Folder Per Song: Saving a song puts everything in its own folder under `saved_data`: the song file, a copy of every audio clip in `Clips`, saved versions in `Versions`, automatic backups in `Backups`, and by default new recordings in `Recordings` and exports in `Exports`. Clip locations are stored relative to the folder, so the folder can be moved or renamed and the song still opens with every clip in place. A song saved beside another song gets a folder of its own.
 * Tempo Changes Keep The Song Together: Changing the BPM moves notes and audio clips together so each stays on its beat, including the steps you can undo. Every note keeps its exact beat and its length in beats, whether or not it sits on a grid line and however many times the tempo changes. Shortly after the BPM settles, each clip is also stretched to the new tempo, always from its original recording (which is never changed), so it stays in time along its whole length; going back to the recorded tempo plays the original again. A clip is left at its recorded speed when the new tempo is more than twice or less than half of it, or while the song has tempo changes of its own.
 * Tempo Of Faint Rhythms: Align Clip to the Beat also finds the tempo of a longer clip (a minute and a half or more) without drums, such as a guitar, piano or some vocals, when separate sections of it agree on the same tempo.
 * Notes Per Song: While a song is open, MIDI made by the note tools and by the generator's layers is saved in that song's `MIDI` folder; saving a converted song under a new name also copies its stems and notes into the song's `Conversion` folder.
 * Bars To Create: The generator asks how many bars to create instead of a time: quick buttons from 8 to 128 bars, arrows in steps of four bars, or a typed number, with the time that gives at the current BPM shown underneath. The song is exactly that many bars: sections are built in groups of four, and a count in between (13, for example) gives its extra one to three bars to the last section, which still ends on the closing phrase.
-* Separate Sounds In One Clip: Fix Clip Automatically looks for sounds separated by a pause (0.2 seconds by default) of silence (a slow steady pulse of single hits is kept together and only split at a real break) or of steady background noise (quieter than the sound by the set limit, 15 dB by default, or hiss or low rumble down to about 6 dB under a tonal sound, told apart from soft music by how restless it is), turns each into its own tightly cut clip and fixes each on its own (noise, level and place on the beat). Movement too low to hear (a steady offset or drift below 30 Hz) counts as silence. A clip holding a single sound gets the quiet at its ends trimmed off; the recording itself stays whole, so the edges can be dragged back out. A part too short to read a beat from moves together with the rhythmic part next to it, so a short fill keeps its place. One undo step brings the original clip back.
+* Vocals And Music Fixed Apart: Remove background noise, Improve level and quality and Fix clip automatically first split a clip into a vocals clip and a music clip, then fix each its own way. Vocals get noise removal, breath and pop removal, phrases evened out and a balanced, clear tone; music keeps its bass, tone and level and only loses steady noise, rumble under 25 Hz and stretches that hold nothing but noise. A clip of only singing or only instruments stays one clip, marked as vocals or music. The vocal model is downloaded the first time it is needed. Both parts of a take move onto the beat together, and one undo step brings the original clip back.
+* Separate Sounds In One Clip: Fix Clip Automatically looks for sounds separated by a pause (0.2 seconds by default) of silence (a slow steady pulse of single hits is kept together and only split at a real break) or of steady background noise (measured as it is in each clip, so noise is cut the same way everywhere; a sound counts as background only when it is also quieter than the sound around it, within a second and a half, by the set limit, 15 dB by default, so a soft phrase is kept or cut the same way whether or not the clip also holds a loud part; or hiss or low rumble down to about 6 dB under a tonal sound, told apart from soft music by how restless it is), turns each into its own tightly cut clip and fixes each on its own (noise, level and place on the beat). Movement too low to hear (a steady offset or drift below 30 Hz) counts as silence. A clip holding a single sound gets the quiet at its ends trimmed off; the recording itself stays whole, so the edges can be dragged back out. A part too short to read a beat from moves together with the rhythmic part next to it, so a short fill keeps its place. One undo step brings the original clip back.
 * Sounds Inside A Clip On The Beat: After a clip (or each of its parts) is placed on the beat, the starts of the sounds inside it, such as syllables with no silence between them, are found and each is stretched to the nearest line of the editor's Grid setting, by speeding up or slowing down the stretch between neighbouring sounds (never more than about 1.7 times). The clip keeps its length and the recording is not changed. Nothing is stretched when fewer than about a third of the sounds are off the grid, or while the song has tempo changes of its own.
 * MIDI Variations: The Edit tool Create variation saves a new MIDI built on the selected one (Light, Medium or Strong): the first notes of every second bar and the longest notes stay, the rest moves along the key with passing notes, shifted starts and new chord voicings, so it feels like another song that still leans on the original. Drums are never changed.
 * Song Builder: One click generates a complete, section-aware arrangement (drums, bass, chords, melody, pad, arp) in the chosen key, style and tempo, straight into the editor. The Layer over editor mode adds new tracks on top of the song already in the editor: the generator reads the chord of every bar and the quiet and loud parts (intro, verse, chorus, break, outro) from its notes, and the generator itself decides how closely the new tracks follow those chords, from how much of the song plays and how fast its chords change. Long songs follow a story of acts: instruments and drum kits change between acts, the music moves through other modes made of the same notes of your key, a quiet passage leads to a climax, and the opening sound returns at the end. Auto key detection (for MIDI, clips and audio) names modes and other scales such as Lydian, Dorian or Arabian (Maqam Hijaz), not only Major and Minor. The home note is taken from where the music rests, not only from which notes it uses: the bass, the first chord and above all the last chord decide between keys made of the same notes, so a minor song is named by its minor home (A Minor) and not by the major scale with the same notes (C Major); when nothing points either way, the minor key is chosen.
 * Real Drum Tracks: The drums stem is not run through a pitched model. Every hit is detected as an onset in the low, middle and high bands and named by its spectrum (kick, snare, toms, closed and open hi-hat, crash), so the converted MIDI has a real General MIDI drum track.
-* AI-Powered Core: Advanced audio-to-MIDI conversion, stem separation using Demucs, and generative music creation (MusicGen).
+* AI-Powered Core: Audio-to-MIDI conversion (basic-pitch) and stem separation (Demucs) use neural models. The MIDI Generator is rule-based: it builds songs from music-theory rules and a seed, with no neural model and nothing downloaded. The transcription library is loaded the first time a conversion needs it, so the application opens even on a computer where that library cannot load.
 * Next-Gen UI: Custom user interface (without standard Windows widgets) with hardware acceleration, including realistic buttons, faders and dynamic visuals.
 * Advanced DSP: Real-time sound engine including spectral analysis (K-Spectrum), multi-channel dynamic processing (Smart Master), and unique parametric EQ. Smart mastering shows a progress bar with the name of the current step, and the Stop button (or choosing Smart mastering again) cancels it without leaving a file behind.
 * Exact Tempo: The tempo is a decimal BPM (for example 123.4) everywhere: the tempo box, tap tempo, Ableton Link, and the automatic analysis of a song, which refines the tempo from the beat positions instead of rounding it.
@@ -30,6 +32,18 @@ KORSHMER is a next-generation audio workstation (DAW), combining studio producti
 * Slides Belong to Their Notes: A pitch slide (the 808 glide of the Phonk style, or a bend of an imported MIDI that bends exactly one note) is kept on its note in the piano roll. It moves, stretches, transposes, copies and is deleted with the note, it is cut back to centre pitch the moment another note of the track starts, and it stays silent while its note overlaps a note that is already sounding. A sliding note shows a white wedge at the edge where it slides and names the slide in its tooltip; Remove Slide in the right-click menu takes it off the selected notes. Bends that span several notes stay on the track as before.
 * Adaptive Snapping: At the end of every audio-to-MIDI conversion each melodic note is snapped to the grid step that suits it: long notes to quarter steps, medium notes to eighths, short notes to sixteenths. A coarse step is taken only when the note is already within 0.08 beats of it, so real syncopation stays. The Grid setting is the finest step allowed. Drum hits are kept at the onsets they were detected at rather than snapped, so the drum part keeps the source's own timing (the beat grid is still read from the kick and snare).
 * Groove Control: Advanced control over groove and rhythm, with an emphasis on a "human" feel in sequencing.
+
+# What's New for Production Work
+
+The full list, with migration notes, is in [CHANGELOG.md](CHANGELOG.md). In short:
+
+* Editor: time signatures (2/4, 3/4, 4/4, 5/4, 6/8, 7/8, 12/8; in the x/8 signatures the tempo beat is the eighth note) are saved with the song and drawn in the grid; a Follow playhead toggle and Zoom to fit; the playhead repaints only the strips that changed, so long songs stay smooth.
+* Transport and window: Ctrl+S saves; the time display cycles through mm:ss, milliseconds, h:mm:ss and bars|beats when clicked; Escape, Home, Ctrl+N, Ctrl+O and Ctrl+E are bound, and the Keyboard Shortcuts window lists the real bindings; your own shortcuts are read from `saved_data/shortcuts_user.json`; the window layout is remembered in `saved_data/window_layout.json`; files can be dropped anywhere on the window; background jobs are stopped when the window closes.
+* Audio: an Audio preferences card chooses the output device and the buffer size (saved in `saved_data/audio_host.json`); the audio callback no longer logs, allocates or reads large streamed files from disk; meters, the beat light and the visualizer rest when nothing plays, and the CPU reading is real.
+* Mixer: pan per track and per audio clip (equal-power; written to and read from MIDI as CC 10); level and pan moves can be undone; saved renders are no longer peak-boosted. Separated vocals start 1.5 dB under the notes.
+* Export: loudness is measured as BS.1770 LUFS; a true-peak ceiling (default -1 dBTP) replaces clipping; 16-bit files get TPDF dither; a failed resample or a missing FFmpeg fails the export with a clear error instead of writing a wrong file.
+* Songs: song files carry `format_version` 2 and older files are migrated when opened; a damaged song opens from the backups beside it; backups include unsaved work.
+* Safety: third-party plugins need your approval, the local servers reject web pages and other sites, stream keys travel over RTMPS. See [Safety of Third-Party Plugins](#safety-of-third-party-plugins) and [SECURITY.md](SECURITY.md).
 
 # Tech Stack
 
@@ -42,33 +56,41 @@ The project is written in Python 3.10+ and uses:
 # System Requirements
 * Python 3.10 or higher.
 * System libraries (such as Visual C++ Redistributable on Windows).
+* Optional: FFmpeg (AAC/M4A import, MP3/AAC export, audio from video files) and FluidSynth with a SoundFont (MIDI playback and rendering). See [FluidSynth and SoundFont](#fluidsynth-and-soundfont).
 
 # Installation
 1. Clone the repository:
 ```bash
-git clone [https://github.com/YaronKoresh/korshmer.git](https://github.com/YaronKoresh/korshmer.git)
+git clone https://github.com/YaronKoresh/korshmer.git
 cd korshmer
 ```
-2. Run the automatic installation script (Windows):
+2. Windows: run the automatic installation script. It creates `.venv`, installs KORSHMER with the development tools, and offers to install Python 3.11, FFmpeg and a C++ compiler when they are missing. The Python, LLVM and Windows SDK installers it downloads are run only when their digital (Authenticode) signature is valid and names the expected publisher; otherwise the script stops. FFmpeg is installed with winget, and only when winget fails is an unsigned archive downloaded from gyan.dev, so install FFmpeg yourself first if you prefer to check it by hand.
 ```cmd
 scripts/install.bat
 ```
-*Or manually install the dependencies:*
+3. Linux and macOS (the scripts in `scripts/` are Windows batch files, so install by hand):
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
+On Debian or Ubuntu install the system libraries first: `sudo apt install libsndfile1 libportaudio2 fluidsynth ffmpeg`. On macOS: `brew install libsndfile portaudio fluid-synth ffmpeg`.
+
+Optional extras: `pip install -e ".[link]"` (Ableton Link), `".[ndi]"` (NDI output), `".[cuda]"` or `".[opencl]"` (GPU acceleration), `".[test]"` and `".[lint]"` (test and lint tools), `".[build]"` (Nuitka, PyInstaller and Briefcase for building installers) and `".[dev]"` (all three).
 
 # Run
-To run the software, use the run script:
+Windows:
 ```cmd
 scripts/run.bat
 ```
 
-Or run directly via Python:
+Linux and macOS (with the virtual environment active):
 
 ```bash
 python -m korshmer
 ```
+
+After `pip install` the `korshmer` command starts the application as well.
 
 # Testing
 
@@ -128,31 +150,31 @@ Q: Do I need any special hardware?
 A: No special hardware is required, but a MIDI controller is recommended for the best experience. Any audio interface supported by your OS will work.
 
 Q: Can I use KORSHMER for commercial projects?
-A: Please contact the developer for licensing information regarding commercial use.
+A: Yes. KORSHMER is released under the MIT License, which allows commercial use, modification and redistribution as long as the copyright and licence notice are kept. See [LICENSE](LICENSE) and the [License](#license) section. FluidSynth, SoundFonts and FFmpeg are separate programs with their own licences.
 
 Q: The installation fails with "Visual C++ Redistributable" error (Windows)
 A: Download and install the latest Microsoft Visual C++ Redistributable from the official Microsoft website.
 
 Q: I get "FluidSynth not found" errors
-A: Ensure FluidSynth is installed on your system. On Windows, the FluidSynth DLL should be in the `fluidsynth/` folder. On Linux: `sudo apt install fluidsynth`. On macOS: `brew install fluid-synth`.
+A: FluidSynth is not shipped in this repository. On Windows, put `fluidsynth.exe` and its DLLs in a `fluidsynth/` folder next to `src/`. On Linux: `sudo apt install fluidsynth`. On macOS: `brew install fluid-synth`. See [FluidSynth and SoundFont](#fluidsynth-and-soundfont).
 
 Q: The SoundFont file is missing
-A: Download a GM-compatible SoundFont (`.sf3` file), name it `soundfont.sf3` and place it in the `fluidsynth/` directory, or set the `KORSHMER_SOUNDFONT` environment variable to its path. Free options include [MuseScore General](https://musescore.org/en/handbook/3/soundfonts-and-sfz-files) (MIT) and FluidR3_GM.sf3. See [Replacing or upgrading the SoundFont](#replacing-or-upgrading-the-soundfont).
+A: Download a GM-compatible SoundFont (`.sf3` file), name it `soundfont.sf3` and place it in the `fluidsynth/` directory, or set the `KORSHMER_SOUNDFONT` environment variable to its path. Free options include [MuseScore General](https://musescore.org/en/handbook/3/soundfonts-and-sfz-files) (MIT) and FluidR3_GM.sf3. See [FluidSynth and SoundFont](#fluidsynth-and-soundfont).
 
 Q: How do I convert audio to MIDI?
-A: Load an audio file, then go to the Audio Tools tab and click "Audio to MIDI" or "Audio to MIDI (basic-pitch)". The conversion may take several minutes depending on file length.
+A: Add an audio file with the ✚ File button (or drop it on the window), select it in the list and press Start Processing. The same conversion is available as Audio to MIDI under Audio Tools on the EFFECTS tab. The conversion may take several minutes depending on file length.
 
 Q: Can I import my existing MIDI files?
-A: Yes, use File → Import → MIDI File or drag-and-drop MIDI files directly into the application.
+A: Yes. Press ✚ File or drop MIDI files on the window, or press ✚ Import/Merge MIDI on the EDITOR tab to add a MIDI file to the song that is open.
 
 Q: How do I change the BPM?
-A: Click the BPM button in the Theory Tab to adjust tempo. This is the master tempo for the entire project and overrides imported file tempos.
+A: Type a value into the tempo box (shown with a BPM suffix) in the Tempo card of the THEORY tab, or press Tap tempo next to it. This is the master tempo for the entire project and overrides imported file tempos. In 6/8, 7/8 and 12/8 the tempo counts eighth notes.
 
 Q: Why is my audio playback stuttering?
-A: Try increasing the audio buffer size in Settings. Close other CPU-intensive applications. Consider freezing/rendering heavy tracks.
+A: Choose a larger buffer size in the Audio preferences card (the choice is saved in `saved_data/audio_host.json`), close other CPU-intensive applications and stop running conversions or stem separation.
 
 Q: How do I separate vocals from a song?
-A: Select the audio file and press Separate Stems (BUILDER tab or Audio Tools). The stems (vocals, drums, bass, guitar, piano, other) are saved next to the output and you are offered to load them into the editor: the vocals become a draggable audio clip and the instruments become MIDI lanes. This requires significant processing time and memory.
+A: Select the audio file and press Stem Separation under Audio Tools on the EFFECTS tab; the STEMS tab chooses which stems a conversion uses. The stems (vocals, drums, bass, guitar, piano, other) are saved next to the output and you are offered to load them into the editor: the vocals become a draggable audio clip and the instruments become MIDI lanes. This requires significant processing time and memory.
 
 Q: How do I put the separated vocals on the MIDI timeline?
 A: Accept the "Load into editor" prompt after separation, press the 🎤 button next to any audio file in the My music list, or drag the file from that list onto the editor. The clip sits in the audio lane above the notes; drag it to move it in time and double-click it to mute. Play Editor and Export Mix render the MIDI lanes together with the clips.
@@ -170,7 +192,7 @@ Q: The song has no drums, but the converted MIDI added a drum track. How do I st
 A: Untick Drums in the conversion options before converting. Stem separation always produces a "drums" stem, and on a song with no drums that stem is only faint bleed from the other instruments; because every instrument onset looks like a hit, converting it can invent a dense drum part. There is no reliable way to tell a drumless bleed stem from a real but quiet or sparse one automatically — doing so would either erase real drums on other songs or keep inventing them — so the choice is left to you: leave Drums ticked for songs that have drums, untick it for songs that do not. When Drums is ticked, the detected hits are kept at their own onset positions (not snapped to the grid), so a real drum part matches the source instead of being pulled onto a mechanical every-eighth grid.
 
 Q: How can a script check that KORSHMER is running and responsive?
-A: Start KORSHMER with `KORSHMER_HEALTH_PORT` set to a free port (for example `KORSHMER_HEALTH_PORT=8765 python -m korshmer`). It then answers HTTP requests on `127.0.0.1` only: `GET /health` returns status `ok` and the uptime while the app is alive, and `GET /health/state` returns JSON with the overall status, uptime, the main-thread heartbeat, playback and processing state, CPU and memory figures and whether OSC, OBS and Ableton Link are active. `/health/state` returns HTTP 503 when the interface has not updated for more than 5 seconds. `GET /health/metrics` returns call counts, error counts and mean, p95 and max durations in milliseconds for project file operations, stem separation, tempo detection and audio-to-MIDI transcription. `GET /health/traces` returns the most recent traces: each operation that is timed for the metrics, together with the work it started on other threads through the shared executors and the processing queue, appears as a tree of spans with trace id, span id, parent id, thread, duration and error text. Without the variable no port is opened. With the variable set, the application keeps its most recent 1000 log lines of level INFO and above in memory. `GET /health/logs` returns them as JSON, with `last_seq` and a `dropped` flag that is true when lines were lost before the requested position; pass `since=<last_seq>` to receive only newer lines, `level=WARNING` for a minimum severity, `component=korshmer.audio` for one component and `limit=<n>` (at most 1000). `GET /health/logs/stream` keeps the connection open and pushes every new line as a Server-Sent Event (`id` is the line number, `data` is the same JSON object); a monitoring dashboard can connect with the browser `EventSource` API, which resumes from the last line after a dropped connection, and the same `level` and `component` filters apply. Every response of the health server, including error pages and the event stream, carries a `Content-Security-Policy` header that allows no content sources and no framing (`default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`), together with `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Cross-Origin-Resource-Policy: same-origin`.
+A: Start KORSHMER with `KORSHMER_HEALTH_PORT` set to a free port (for example `KORSHMER_HEALTH_PORT=8787 python -m korshmer`). It then answers HTTP requests on `127.0.0.1` only, and only when the request's `Host` header is `127.0.0.1`, `localhost` or `[::1]` with that port (anything else gets HTTP 403, so a web page cannot reach it through a made-up domain name): `GET /health` returns status `ok` and the uptime while the app is alive, and `GET /health/state` returns JSON with the overall status, uptime, the main-thread heartbeat, playback and processing state, CPU and memory figures and whether OSC, OBS and Ableton Link are active. `/health/state` returns HTTP 503 when the interface has not updated for more than 5 seconds. `GET /health/metrics` returns call counts, error counts and mean, p95 and max durations in milliseconds for project file operations, stem separation, tempo detection and audio-to-MIDI transcription. `GET /health/traces` returns the most recent traces: each operation that is timed for the metrics, together with the work it started on other threads through the shared executors and the processing queue, appears as a tree of spans with trace id, span id, parent id, thread, duration and error text. Without the variable no port is opened. With the variable set, the application keeps its most recent 1000 log lines of level INFO and above in memory. `GET /health/logs` returns them as JSON, with `last_seq` and a `dropped` flag that is true when lines were lost before the requested position; pass `since=<last_seq>` to receive only newer lines, `level=WARNING` for a minimum severity, `component=korshmer.audio` for one component and `limit=<n>` (at most 1000). `GET /health/logs/stream` keeps the connection open and pushes every new line as a Server-Sent Event (`id` is the line number, `data` is the same JSON object); a monitoring dashboard can connect with the browser `EventSource` API, which resumes from the last line after a dropped connection, and the same `level` and `component` filters apply. At most 8 stream connections are served at once (further ones get HTTP 503), and a connection that sends nothing for 30 seconds is closed. Every response of the health server, including error pages and the event stream, carries a `Content-Security-Policy` header that allows no content sources and no framing (`default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`), together with `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Cross-Origin-Resource-Policy: same-origin`.
 
 Q: How can a script or log collector read the logs?
 A: Start KORSHMER with `KORSHMER_LOG_FORMAT=json`. The console and `saved_data/logs/korshmer.log` then get one JSON object per line with the keys `time`, `level`, `logger`, `file`, `line`, `thread` and `message`, plus `exception` when a stack trace is attached. Any other value, or no value, keeps the plain text format. `audit.log` keeps its own format.
@@ -194,22 +216,22 @@ Q: MIDI playback has no sound
 A: Verify FluidSynth is properly installed and the SoundFont file exists at the configured path. Check audio device settings in your system.
 
 Q: My changes aren't being saved
-A: Ensure the `saved_data/` directory exists and is writable. Check disk space availability. Use File → Save Song explicitly.
+A: Ensure the `saved_data/` directory exists and is writable. Check disk space availability. Use File → Save Song or Ctrl+S (File → Save Song As… to choose another name). A song that was damaged on disk opens from the automatic backups beside it.
 
 # Troubleshooting
 
 ## No sound during playback
 1. Check audio device: Verify your audio output device is properly connected and selected as the system default.
 2. Check volume levels: Ensure master volume and track volumes are not muted or at zero.
-3. Buffer underruns: Increase audio buffer size in settings (Settings → Audio → Buffer Size).
+3. Output device: choose the right device in the Audio preferences card; if playback drops out, choose a larger buffer size there.
 4. Driver issues: Update your audio drivers to the latest version.
 5. Exclusive mode: Close other applications that might be using the audio device exclusively.
 
 ## Crackling or distorted audio
 1. CPU overload: Reduce the number of active effects or freeze some tracks.
-2. Buffer size too small: Increase buffer size to 512 or 1024 samples.
+2. Buffer size too small: choose 512 or 1024 samples in the Audio preferences card.
 3. Sample rate mismatch: Ensure project sample rate matches your audio interface settings.
-4. Clipping: Check for red peak indicators and reduce gain or enable limiting.
+4. Clipping: Check for red peak indicators and reduce gain. Exports are held under the true-peak ceiling (default -1 dBTP) instead of being clipped.
 
 ## MIDI playback is silent
 1. FluidSynth not loaded: Check logs for FluidSynth initialization errors.
@@ -231,11 +253,11 @@ A: Ensure the `saved_data/` directory exists and is writable. Check disk space a
 
 ## Memory leaks / RAM usage grows over time
 1. Restart application: Long sessions may accumulate cached data.
-2. Clear undo history: Edit → Clear Undo History (if available).
+2. Start a new song: File → New Song (Ctrl+N) drops the undo history of the current one.
 3. Unload unused audio: Close projects or stems you're not actively using.
 
 ## Cannot import audio files
-1. Unsupported format: Convert to WAV, FLAC, or MP3 using a tool like Audacity or ffmpeg.
+1. Unsupported format: see [Import Formats](#import-formats-read); convert anything else to WAV, FLAC, or MP3 using a tool like Audacity or ffmpeg. AAC, M4A and some Opus files need FFmpeg installed.
 2. File corruption: Try opening the file in another audio editor to verify integrity.
 3. File permissions: Ensure you have read permissions for the file.
 4. Path contains special characters: Move file to a simpler path without Unicode or special characters.
@@ -244,6 +266,7 @@ A: Ensure the `saved_data/` directory exists and is writable. Check disk space a
 1. Insufficient disk space: Free up space on your drive.
 2. Write permissions: Ensure the output directory is writable.
 3. File in use: Close any applications that might be using the output file.
+4. MP3 or AAC: these need FFmpeg; when it is missing, or a resample fails, the export stops and shows the error instead of writing a wrong file.
 
 ## MIDI import fails
 1. Corrupted MIDI file: Validate the MIDI file with a MIDI validator tool.
@@ -263,7 +286,7 @@ A: Ensure the `saved_data/` directory exists and is writable. Check disk space a
 3. System libraries: Some packages require system-level libraries (e.g., libsndfile for soundfile).
 
 ## Windows
-- DLL not found errors: Install Visual C++ Redistributable and ensure FluidSynth DLLs are in the correct folder.
+- DLL not found errors: Install Visual C++ Redistributable and ensure the FluidSynth DLLs are in the `fluidsynth/` folder (see [FluidSynth and SoundFont](#fluidsynth-and-soundfont)).
 - Long path issues: Enable long path support in Windows or use shorter project paths.
 
 ## macOS
@@ -272,32 +295,37 @@ A: Ensure the `saved_data/` directory exists and is writable. Check disk space a
 - Apple Silicon compatibility: Use Rosetta 2 or install ARM-compatible Python packages.
 
 ## Linux
-- Missing system libraries: Install: `sudo apt install libsndfile1 fluidsynth portaudio19-dev`
+- Missing system libraries: Install: `sudo apt install libsndfile1 libportaudio2 fluidsynth ffmpeg`
 - Permission issues: Ensure user is in the `audio` group: `sudo usermod -a -G audio $USER`
 
 # Audio Format Compatibility
 
 ## Import Formats (Read)
 
-| Format | Extension | Bit Depth | Sample Rate | Channels | Status |
-|--------|-----------|-----------|-------------|----------|--------|
-| WAV | .wav | 16/24/32-bit PCM, 32/64-bit float | Any | Mono/Stereo/Multi | ✅ Full support |
-| FLAC | .flac | 16/24-bit | 8-192 kHz | Mono/Stereo/Multi | ✅ Full support |
-| MP3 | .mp3 | N/A (lossy) | 8-48 kHz | Mono/Stereo | ✅ Full support |
-| OGG Vorbis | .ogg | N/A (lossy) | Any | Mono/Stereo | ✅ Full support |
-| AAC/M4A | .m4a, .aac | N/A (lossy) | Any | Mono/Stereo | ✅ Via ffmpeg |
-| AIFF | .aif, .aiff | 16/24/32-bit | Any | Mono/Stereo/Multi | ✅ Full support |
-| AU | .au | 8/16/24/32-bit | Any | Mono/Stereo | ✅ Full support |
+These are the file types the file list and drag-and-drop accept. Anything libsndfile cannot decode directly is converted to WAV with FFmpeg when it is added.
+
+| Format | Extension | Bit Depth | Channels | Needs |
+|--------|-----------|-----------|----------|-------|
+| WAV | .wav | 16/24/32-bit PCM, 32/64-bit float | Mono/Stereo/Multi | Built in |
+| FLAC | .flac | 16/24-bit | Mono/Stereo/Multi | Built in |
+| MP3 | .mp3 | N/A (lossy) | Mono/Stereo | Built in |
+| OGG Vorbis / Opus | .ogg, .oga, .opus | N/A (lossy) | Mono/Stereo | Built in; FFmpeg for files libsndfile cannot read |
+| AIFF | .aif, .aiff | 16/24/32-bit | Mono/Stereo/Multi | Built in |
+| AU | .au | 8/16/24/32-bit | Mono/Stereo | Built in |
+| AAC / M4A | .m4a, .aac | N/A (lossy) | Mono/Stereo | FFmpeg |
+| MIDI | .mid, .midi | N/A | N/A | Built in |
 
 ## Export Formats (Write)
 
-| Format | Extension | Bit Depth Options | Quality Settings | Metadata | Status |
-|--------|-----------|-------------------|------------------|----------|--------|
-| WAV | .wav | 16/24/32-bit PCM | Lossless | ✅ Yes | ✅ Full support |
-| FLAC | .flac | 16/24-bit | Compression 0-8 | ✅ Yes | ✅ Full support |
-| MP3 | .mp3 | N/A | CBR/VBR, 64-320 kbps | ✅ ID3v2 | ✅ Full support |
-| OGG | .ogg | N/A | Quality -1 to 10 | ✅ Vorbis Comments | ✅ Full support |
-| AAC | .m4a | N/A | 64-320 kbps | ✅ Yes | ⚠️ Via ffmpeg |
+| Format | Extension | Bit Depth Options | Quality Settings | Metadata | Needs |
+|--------|-----------|-------------------|------------------|----------|-------|
+| WAV | .wav | 16/24-bit PCM, 32-bit float | Lossless | RIFF INFO | Built in |
+| FLAC | .flac | 16/24-bit | Compression 0-8 | Vorbis comments | Built in |
+| OGG | .ogg | N/A | Quality -1 to 10 | Vorbis comments | Built in |
+| MP3 | .mp3 | N/A | CBR/VBR, 64-320 kbps | ID3v2 | FFmpeg |
+| AAC | .m4a | N/A | 64-320 kbps | iTunes-style atoms | FFmpeg |
+
+Exports are normalized to a BS.1770 loudness target and kept under a true-peak ceiling (default -1 dBTP, export preset key `true_peak_ceiling`). 16-bit files are dithered with TPDF noise (preset keys `dither` and `dither_seed`).
 
 # Known Limitations
 
@@ -311,8 +339,9 @@ A: Ensure the `saved_data/` directory exists and is writable. Check disk space a
 |---------|---------|--------------|
 | libsndfile | WAV, FLAC, AIFF, AU | Core audio I/O |
 | soundfile | Python interface to libsndfile | Core functionality |
-| librosa | MP3, advanced processing | Audio analysis |
-| ffmpeg | AAC, M4A, video extraction | Optional formats |
+| librosa | MP3 decoding, advanced processing | Audio analysis |
+| ffmpeg | AAC/M4A import, MP3 and AAC export, audio from video files | Optional formats |
+| FluidSynth + SoundFont | MIDI playback and rendering to audio | Hearing and exporting MIDI |
 
 # Metadata Support
 
@@ -324,9 +353,18 @@ A: Ensure the `saved_data/` directory exists and is writable. Check disk space a
 | OGG | Vorbis comments (full tagging) |
 | M4A | iTunes-style atoms (full tagging) |
 
-# Third-Party Licenses (`fluidsynth/` directory)
+# FluidSynth and SoundFont
 
-The `fluidsynth/` directory contains pre-built binaries and assets from third-party projects, each distributed under its own license:
+FluidSynth and the SoundFont are not part of this repository and are not installed by `pip`. KORSHMER looks for them in a `fluidsynth/` folder next to `src/` (the repository root), and for the SoundFont also at the path in the `KORSHMER_SOUNDFONT` environment variable.
+
+- Windows: download a release from the [FluidSynth releases page](https://github.com/FluidSynth/fluidsynth/releases) and copy the contents of its `bin` folder (`fluidsynth.exe`, `libfluidsynth-3.dll`, `SDL3.dll`, `sndfile.dll` and the other DLLs beside them) into `fluidsynth/`.
+- Linux: `sudo apt install fluidsynth` (or the package of your distribution).
+- macOS: `brew install fluid-synth`.
+- SoundFont: download a General MIDI SoundFont, for example [MuseScore General](https://musescore.org/en/handbook/3/soundfonts-and-sfz-files), and save it as `fluidsynth/soundfont.sf3`, or point `KORSHMER_SOUNDFONT` at it.
+
+# Third-Party Licenses
+
+KORSHMER itself is MIT licensed. The files you place in `fluidsynth/` come from other projects and keep their own licences; check the licence shipped with the exact build you download, and include those licence texts if you redistribute a bundle that contains them:
 
 | File | Project | License |
 |------|---------|---------|
@@ -334,7 +372,46 @@ The `fluidsynth/` directory contains pre-built binaries and assets from third-pa
 | `libfluidsynth-3.dll` | [FluidSynth](https://github.com/FluidSynth/fluidsynth) | LGPL-2.1-or-later |
 | `SDL3.dll` | [SDL (Simple DirectMedia Layer)](https://www.libsdl.org/) | zlib License |
 | `sndfile.dll` | [libsndfile](https://github.com/libsndfile/libsndfile) | LGPL-2.1-or-later |
-| `soundfont.sf3` | [MuseScore General License](./fluidsynth/MuseScore_General_License.md) | Custom License |
+| `soundfont.sf3` | The SoundFont you chose, for example MuseScore General | The SoundFont's own licence |
+
+FFmpeg, when installed, is called as a separate program and is licensed under LGPL or GPL depending on the build. The Python dependencies listed in `pyproject.toml` are installed by `pip` under their own licences.
+
+# Safety of Third-Party Plugins
+
+A plugin is a Python file and runs with the same rights as KORSHMER itself, so only use plugins from people you trust. Built-in plugins always load. Files in `saved_data/plugins/` are **not** run unless you allow them in one of two ways:
+
+1. Approve individual files: create `saved_data/approved_plugins.json` (beside the `plugins` folder, not inside it) that maps each approved file name to its SHA-256 checksum, for example `{"my_effect.py": "9f86d0..."}`. A file that is not listed, or whose content changed after you approved it, is skipped; the log names the file and prints its current checksum so you can review the file and add it. Get a checksum with `sha256sum my_effect.py` (Linux), `shasum -a 256 my_effect.py` (macOS) or `certutil -hashfile my_effect.py SHA256` (Windows).
+2. Allow everything in the folder: start KORSHMER with the environment variable `KORSHMER_ENABLE_USER_PLUGINS=1`.
+
+Upgrading from an earlier version: plugins in `saved_data/plugins/` used to load automatically. They now stay off until you pick one of the two options above. Plugins installed as Python packages (the `korshmer.plugins` entry point group) load as before, because installing a package is already a deliberate step.
+
+# Data Locations
+
+Everything KORSHMER writes lives in `saved_data/` next to `src/`:
+
+| Path | Contents |
+|------|----------|
+| `saved_data/<song>/<song>.kproj` | A saved song, with its `Clips`, `MIDI`, `Versions`, `Backups`, `Recordings` and `Exports` folders beside it |
+| `saved_data/logs/` | `korshmer.log`, `audit.log` and `crash_reports/` |
+| `saved_data/plugins/` | Third-party plugin files |
+| `saved_data/approved_plugins.json` | The plugin files you approved, with their checksums |
+| `saved_data/audio_host.json` | Output device and buffer size |
+| `saved_data/window_layout.json` | Window size and panel layout |
+| `saved_data/shortcuts_user.json` | Your own keyboard shortcuts |
+| `temp/` | Working files that are safe to delete while the application is closed |
+| `fluidsynth/` | FluidSynth binaries and `soundfont.sf3` that you add yourself |
+
+Passwords and tokens are kept in the system keychain, never in these folders.
+
+# Contributing, Changelog and Security
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): development setup, tests and style rules.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version, with migration notes.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability, and notes on plugins and the local network servers.
+
+# License
+
+KORSHMER is released under the [MIT License](LICENSE). Commercial and private use, modification and distribution are allowed under its terms; keep the copyright and permission notice in copies.
 
 ---
 

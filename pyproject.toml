@@ -1,22 +1,44 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "korshmer"
-version = "1.0.0"
+version = "1.1.0"
 description = "Redefining the DAW"
 requires-python = ">=3.10"
 authors = [
 	{name = "Yaron Koresh"}
 ]
+keywords = [
+    "daw",
+    "audio",
+    "midi",
+    "music",
+    "piano-roll",
+    "stem-separation",
+    "audio-to-midi",
+    "pyside6",
+]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Editors",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
 ]
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "pyside6>=6.0.0",
     "librosa>=0.9.0",
@@ -35,7 +57,6 @@ dependencies = [
     "scipy>=1.10.0",
     "matplotlib>=3.7.0",
     "psutil>=5.9.0",
-    "PyWavelets>=1.4.0",
     "mutagen>=1.45.0",
     "pyloudnorm>=0.1.0",
     "websockets>=12.0",
@@ -55,24 +76,31 @@ cuda = [
 opencl = [
     "pyopencl>=2024.1"
 ]
-dev = [
+build = [
     "nuitka<=4.3.1",
+    "pyinstaller>=6.0",
+    "briefcase>=0.3.0",
+    "build"
+]
+test = [
     "pytest>=7.4.0",
     "pytest-asyncio",
     "pytest-cov>=4.1.0",
     "pytest-memray>=1.5.0; sys_platform != 'win32'",
     "pytest-mock>=3.12.0",
     "pytest-qt>=4.2.0",
-    "hypothesis>=6.90.0",
+    "hypothesis>=6.90.0"
+]
+lint = [
     "ruff",
-    "poethepoet",
-    "pre-commit",
-    "build",
-    "pydantic>=2.0.0",
     "mypy>=1.0",
+    "numpy==2.2.6",
     "vulture>=2.10",
-    "pyinstaller>=6.0",
-    "briefcase>=0.3.0"
+    "poethepoet",
+    "pre-commit"
+]
+dev = [
+    "korshmer[test,lint,build]"
 ]
 
 [project.scripts]
@@ -82,6 +110,8 @@ korshmer = "korshmer.__main__:main"
 Homepage = "https://github.com/YaronKoresh/korshmer"
 Repository = "https://github.com/YaronKoresh/korshmer"
 Issues = "https://github.com/YaronKoresh/korshmer/issues"
+Documentation = "https://github.com/YaronKoresh/korshmer#readme"
+Changelog = "https://github.com/YaronKoresh/korshmer/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/korshmer"]
@@ -134,12 +164,15 @@ memray = { cmd = "python scripts/run_memray.py" }
 build-exe = { cmd = "python scripts/build_all.py --pyinstaller" }
 build-exe-signed = { cmd = "python scripts/build_all.py --pyinstaller --sign" }
 
-check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "test", "clean"]
+check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "check-types", "test-py", "clean"]
 coverage = ["_coverage-clean", "_coverage-run", "_coverage-clean"]
-test = ["test-py"]
 
 [tool.poe.tasks.test-py]
 cmd = "python -m pytest tests/"
+
+[tool.poe.tasks.test-py.env]
+QT_QPA_PLATFORM = "offscreen"
+PIP_DISABLE_PIP_VERSION_CHECK = "1"
 
 [tool.poe.tasks._coverage-run]
 cmd = "python -m pytest -q --cov=src --cov-branch --cov-report=term-missing:skip-covered tests/"
@@ -155,6 +188,9 @@ cmd = "python -m compileall -q ."
 
 [tool.poe.tasks.lint]
 cmd = "python -m ruff check ."
+
+[tool.poe.tasks.check-types]
+cmd = "python -m mypy src/ --ignore-missing-imports"
 
 [tool.poe.tasks.check-format]
 cmd = "python -m ruff format --check ."
@@ -197,7 +233,7 @@ strict_optional = true
 [tool.briefcase]
 project_name = "KORSHMER"
 bundle = "io.github.yaronkoresh.korshmer"
-version = "1.0.0"
+version = "1.1.0"
 url = "https://github.com/YaronKoresh/korshmer"
 license = "MIT"
 
@@ -205,7 +241,6 @@ license = "MIT"
 formal_name = "KORSHMER"
 description = "Redefining the DAW"
 long_description = "A powerful AI-enhanced Digital Audio Workstation"
-icon = "assets/icon"
 sources = ["src/korshmer"]
 requires = []
 

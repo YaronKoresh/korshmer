@@ -95,7 +95,8 @@ def _level_minor_with_relative_major():
     return major - minor
 
 
-RELATIVE_TIE = _level_minor_with_relative_major()
+RELATIVE_TIE_ROUNDING = 1e-9
+RELATIVE_TIE = _level_minor_with_relative_major() + RELATIVE_TIE_ROUNDING
 _OUTSIDE = {name: _outside_rows(name) for name in DETECTABLE_SCALES}
 
 

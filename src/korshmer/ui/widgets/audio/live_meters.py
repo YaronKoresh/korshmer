@@ -67,7 +67,8 @@ class LiveMeters(QWidget):
         self.bar.setRange(0, 100)
         self.bar.setTextVisible(False)
         self.bar.setFixedHeight(6)
-        self.bar.setStyleSheet(BAR_STYLE % BAR_OK)
+        self.bar_colour = BAR_OK
+        self.bar.setStyleSheet(BAR_STYLE % self.bar_colour)
         layout.addWidget(self.bar, 0, 0, 1, READOUT_COLUMNS)
         layout.setHorizontalSpacing(READOUT_GAP)
         for index, (name, label, tip) in enumerate(READOUTS):
@@ -95,12 +96,49 @@ class LiveMeters(QWidget):
         self.timer.timeout.connect(self.refresh)
 
     def set_engine(self, engine):
+        if engine is self.engine:
+            self.sync_refresh_timer()
+            return
+        self._follow_state_of(self.engine, False)
         self.engine = engine
-        self.timer.start()
+        self._follow_state_of(engine, True)
+        self.sync_refresh_timer()
+
+    def _follow_state_of(self, engine, follow):
+        state_changed = getattr(engine, "playbackStateChanged", None)
+        if state_changed is None:
+            return
+        if follow:
+            state_changed.connect(self.sync_refresh_timer)
+        else:
+            state_changed.disconnect(self.sync_refresh_timer)
+
+    def is_metering(self):
+        engine = self.engine
+        return (
+            engine is not None
+            and self.isVisible()
+            and engine.playbackState() == PLAYING
+        )
+
+    def sync_refresh_timer(self, _state=None):
+        if not self.is_metering():
+            self.timer.stop()
+        elif not self.timer.isActive():
+            self.timer.start()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.sync_refresh_timer()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.sync_refresh_timer()
 
     def refresh(self):
         engine = self.engine
         if engine is None or engine.playbackState() != PLAYING:
+            self.timer.stop()
             return
         self.show_levels(measure_levels(engine.data, engine.fs, engine.idx))
 
@@ -111,6 +149,7 @@ class LiveMeters(QWidget):
         span = -METER_FLOOR_DB
         fill = (max(METER_FLOOR_DB, levels.peak_db) - METER_FLOOR_DB) / span
         self.bar.setValue(int(round(100 * min(1.0, fill))))
-        self.bar.setStyleSheet(
-            BAR_STYLE % (BAR_HOT if levels.clipping else BAR_OK)
-        )
+        colour = BAR_HOT if levels.clipping else BAR_OK
+        if colour != self.bar_colour:
+            self.bar_colour = colour
+            self.bar.setStyleSheet(BAR_STYLE % colour)

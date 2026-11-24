@@ -93,16 +93,6 @@ def _readings(path):
     return clip_level.measure(data, rate)
 
 
-def _tone_balance(path):
-    data, _rate = sf.read(path, dtype="float32")
-    spectrum = np.abs(np.fft.rfft(data[: RATE * 4] * np.hanning(RATE * 4)))
-    bands = [
-        spectrum[low * 4 : high * 4].sum()
-        for low, high in ((150, 300), (300, 600), (600, 1200), (1200, 2400))
-    ]
-    return 20 * np.log10(np.array(bands) / bands[0])
-
-
 def _hit_times(path):
     from korshmer.audio_processing import clip_tempo
 
@@ -132,7 +122,7 @@ def test_improving_a_quiet_recording_brings_it_to_the_stated_level_and_checks_it
     assert f"goal {clip_level.level_goal_db():.1f}" in said[-1]
 
 
-def test_improving_a_recording_changes_its_level_but_not_its_tone_or_length(
+def test_improving_a_muddy_recording_moves_its_tone_toward_a_studio_balance_and_keeps_its_length(
     qapp, tmp_path, fixed_files
 ):
     original = _sung_phrases(tmp_path / "voice.wav", level=0.05)
@@ -142,15 +132,10 @@ def test_improving_a_recording_changes_its_level_but_not_its_tone_or_length(
     _finish(timeline)
 
     improved = timeline.model.clip_by_id(clip.id).path
-    assert _tone_balance(improved) == pytest.approx(
-        _tone_balance(original), abs=0.5
-    )
+    tone_goal = clip_level.TONE_GOAL_DB + clip_level.TONE_TOLERANCE_DB
+    assert _readings(original)[clip_level.TONE] > tone_goal
+    assert _readings(improved)[clip_level.TONE] <= tone_goal
     assert sf.info(improved).frames == sf.info(original).frames
-    before, _rate = sf.read(original, dtype="float32")
-    after, _rate = sf.read(improved, dtype="float32")
-    quietest = np.abs(before) < 0.25 * np.abs(before).max()
-    ratio = after[~quietest] / before[~quietest]
-    assert np.percentile(ratio, 95) / np.percentile(ratio, 5) < 1.1
 
 
 def test_a_recording_that_already_meets_the_goals_is_left_untouched(

@@ -80,33 +80,24 @@ class MultiBandCompressor:
         self.crossover_freqs = list(self.CROSSOVER_FREQS[: n_bands - 1])
         self.compressors = [Compressor(sample_rate) for _ in range(n_bands)]
 
+    def _crossover(self, freq):
+        low = signal.butter(2, freq, "low", fs=self.sr, output="sos")
+        high = signal.butter(2, freq, "high", fs=self.sr, output="sos")
+        return np.vstack([low, low]), np.vstack([high, high])
+
     def _split_bands(self, audio_data):
         bands = []
         current = audio_data
+        crossovers = [self._crossover(freq) for freq in self.crossover_freqs]
 
-        for freq in self.crossover_freqs:
-            sos_low = signal.butter(4, freq, "low", fs=self.sr, output="sos")
-            sos_high = signal.butter(4, freq, "high", fs=self.sr, output="sos")
-
-            if current.ndim == 1:
-                low_band = signal.sosfilt(sos_low, current)
-                high_band = signal.sosfilt(sos_high, current)
-            else:
-                low_band = np.array(
-                    [
-                        signal.sosfilt(sos_low, current[ch])
-                        for ch in range(current.shape[0])
-                    ]
-                )
-                high_band = np.array(
-                    [
-                        signal.sosfilt(sos_high, current[ch])
-                        for ch in range(current.shape[0])
-                    ]
-                )
-
+        for index, (sos_low, sos_high) in enumerate(crossovers):
+            low_band = signal.sosfilt(sos_low, current, axis=-1)
+            current = signal.sosfilt(sos_high, current, axis=-1)
+            for later_low, later_high in crossovers[index + 1 :]:
+                low_band = signal.sosfilt(
+                    later_low, low_band, axis=-1
+                ) + signal.sosfilt(later_high, low_band, axis=-1)
             bands.append(low_band)
-            current = high_band
 
         bands.append(current)
         return bands

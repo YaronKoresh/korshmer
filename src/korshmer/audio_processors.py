@@ -1,3 +1,5 @@
+import copy
+import logging
 import os
 import struct
 
@@ -249,6 +251,10 @@ MAX_SIMULTANEOUS_NOTES = 128
 REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.25)
 CHORUS_SETTINGS = (3, 0.3, 0.3, 8.0, 0)
 RENDER_TARGET_RMS_DB = -16.0
+CC_PAN = 10
+CC_PAN_CENTRE = 64
+CC_PAN_RIGHT = 127
+DRUM_CHANNEL = 9
 CC_REVERB_SEND = 91
 CC_CHORUS_SEND = 93
 VOICE_PROGRAMS = frozenset({52, 53, 54, 85})
@@ -359,6 +365,7 @@ def level_render(audio):
 
 PITCH_BEND_CENTER = 8192
 PITCH_BEND_EVENT = "pitchbend"
+PAN_EVENT = "pan"
 
 
 def _bends_own_their_channel(instrument, batch):
@@ -370,10 +377,14 @@ def _bends_own_their_channel(instrument, batch):
 
 
 def _with_pitch_bends(note_events, bends):
-    if not bends:
+    return _with_channel_events(note_events, bends, PITCH_BEND_EVENT)
+
+
+def _with_channel_events(note_events, changes, kind):
+    if not changes:
         return note_events
     last = note_events[-1][0]
-    waiting = sorted((b for b in bends if b[0] <= last), key=lambda b: b[0])
+    waiting = sorted((c for c in changes if c[0] <= last), key=lambda c: c[0])
     merged = []
     at = 0
     for event in note_events:
@@ -382,32 +393,82 @@ def _with_pitch_bends(note_events, bends):
             or (waiting[at][0] == event[0] and event[1] == "noteon")
         ):
             time, channel, value = waiting[at]
-            merged.append((time, PITCH_BEND_EVENT, channel, value, 0, -1))
+            merged.append((time, kind, channel, value, 0, -1))
             at += 1
         merged.append(event)
     for time, channel, value in waiting[at:]:
-        merged.append((time, PITCH_BEND_EVENT, channel, value, 0, -1))
+        merged.append((time, kind, channel, value, 0, -1))
     return merged
+
+
+def pan_moves(instrument):
+    return sorted(
+        (c for c in instrument.control_changes if c.number == CC_PAN),
+        key=lambda change: change.time,
+    )
+
+
+def _resting_side(instrument):
+    moves = pan_moves(instrument)
+    if not moves:
+        return 0.0
+    offset = int(moves[0].value) - CC_PAN_CENTRE
+    if offset > 0:
+        return min(1.0, offset / (CC_PAN_RIGHT - CC_PAN_CENTRE))
+    return max(-1.0, offset / CC_PAN_CENTRE)
+
+
+def _centred(instrument):
+    resting = pan_moves(instrument)[0]
+    twin = copy.copy(instrument)
+    twin.control_changes = [
+        change for change in instrument.control_changes if change is not resting
+    ]
+    return twin
+
+
+def _placed_part(group, side, settings, render_batch, sr):
+    from korshmer.audio_processing import guitar_amp
+    from korshmer.audio_processing.stem_session import panned_stereo
+
+    if side:
+        group = [_centred(inst) for inst in group]
+    part = render_batch(group, level=False)
+    if part is None:
+        return None
+    if settings is not None:
+        part = guitar_amp.apply_effect(part, sr, settings)
+    return panned_stereo(np.asarray(part, dtype=np.float32), side)
+
+
+def _sound_name(instrument):
+    return instrument.name or f"program {instrument.program}"
 
 
 def _render_with_guitar_amps(instruments, render_batch, sr):
     from korshmer.audio_processing import guitar_amp
 
-    amped = {}
+    own_pass = {}
     rest = []
+    drum_side = None
     for inst in instruments:
         settings = None if inst.is_drum else guitar_amp.effect_for(inst)
-        if settings is None or not inst.notes:
+        side = _resting_side(inst)
+        if inst.is_drum and inst.notes and drum_side is None:
+            drum_side = side
+        if not inst.notes:
             rest.append(inst)
+        elif inst.is_drum and side != drum_side:
+            own_pass.setdefault((None, side), []).append(inst)
+        elif settings is not None:
+            own_pass.setdefault((settings, side), []).append(inst)
         else:
-            amped.setdefault(settings, []).append(inst)
-    if not amped:
+            rest.append(inst)
+    if not own_pass:
         return render_batch(instruments)
     parts = [render_batch(rest, level=False)] if rest else []
-    for settings, group in amped.items():
-        dry = render_batch(group, level=False)
-        if dry is not None:
-            parts.append(guitar_amp.apply_effect(dry, sr, settings))
+    for (settings, side), group in own_pass.items():
+        parts.append(_placed_part(group, side, settings, render_batch, sr))
     parts = [p for p in parts if p is not None and len(p)]
     if not parts:
         return None
@@ -453,21 +514,28 @@ def render_midi_to_wav(
                 fs.set_reverb(*REVERB_SETTINGS)
                 fs.set_chorus(*CHORUS_SETTINGS)
 
-                melodic_channels = [i for i in range(16) if i != 9]
+                melodic_channels = [i for i in range(16) if i != DRUM_CHANNEL]
                 melodic_ptr = 0
                 note_id = 0
                 events = MidiEventQueue()
                 bends = []
+                pans = []
 
                 for inst in instruments_batch:
                     is_drum = inst.is_drum
                     if is_drum:
-                        channel = 9
+                        channel = DRUM_CHANNEL
                     else:
                         if melodic_ptr < len(melodic_channels):
                             channel = melodic_channels[melodic_ptr]
                             melodic_ptr += 1
                         else:
+                            logging.warning(
+                                "Not rendered: %s. Only %d instruments "
+                                "besides the drums can sound at once.",
+                                _sound_name(inst),
+                                len(melodic_channels),
+                            )
                             continue
 
                     bank = 128 if is_drum else 0
@@ -478,6 +546,13 @@ def render_midi_to_wav(
                     reverb, chorus = effect_sends(program, is_drum)
                     fs.cc(channel, CC_REVERB_SEND, reverb)
                     fs.cc(channel, CC_CHORUS_SEND, chorus)
+                    moves = pan_moves(inst)
+                    if moves:
+                        fs.cc(channel, CC_PAN, int(moves[0].value))
+                        pans.extend(
+                            (move.time, channel, int(move.value))
+                            for move in moves[1:]
+                        )
                     if _bends_own_their_channel(inst, instruments_batch):
                         fs.pitch_wheel_sens(channel, bend_range_of(inst))
                         bends.extend(
@@ -509,8 +584,10 @@ def render_midi_to_wav(
 
                 if not len(events):
                     return None
-                ordered_events = _with_pitch_bends(
-                    events.sorted_events(), bends
+                ordered_events = _with_channel_events(
+                    _with_pitch_bends(events.sorted_events(), bends),
+                    pans,
+                    PAN_EVENT,
                 )
 
                 audio_left = []
@@ -540,6 +617,8 @@ def render_midi_to_wav(
 
                     if etype == PITCH_BEND_EVENT:
                         fs.pitch_bend(chan, note)
+                    elif etype == PAN_EVENT:
+                        fs.cc(chan, CC_PAN, note)
                     elif etype == "noteon":
                         if active_notes >= MAX_SIMULTANEOUS_NOTES:
                             dropped_ids.add(nid)

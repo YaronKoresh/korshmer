@@ -26,10 +26,60 @@ from korshmer.exceptions import AudioFormatError, InvalidFileError
 from korshmer.mixins.path_guard import reject_unsafe_path
 from korshmer.services.file_management import FileManagementService
 from korshmer.ui.theming.color_utils import MAT_PRIMARY
-from korshmer.utils.filesystem import is_midi_path
+from korshmer.utils.filesystem import MIDI_EXTENSIONS, is_midi_path
 from korshmer.workers.midi_preview import MidiPreviewThread
 
 _fs = FileManagementService
+
+SAME_FOLDER_EXPORT_MESSAGE = (
+    "The folder cannot be exported onto itself. "
+    "Choose a destination outside the folder being exported."
+)
+
+
+def reveal_folder(folder) -> bool:
+    folder = str(folder)
+    try:
+        if sys.platform == "win32":
+            os.startfile(folder)
+        elif sys.platform == "darwin":
+            subprocess.call(["open", folder])
+        else:
+            subprocess.call(["xdg-open", folder])
+    except (OSError, subprocess.SubprocessError) as problem:
+        logging.warning(f"Could not open the folder {folder}: {problem}")
+        return False
+    return True
+
+
+def audio_extensions(extra=()):
+    return tuple(dict.fromkeys((*_fs.VALID_AUDIO_EXTENSIONS, *extra)))
+
+
+def is_audio_path(path) -> bool:
+    return str(path).lower().endswith(audio_extensions())
+
+
+def audio_file_filter(label, extra=()) -> str:
+    patterns = " ".join(f"*{ext}" for ext in audio_extensions(extra))
+    return f"{label} ({patterns})"
+
+
+def dropped_music_files(mime_data):
+    if not mime_data.hasUrls():
+        return []
+    paths = [url.toLocalFile() for url in mime_data.urls() if url.isLocalFile()]
+    return [path for path in paths if _fs.is_valid_file(path)]
+
+
+def folders_overlap(first, second) -> bool:
+    first = os.path.realpath(first)
+    second = os.path.realpath(second)
+    try:
+        shared = os.path.commonpath([first, second])
+    except ValueError:
+        return False
+    return shared in (first, second)
 
 
 class FilesMixin:
@@ -75,6 +125,11 @@ class FilesMixin:
                 if reject_unsafe_path(self, target_dir):
                     return
                 dest_path = os.path.join(target_dir, base_name)
+                if folders_overlap(source_path, dest_path):
+                    QMessageBox.warning(
+                        self, "Export Folder", SAME_FOLDER_EXPORT_MESSAGE
+                    )
+                    return
                 try:
                     if os.path.exists(dest_path):
                         if (
@@ -287,7 +342,7 @@ class FilesMixin:
         return False
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
+        if dropped_music_files(event.mimeData()):
             event.acceptProposedAction()
 
     def on_files_dropped_list(self, files):
@@ -301,7 +356,12 @@ class FilesMixin:
             )
 
     def dropEvent(self, event: QDropEvent):
-        pass
+        files = dropped_music_files(event.mimeData())
+        if not files:
+            event.ignore()
+            return
+        self.on_files_dropped_list(files)
+        event.acceptProposedAction()
 
     def clear_files(self):
         publish(Event.FILE_LOCK_RELEASED)
@@ -317,7 +377,7 @@ class FilesMixin:
             self,
             "Select Files",
             "",
-            "Audio/MIDI (*.mp3 *.wav *.flac *.ogg *.oga *.opus *.aiff *.aif *.mid *.midi)",
+            audio_file_filter("Audio/MIDI", MIDI_EXTENSIONS),
         )
         for f in files:
             self.add_file(f)
@@ -440,18 +500,7 @@ class FilesMixin:
 
         if is_midi_path(path):
             self.handle_midi_selection(path, load_editor=False)
-        elif path.lower().endswith(
-            (
-                ".wav",
-                ".mp3",
-                ".flac",
-                ".ogg",
-                ".oga",
-                ".opus",
-                ".aiff",
-                ".aif",
-            )
-        ):
+        elif is_audio_path(path):
             publish(
                 Event.AUDIO_LOAD_REQUESTED,
                 path=path,
@@ -480,10 +529,11 @@ class FilesMixin:
 
         folder = os.path.dirname(path) if os.path.isfile(path) else path
 
-        if sys.platform == "win32":
-            os.startfile(folder)
-        else:
-            subprocess.call(["open", folder])
+        if not reveal_folder(folder):
+            publish(
+                Event.STATUS_UPDATE,
+                text=f"Could not open the folder: {folder}",
+            )
 
     def on_input_file_select(self, item):
         path = item.data(Qt.UserRole)

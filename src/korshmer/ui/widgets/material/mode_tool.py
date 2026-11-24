@@ -112,6 +112,7 @@ class ModeToolCard(MaterialCard):
 
     def highlight(self, milliseconds=HIGHLIGHT_MS):
         self.title_label.setStyleSheet(HIGHLIGHT_STYLE)
+        label = self.title_label
         QTimer.singleShot(
-            int(milliseconds), lambda: self.title_label.setStyleSheet("")
+            int(milliseconds), label, lambda: label.setStyleSheet("")
         )

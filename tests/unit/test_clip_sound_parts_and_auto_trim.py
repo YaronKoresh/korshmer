@@ -148,13 +148,13 @@ def test_a_slightly_quieter_second_sound_is_still_found():
     assert np.allclose(spans, [(1.95, 7.05), (10.95, 15.0)], atol=0.25)
 
 
-def test_a_second_sound_far_under_the_quiet_limit_counts_as_background():
+def test_a_faint_second_sound_well_above_the_noise_is_kept_as_its_own_part():
     faint = 0.3 * _soft_level(-10.0)
 
     spans = _spans(_joined(-60.0, levels=(0.3, faint)))
 
-    assert len(spans) == 1
-    assert spans[0][1] < 8.0
+    assert len(spans) == 2
+    assert np.allclose(spans, [(1.95, 7.05), (10.95, 15.05)], atol=0.25)
 
 
 def test_a_soft_passage_inside_continuous_music_is_not_cut_out():
@@ -316,8 +316,8 @@ def test_each_separated_sound_takes_only_the_room_it_needs(
     timeline, _said = _fixed(qapp, recording)
 
     lengths = sorted(clip.duration for clip in timeline.model.clips)
-    assert lengths == pytest.approx([5.65, 5.65], abs=0.15)
-    assert sum(lengths) < 12.0
+    assert lengths == pytest.approx([6.65, 6.65], abs=0.15)
+    assert sum(lengths) < 14.0
 
 
 def test_a_clip_with_silence_at_both_ends_is_trimmed_to_its_sound(

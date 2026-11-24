@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -15,6 +16,11 @@ from .validation import (
     validate_effect_number,
     validate_sample_rate,
 )
+
+_logger = logging.getLogger(__name__)
+
+TRIMMED_NAME = "temp_trimmed"
+UNKNOWN_AUDIO_SUFFIX = ".audio"
 
 _FILTER_ALIASES = {
     "lowpass": "low",
@@ -283,32 +289,53 @@ def apply_noise_gate(
         return gated
 
 
+def _is_wav_file(path):
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(12)
+    except OSError:
+        return False
+    return header[0:4] in (b"RIFF", b"RF64") and header[8:12] == b"WAVE"
+
+
+def _untrimmed_copy(audio_path, dir_name):
+    suffix = Path(audio_path).suffix.lower()
+    if _is_wav_file(audio_path):
+        suffix = ".wav"
+    elif suffix in ("", ".wav"):
+        suffix = UNKNOWN_AUDIO_SUFFIX
+    fallback_path = os.path.join(dir_name, TRIMMED_NAME + suffix)
+    shutil.copy2(audio_path, fallback_path)
+    return fallback_path
+
+
+def _trim_file(audio_path, dir_name, top_db):
+    try:
+        y, sr = librosa.load(audio_path, sr=None, mono=False)
+    except Exception as e:
+        _logger.warning("Trim skipped, using the original file: %s", e)
+        return _untrimmed_copy(audio_path, dir_name)
+    try:
+        y_trimmed, _ = librosa.effects.trim(y, top_db=top_db)
+    except Exception as e:
+        _logger.warning("Trim failed, keeping the full length: %s", e)
+        y_trimmed = y
+    new_path = os.path.join(dir_name, TRIMMED_NAME + ".wav")
+    frames = y_trimmed.T if y_trimmed.ndim > 1 else y_trimmed
+    sf.write(new_path, frames, sr, format="WAV")
+    return new_path
+
+
 def trim_audio_silence(audio_or_path, sample_rate_or_dir=None, top_db=24):
     validate_effect_number(top_db, "Silence threshold", 1.0, 120.0)
     if _is_file_path(audio_or_path):
-        audio_path = audio_or_path
         dir_name = require_output_target(sample_rate_or_dir, "Output folder")
-
-        try:
-            y, sr = librosa.load(audio_path, sr=None)
-            y_trimmed, _ = librosa.effects.trim(y, top_db=top_db)
-            new_path = os.path.join(dir_name, "temp_trimmed.wav")
-            with open(new_path, "wb") as f:
-                sf.write(f, y_trimmed, sr)
-            return new_path
-        except Exception as e:
-            print(f"Trim failed, using original: {e}")
-            fallback_path = os.path.join(dir_name, "temp_trimmed.wav")
-            shutil.copy2(audio_path, fallback_path)
-            return fallback_path
-    else:
-        audio = audio_or_path
-
-        if is_empty_audio(audio):
-            return audio
-
-        trimmed, _ = librosa.effects.trim(audio, top_db=top_db)
-        return trimmed
+        return _trim_file(audio_or_path, dir_name, top_db)
+    audio = audio_or_path
+    if is_empty_audio(audio):
+        return audio.copy() if isinstance(audio, np.ndarray) else audio
+    trimmed, _ = librosa.effects.trim(audio, top_db=top_db)
+    return trimmed
 
 
 def slice_audio_onsets(audio_or_path, sample_rate_or_dir=None, db_threshold=20):

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from korshmer.constants import GRID_RESOLUTIONS, HELP_TEXTS, NOTE_NAMES, SCALES
+from korshmer.event_bus import Event, publish
 from korshmer.services.preset_service import DEFAULT_SEPARATION
 from korshmer.ui.theming.color_utils import (
     BEAT_INDICATOR_OFF,
@@ -34,6 +35,7 @@ from korshmer.ui.widgets.material.choice import (
     SectionCard,
 )
 from korshmer.ui.widgets.material.slider import MaterialSlider
+from korshmer.utils import audio_host
 from korshmer.utils.audio_host import (
     HOST_ASIO,
     HOST_COREAUDIO,
@@ -53,6 +55,14 @@ SYNC_HINT = "Connect to other music software. Leave off if you are unsure."
 PRESET_HINT = "A preset remembers every setting on the Theory and Export tabs."
 MIDI_FILES_HINT = "What Start Processing writes for the converted notes."
 STEMS_HINT = "How the song is split into vocals, drums, bass and the rest."
+AUDIO_HINT = (
+    "Where the sound is played. A smaller buffer reacts faster, a larger "
+    "one avoids crackles. Changes apply the next time playback starts."
+)
+SYSTEM_DEFAULT_DEVICE = "System default"
+AUTOMATIC_BUFFER = "Automatic"
+NOT_CONNECTED = " (not connected)"
+LATENCY_UNKNOWN = "Output latency: measured while a song plays"
 VELOCITY_HINTS = {
     "Original": "Keep the loudness heard in the song.",
     "Fixed": "Every note gets the same loudness.",
@@ -86,6 +96,16 @@ TEMPO_BOX_STYLE = """
     }
     QDoubleSpinBox#tempoBox:focus { border: 1px solid #1A73E8; }
 """
+
+
+class DeviceComboBox(QComboBox):
+    def __init__(self, refill, parent=None):
+        super().__init__(parent)
+        self.refill = refill
+
+    def showPopup(self):
+        self.refill()
+        super().showPopup()
 
 
 class MainPagesMixin:
@@ -147,7 +167,6 @@ class MainPagesMixin:
         self.spin_bpm.setAlignment(Qt.AlignCenter)
         self.spin_bpm.setMinimumHeight(48)
         self.spin_bpm.setToolTip(HELP_TEXTS["bpm"])
-        self.spin_bpm.valueChanged.connect(self.update_editor_tempo)
         self.btn_tap_tempo = MaterialButton("Tap tempo", role="tonal")
         self.btn_tap_tempo.setToolTip("Tap repeatedly to set the tempo (T)")
         self.btn_tap_tempo.setMinimumHeight(48)
@@ -344,9 +363,10 @@ class MainPagesMixin:
         return page
 
     def _create_audio_interface_card(self):
-        card = SectionCard("Audio device")
-        row = QHBoxLayout()
-        card.body.addLayout(row)
+        card = SectionCard("Audio", AUDIO_HINT)
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        card.body.addLayout(grid)
         self.combo_audio_host = QComboBox()
         labels = {
             HOST_DEFAULT: "Default",
@@ -361,17 +381,97 @@ class MainPagesMixin:
         self.combo_audio_host.currentIndexChanged.connect(
             lambda _i: set_host_preference(self.combo_audio_host.currentData())
         )
-        row.addWidget(QLabel("Audio interface"))
-        row.addWidget(self.combo_audio_host, 1)
+        self.combo_audio_device = DeviceComboBox(self._fill_audio_devices)
+        self.combo_audio_device.setSizeAdjustPolicy(
+            QComboBox.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.combo_audio_device.setMinimumContentsLength(SCALE_BOX_LETTERS)
+        self._show_audio_devices([])
+        self.combo_audio_device.activated.connect(self._on_audio_device_chosen)
+        self.combo_audio_device.currentIndexChanged.connect(
+            self._on_audio_device_chosen
+        )
+        self.combo_audio_buffer = QComboBox()
+        self.combo_audio_buffer.addItem(AUTOMATIC_BUFFER, None)
+        for frames in audio_host.BUFFER_SIZE_CHOICES:
+            self.combo_audio_buffer.addItem(f"{frames} samples", frames)
+        saved_buffer = audio_host.get_buffer_size_preference()
+        self.combo_audio_buffer.setCurrentIndex(
+            max(self.combo_audio_buffer.findData(saved_buffer), 0)
+        )
+        self.combo_audio_buffer.currentIndexChanged.connect(
+            self._on_audio_buffer_chosen
+        )
+        for row, (text, box) in enumerate(
+            (
+                ("Audio interface", self.combo_audio_host),
+                ("Output device", self.combo_audio_device),
+                ("Buffer size", self.combo_audio_buffer),
+            )
+        ):
+            grid.addWidget(QLabel(text), row, 0)
+            grid.addWidget(box, row, 1)
+        self.lbl_audio_latency = QLabel(LATENCY_UNKNOWN)
+        self.lbl_audio_latency.setStyleSheet(HINT_STYLE)
+        card.body.addWidget(self.lbl_audio_latency)
         return card
+
+    def _show_audio_devices(self, names):
+        combo = self.combo_audio_device
+        saved = audio_host.get_output_device_preference()
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem(SYSTEM_DEFAULT_DEVICE, None)
+        for name in names:
+            combo.addItem(name, name)
+        if saved is not None and saved not in names:
+            combo.addItem(saved + (NOT_CONNECTED if names else ""), saved)
+        combo.setCurrentIndex(max(combo.findData(saved), 0))
+        combo.blockSignals(False)
+
+    def _fill_audio_devices(self):
+        self._show_audio_devices(
+            [name for _index, name in audio_host.list_output_devices()]
+        )
+
+    def _apply_audio_preferences(self):
+        control_bar = getattr(self, "control_bar", None)
+        if control_bar is None:
+            return
+        notice = audio_host.apply_audio_preferences(control_bar.player)
+        if notice:
+            publish(Event.STATUS_UPDATE, text=notice)
+
+    def _on_audio_device_chosen(self, _index):
+        chosen = self.combo_audio_device.currentData()
+        if chosen == audio_host.get_output_device_preference():
+            return
+        audio_host.set_output_device_preference(chosen)
+        self._apply_audio_preferences()
+
+    def _on_audio_buffer_chosen(self, _index):
+        audio_host.set_buffer_size_preference(
+            self.combo_audio_buffer.currentData()
+        )
+        self._apply_audio_preferences()
+
+    def refresh_audio_latency(self):
+        player = self.control_bar.player
+        latency = getattr(player, "output_latency_ms", 0.0)
+        buffer_size = getattr(player, "active_buffer_size", None)
+        if not latency or latency <= 0:
+            return
+        text = f"Output latency: {latency:.1f} ms"
+        if buffer_size:
+            text += f" (buffer {buffer_size} samples)"
+        self.lbl_audio_latency.setText(text)
 
     def _create_page_export(self):
         sections = [
             (self._ui_preset_section(),),
             (self._ui_midi_files_section(), self._ui_stem_quality_section()),
+            (self._create_audio_interface_card(),),
         ]
-        if len(available_hosts()) > 1:
-            sections.append((self._create_audio_interface_card(),))
         return self._scroll_page(MaterialCard(), sections)
 
     def _ui_preset_section(self):

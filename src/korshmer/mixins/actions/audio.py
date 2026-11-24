@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication, QComboBox, QMessageBox, QWidget
 
 from korshmer.event_bus import Event, publish
+from korshmer.mixins.files import is_audio_path
 from korshmer.utils.filesystem import is_midi_path
 from korshmer.visualization.spectrum import create_spectrum_visualization
 
@@ -396,18 +397,7 @@ class AudioActionsMixin(BaseActionsMixin):
         if not path:
             return
 
-        if not path.lower().endswith(
-            (
-                ".wav",
-                ".mp3",
-                ".flac",
-                ".ogg",
-                ".oga",
-                ".opus",
-                ".aiff",
-                ".aif",
-            )
-        ):
+        if not is_audio_path(path):
             QMessageBox.warning(
                 self,
                 "Error",

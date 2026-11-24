@@ -1,6 +1,8 @@
 import math
 import time
 
+IDLE_LEVEL = 0.001
+
 
 class VisualizerViewModel:
     def __init__(self, bars_count=32):
@@ -61,6 +63,13 @@ class VisualizerViewModel:
             else:
                 target = 0.0
             self.values[i] += (target - self.values[i]) * 0.6
+
+    def is_idle(self):
+        return (
+            not self.is_playing
+            and self.current_energy < IDLE_LEVEL
+            and max(self.values) < IDLE_LEVEL
+        )
 
     def bar_color_rgb(self):
         energy = min(1.0, self.current_energy)

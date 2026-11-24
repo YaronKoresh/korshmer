@@ -175,6 +175,23 @@ def _extract_vocals(mix, options, report, should_stop):
     return None, ""
 
 
+def read_stereo(audio_path):
+    return np.ascontiguousarray(
+        _load_stereo_at_rate(str(audio_path), SAMPLE_RATE).T
+    )
+
+
+def vocals_of(mix, options=None, progress=None, should_stop=None):
+    options = options if options is not None else SeparationOptions()
+    vocals, _model = _extract_vocals(
+        np.ascontiguousarray(mix, dtype=np.float32),
+        options,
+        _reporter(progress),
+        should_stop,
+    )
+    return vocals
+
+
 def _write_scratch(data, job_dir, folder, track):
     directory = os.path.join(job_dir, folder)
     os.makedirs(directory, exist_ok=True)
@@ -209,9 +226,7 @@ def separate_with_label(
     track = Path(str(audio_path)).stem
     report(0.0, "Reading the audio...")
     _check_stop(should_stop)
-    mix = np.ascontiguousarray(
-        _load_stereo_at_rate(str(audio_path), SAMPLE_RATE).T
-    )
+    mix = read_stereo(audio_path)
     report(DECODE_END, "Audio ready")
     try:
         vocals, vocal_model = _extract_vocals(mix, options, report, should_stop)

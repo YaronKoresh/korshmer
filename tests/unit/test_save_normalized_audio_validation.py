@@ -1,3 +1,4 @@
+import functools
 import importlib
 
 import numpy as np
@@ -9,7 +10,10 @@ MODULES = ["korshmer.audio.io", "korshmer.audio_processing.audio_io"]
 
 @pytest.fixture(params=MODULES)
 def save(request):
-    return importlib.import_module(request.param).save_normalized_audio
+    return functools.partial(
+        importlib.import_module(request.param).save_normalized_audio,
+        normalize=True,
+    )
 
 
 def test_nan_sample_becomes_silence_not_a_click(save, tmp_path):

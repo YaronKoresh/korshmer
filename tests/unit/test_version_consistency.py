@@ -73,3 +73,26 @@ class TestNoHardcodedVersionStrings:
             "project_manager.py still contains hardcoded 0.6.0"
         )
         assert "__version__" in content
+
+
+class TestEveryPlaceShowsTheSameVersion:
+    def test_the_desktop_bundle_has_the_package_version(self):
+        content = (ROOT_DIR / "pyproject.toml").read_text(encoding="utf-8")
+        bundle = content.split("[tool.briefcase]", 1)[1]
+        match = re.search(r'^version\s*=\s*"(.+?)"', bundle, re.MULTILINE)
+        assert match is not None
+        assert match.group(1) == __version__
+
+    def test_the_readme_badge_shows_the_package_version(self):
+        content = (ROOT_DIR / "README.md").read_text(encoding="utf-8")
+        assert f"badge/Version-{__version__}-" in content
+
+    def test_the_changelog_has_a_dated_section_for_this_version(self):
+        content = (ROOT_DIR / "CHANGELOG.md").read_text(encoding="utf-8")
+        releases = re.findall(
+            r"^## \[(\d+\.\d+\.\d+)\](?: - (\d{4}-\d{2}-\d{2}))?",
+            content,
+            re.MULTILINE,
+        )
+        assert releases[0][0] == __version__
+        assert releases[0][1]

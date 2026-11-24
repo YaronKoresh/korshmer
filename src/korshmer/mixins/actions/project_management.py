@@ -3,10 +3,11 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 
 from korshmer.event_bus import Event, publish
+from korshmer.mixins.files import audio_file_filter
 from korshmer.project_management.project_backup import snapshot_choices
 from korshmer.project_management.project_manager import (
     SONG_SUFFIX,
@@ -33,11 +34,34 @@ UNSAVED_QUESTION = (
     "This song has changes that are not saved.\n\n"
     "Save keeps them. Discard closes without saving."
 )
-FINGERPRINT_KEYS = ("tempo", "tracks", "notes", "clips")
+FINGERPRINT_KEYS = ("tempo", "time_signature", "tracks", "notes", "clips")
 SAVED_EDITS_QUESTION = (
     "This song has saved edits.\n\n"
     "Yes opens your saved song. No loads the fresh conversion instead."
 )
+
+
+class ExportReport(QObject):
+    job_done = Signal(object, bool)
+    finished = Signal(int, int, list)
+
+    def __init__(self, total, parent=None):
+        super().__init__(parent)
+        self.total = total
+        self.done = 0
+        self.problems = []
+        self.job_done.connect(self.note)
+
+    def note(self, job, success):
+        if success:
+            self.done += 1
+        else:
+            name = Path(str(job.get("source", ""))).name
+            reason = job.get("error") or "the export failed"
+            self.problems.append(f"{name}: {reason}")
+        if self.done + len(self.problems) == self.total:
+            self.finished.emit(self.done, self.total, self.problems)
+            self.deleteLater()
 
 
 def saved_song_in(folder):
@@ -281,7 +305,14 @@ class ProjectManagementActionsMixin:
             song_path
         )
         if not project_data:
-            QMessageBox.warning(self, "Load Failed", "Failed to load project")
+            problem = getattr(self.project_manager, "last_load_error", "")
+            QMessageBox.warning(
+                self,
+                "Load Failed",
+                f"Failed to load project:\n{problem}"
+                if problem
+                else "Failed to load project",
+            )
             return False
         backup = self.project_manager.last_load_backup
         if backup is not None:
@@ -347,7 +378,7 @@ class ProjectManagementActionsMixin:
             self,
             "Import Audio Files",
             str(self.import_manager.imports_dir),
-            "Audio Files (*.wav *.mp3 *.flac *.ogg *.oga *.opus *.aiff *.aif *.aac)",
+            audio_file_filter("Audio Files", (".aac",)),
         )
 
         if file_paths:
@@ -393,6 +424,11 @@ class ProjectManagementActionsMixin:
         )
 
         if count > 0:
+            report = ExportReport(count, self)
+            report.finished.connect(self._show_export_report)
+            for job in list(self.export_manager.export_queue)[-count:]:
+                if job.get("callback") is None:
+                    job["callback"] = report.job_done.emit
             self.export_manager.process_queue()
             publish(
                 Event.STATUS_UPDATE, text=f"Queued {count} files for export"
@@ -400,6 +436,15 @@ class ProjectManagementActionsMixin:
         else:
             QMessageBox.warning(
                 self, "Export Failed", "No files were queued for export"
+            )
+
+    def _show_export_report(self, done, total, problems):
+        publish(Event.STATUS_UPDATE, text=f"Exported {done} of {total} files")
+        if problems:
+            QMessageBox.warning(
+                self,
+                "Export Failed",
+                "These files could not be exported:\n" + "\n".join(problems),
             )
 
     def manage_assets_action(self):

@@ -2,6 +2,8 @@ import concurrent.futures
 import os
 import shutil
 import sys
+import tempfile
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -122,6 +124,26 @@ def song_grid_offset(midis, tempo):
         return None
 
 
+STALE_JOB_DIR_SECONDS = 24 * 60 * 60
+
+
+def sweep_stale_job_dirs(temp_work_dir, max_age_s=STALE_JOB_DIR_SECONDS):
+    oldest_kept = time.time() - max_age_s
+    try:
+        entries = list(os.scandir(temp_work_dir))
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            stale = entry.is_dir(follow_symlinks=False) and (
+                entry.stat(follow_symlinks=False).st_mtime < oldest_kept
+            )
+        except OSError:
+            continue
+        if stale:
+            shutil.rmtree(entry.path, ignore_errors=True)
+
+
 def process_track(
     audio_file,
     target_octave,
@@ -164,17 +186,16 @@ def process_track(
     os.makedirs(DATA_DIR, exist_ok=True)
     temp_work_dir = os.path.join(DATA_DIR, "_temp_work")
     os.makedirs(temp_work_dir, exist_ok=True)
-    job_dir = os.path.join(temp_work_dir, file_name)
-    if os.path.exists(job_dir):
-        shutil.rmtree(job_dir)
-    os.makedirs(job_dir, exist_ok=True)
-    progress(0.15, desc="Preprocessing...")
-    check_stop()
+    sweep_stale_job_dirs(temp_work_dir)
+    job_dir = None
     music_file = None
     music_regions = []
     kept_regions = []
     music_cut = None
     try:
+        job_dir = tempfile.mkdtemp(prefix=f"{file_name}_", dir=temp_work_dir)
+        progress(0.15, desc="Preprocessing...")
+        check_stop()
         if music_options is not None:
             music = find_music_regions_in_file(
                 audio_file,
@@ -211,7 +232,8 @@ def process_track(
             music_file or audio_file, job_dir
         )
     except BaseException:
-        shutil.rmtree(job_dir, ignore_errors=True)
+        if job_dir is not None:
+            shutil.rmtree(job_dir, ignore_errors=True)
         raise
     try:
         tempo = float(

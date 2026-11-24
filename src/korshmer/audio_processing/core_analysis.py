@@ -1,14 +1,9 @@
-import os
-import shutil
-
 import librosa
-import numpy as np
 import soundfile as sf
 
+from .basic_effects import trim_audio_silence as trim_file_or_audio
 from .tempo_estimation import estimate_tempo
 from .validation import (
-    is_empty_audio,
-    require_output_target,
     validate_audio_not_empty,
     validate_effect_integer,
     validate_effect_number,
@@ -17,29 +12,7 @@ from .validation import (
 
 
 def trim_audio_silence(audio_or_path, dir_name_or_sr=None, top_db=24):
-    validate_effect_number(top_db, "Silence threshold", 1.0, 120.0)
-    if isinstance(audio_or_path, np.ndarray):
-        y = audio_or_path
-        if is_empty_audio(y):
-            return y.copy()
-        y_trimmed, _ = librosa.effects.trim(y, top_db=top_db)
-        return y_trimmed
-
-    audio_path = audio_or_path
-    dir_name = require_output_target(dir_name_or_sr, "Output folder")
-    try:
-        y, sr = librosa.load(audio_path, sr=None)
-        validate_audio_not_empty(y)
-        y_trimmed, _ = librosa.effects.trim(y, top_db=top_db)
-        new_path = os.path.join(dir_name, "temp_trimmed.wav")
-        with open(new_path, "wb") as f:
-            sf.write(f, y_trimmed, sr)
-        return new_path
-    except Exception as e:
-        print(f"Trim failed, using original: {e}")
-        fallback_path = os.path.join(dir_name, "temp_trimmed.wav")
-        shutil.copy2(audio_path, fallback_path)
-        return fallback_path
+    return trim_file_or_audio(audio_or_path, dir_name_or_sr, top_db)
 
 
 def analyse_tempo(audio_path):

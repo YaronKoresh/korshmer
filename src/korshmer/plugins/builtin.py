@@ -346,8 +346,7 @@ class SmartMasteringPlugin(AudioEffectPlugin):
         af = _load_audio(audio_path)
         processor = SmartMastering()
         af.y, _ = processor.process(af.y, af.sr)
-        save_audio(path=output_path, y=af.y, sr=af.sr)
-        return output_path
+        return save_audio(path=output_path, y=af.y, sr=af.sr)
 
 
 BUILTIN_PLUGINS = [

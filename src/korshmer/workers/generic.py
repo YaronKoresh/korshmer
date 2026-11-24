@@ -3,11 +3,20 @@ import logging
 import os
 import threading
 
+import psutil
+
 from korshmer.constants import current_dir
-from korshmer.utils.worker_count import compute_worker_count
+from korshmer.utils.worker_count import (
+    KIND_COMPUTE,
+    KIND_IO,
+    compute_worker_count,
+)
+
+HEAVY_JOB_MEMORY_BYTES = 6 * 1024**3
 
 _executor_lock = threading.RLock()
 _executor = None
+_heavy_executor = None
 _executor_shutdown = False
 _active_futures: list[concurrent.futures.Future] = []
 
@@ -16,14 +25,41 @@ def get_executor():
     global _executor
     with _executor_lock:
         if _executor is None:
-            max_workers = compute_worker_count("io")
+            max_workers = compute_worker_count(KIND_IO)
             _executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="korshmer"
             )
     return _executor
 
 
-def run_async(func, *args, cancel_token=None, **kwargs):
+def heavy_worker_count():
+    by_cpu = compute_worker_count(KIND_COMPUTE)
+    by_memory = int(psutil.virtual_memory().total) // HEAVY_JOB_MEMORY_BYTES
+    return max(1, min(by_cpu, by_memory))
+
+
+def get_heavy_executor():
+    global _heavy_executor
+    with _executor_lock:
+        if _heavy_executor is None:
+            _heavy_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=heavy_worker_count(),
+                thread_name_prefix="korshmer-heavy",
+            )
+    return _heavy_executor
+
+
+def run_heavy(func, *args, cancel_token=None, **kwargs):
+    return run_async(
+        func,
+        *args,
+        cancel_token=cancel_token,
+        executor_for=get_heavy_executor,
+        **kwargs,
+    )
+
+
+def run_async(func, *args, cancel_token=None, executor_for=None, **kwargs):
     if cancel_token is not None:
         original = func
 
@@ -36,7 +72,8 @@ def run_async(func, *args, cancel_token=None, **kwargs):
         if _executor_shutdown:
             raise RuntimeError("Cannot submit tasks during shutdown")
         _active_futures[:] = [f for f in _active_futures if not f.done()]
-        future = get_executor().submit(func, *args, **kwargs)
+        pool = (executor_for or get_executor)()
+        future = pool.submit(func, *args, **kwargs)
         _active_futures.append(future)
     return future
 
@@ -152,7 +189,7 @@ try:
             total_files = len(self.file_paths)
 
             futures = [
-                run_async(
+                run_heavy(
                     self._process_single_file,
                     i,
                     path,

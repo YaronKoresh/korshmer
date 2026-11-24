@@ -54,6 +54,8 @@ AUDIO_EXTENSIONS = (
     ".aiff",
     ".aif",
     ".m4a",
+    ".aac",
+    ".au",
 )
 MIDI_EXTENSIONS = (".mid", ".midi")
 CLICK_DRAG_THRESHOLD_PX = 3
@@ -64,7 +66,8 @@ VELOCITY_WHEEL_STEP = 5
 VELOCITY_WHEEL_GROUP_SECONDS = 0.8
 
 
-MIN_ZOOM = 0.1
+MIN_ZOOM = 0.01
+MIN_ZOOM_Y = 0.1
 HOME_PITCH = 66
 SILENT_ROWS_COLOR = QColor(0, 0, 0, 28)
 OUT_OF_RANGE_MESSAGE = (
@@ -72,6 +75,13 @@ OUT_OF_RANGE_MESSAGE = (
     "so it will be silent. Place it inside the white area."
 )
 MAX_ZOOM = 100.0
+MIN_BEATS_PER_BAR = 1
+MAX_BEATS_PER_BAR = 32
+FIT_EMPTY_BARS = 8
+FIT_MARGIN = 1.04
+FOLLOW_EDGE_PX = 50.0
+FOLLOW_LEAD = 0.1
+BACKGROUND_PAD_PX = 3.0
 
 
 def clamp_zoom(value, lower=MIN_ZOOM, upper=MAX_ZOOM):
@@ -148,9 +158,10 @@ class PianoKeyItem(QGraphicsRectItem):
     def set_track_style(self, color, track_name, muted=False):
         if color:
             self.color = QColor(color)
+        renamed = self.track_name != (track_name or "")
         self.track_name = track_name or ""
         self.dim_alpha = MUTED_TRACK_ALPHA if muted else 1.0
-        self.refresh_style()
+        self.refresh_style(tooltip=renamed)
 
     def set_velocity(self, velocity):
         self.velocity = clamp_velocity(velocity)
@@ -162,13 +173,14 @@ class PianoKeyItem(QGraphicsRectItem):
         self.update_tooltip()
         self.update()
 
-    def refresh_style(self):
+    def refresh_style(self, tooltip=True):
         fill, pen_color = NoteRenderer.note_colors(
             self.color, self.velocity, self.dim_alpha
         )
         self.setBrush(QBrush(fill))
         self.setPen(QPen(pen_color, 1))
-        self.update_tooltip()
+        if tooltip:
+            self.update_tooltip()
 
     def current_pitch(self):
         pitch = int(round(127 - self.y() / self.grid_y))
@@ -333,7 +345,7 @@ class InteractivePianoRoll(QGraphicsView):
         self.setDragMode(QGraphicsView.RubberBandDrag)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setViewportUpdateMode(QGraphicsView.MinimalViewportUpdate)
         self.setBackgroundBrush(QColor(MAT_BG))
         self.setFocusPolicy(Qt.StrongFocus)
 
@@ -343,10 +355,12 @@ class InteractivePianoRoll(QGraphicsView):
         self._default_velocity = clamp_velocity(100)
         self.playback_offset = 0
         self.is_monitoring = False
+        self.follow_playhead = True
 
         self._current_track_id = None
         self._note_items = {}
         self._clip_items = {}
+        self._applied_looks = {}
         self._lane_item = None
         self._clipboard = []
         self._press_pos = None
@@ -362,8 +376,6 @@ class InteractivePianoRoll(QGraphicsView):
             self.vm.total_divisions * self.vm.grid_size,
         )
         self.setAcceptDrops(True)
-
-        self.scene.changed.connect(lambda: self.notes_changed.emit())
 
     def _create_playhead(self):
         playhead = QGraphicsLineItem(0, 0, 0, self._rows_height())
@@ -397,6 +409,7 @@ class InteractivePianoRoll(QGraphicsView):
         self.vm.pixels_per_second = value
         for item in getattr(self, "_note_items", {}).values():
             item.grid_origin = self.vm.grid_offset_x
+        self.viewport().update()
 
     @property
     def tempo(self):
@@ -407,6 +420,7 @@ class InteractivePianoRoll(QGraphicsView):
         value = validate_bpm(value)
         self.vm.tempo = value
         self.model.tempo = value
+        self.viewport().update()
 
     @property
     def divisions_per_octave(self):
@@ -457,6 +471,7 @@ class InteractivePianoRoll(QGraphicsView):
         self.grid_divisions = max(1, int(divisions))
         for item in self._note_items.values():
             item.grid_divisions = self.grid_divisions
+        self.viewport().update()
 
     def set_snap(self, enabled):
         self.snap_enabled = bool(enabled)
@@ -485,6 +500,22 @@ class InteractivePianoRoll(QGraphicsView):
         for item in self._note_items.values():
             item.grid_origin = self.vm.grid_offset_x
         self.viewport().update()
+
+    @property
+    def beats_per_bar(self):
+        return self.vm.beats_per_bar
+
+    def set_beats_per_bar(self, beats):
+        if isinstance(beats, bool) or not isinstance(beats, int):
+            raise ValueError("Beats per bar must be a whole number")
+        if not MIN_BEATS_PER_BAR <= beats <= MAX_BEATS_PER_BAR:
+            raise ValueError(
+                f"Beats per bar must be between {MIN_BEATS_PER_BAR} and "
+                f"{MAX_BEATS_PER_BAR}"
+            )
+        if beats != self.vm.beats_per_bar:
+            self.vm.beats_per_bar = beats
+            self.viewport().update()
 
     def detect_grid_offset(self, midi):
         from korshmer.midi_generation.song_match import estimate_offset
@@ -569,7 +600,7 @@ class InteractivePianoRoll(QGraphicsView):
             height,
             scale_x,
             scale_y,
-            caption_right=visible.right(),
+            caption_right=min(visible.right(), rect.right()),
         )
         for item in self._clip_items.values():
             item.set_lane(top, height, padding)
@@ -584,6 +615,7 @@ class InteractivePianoRoll(QGraphicsView):
 
     def scrollContentsBy(self, dx, dy):
         super().scrollContentsBy(dx, dy)
+        self.viewport().update()
         if self._clip_items:
             self._sync_clip_lane()
 
@@ -596,14 +628,14 @@ class InteractivePianoRoll(QGraphicsView):
         transform = self.transform()
         cur_x = transform.m11()
         cur_y = transform.m22()
-        adj_x = sx
-        adj_y = sy
+        adj_x = 1.0
+        adj_y = 1.0
 
         if cur_x > 0 and math.isfinite(sx) and sx > 0:
             target = clamp_zoom(cur_x * sx)
             adj_x = (target / cur_x) if target is not None else 1.0
         if cur_y > 0 and math.isfinite(sy) and sy > 0:
-            target = clamp_zoom(cur_y * sy)
+            target = clamp_zoom(cur_y * sy, MIN_ZOOM_Y)
             adj_y = (target / cur_y) if target is not None else 1.0
 
         super().scale(adj_x, adj_y)
@@ -685,6 +717,7 @@ class InteractivePianoRoll(QGraphicsView):
             item.setRect(0, 0, width, item.rect().height())
             item.snap_enabled = snapping
             item.set_slide(note.slide)
+        self.notes_changed.emit()
 
     def get_beat_width(self):
         return self.vm.beat_width
@@ -725,9 +758,9 @@ class InteractivePianoRoll(QGraphicsView):
             min_scale_y = (
                 viewport_height / total_scene_height
                 if total_scene_height > 0
-                else MIN_ZOOM
+                else MIN_ZOOM_Y
             )
-            lower_y = max(MIN_ZOOM, min_scale_y)
+            lower_y = max(MIN_ZOOM_Y, min_scale_y)
             upper_y = max(lower_y, MAX_ZOOM)
             target = clamp_zoom(scale_y * factor_y, lower_y, upper_y)
             if target is not None:
@@ -763,17 +796,22 @@ class InteractivePianoRoll(QGraphicsView):
             self.focus_notes()
 
     def drawBackground(self, painter, rect):
-        painter.fillRect(rect, self.backgroundBrush())
+        scale_x, scale_y = self._view_scales()
+        pad_x = BACKGROUND_PAD_PX / scale_x
+        pad_y = BACKGROUND_PAD_PX / scale_y
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        whole = visible.adjusted(-pad_x, -pad_y, pad_x, pad_y)
+        painter.fillRect(whole, self.backgroundBrush())
         for top, bottom in self.silent_row_spans():
             painter.fillRect(
-                QRectF(rect.left(), top, rect.width(), bottom - top),
+                QRectF(whole.left(), top, whole.width(), bottom - top),
                 SILENT_ROWS_COLOR,
             )
         GridPainter.draw_background(
             painter,
             rect,
             self.transform(),
-            self.mapToScene(self.viewport().rect()).boundingRect(),
+            visible,
             self.vm,
             self.grid_divisions,
             CLIP_LANE_HEIGHT if self.has_clip_lane() else 0,
@@ -825,6 +863,7 @@ class InteractivePianoRoll(QGraphicsView):
             changed = self.sync_model_from_scene()
             if changed:
                 self._update_scene_rect()
+                self.notes_changed.emit()
                 if isinstance(press_item, AudioClipItem):
                     self.clips_changed.emit()
                 self.model_changed.emit()
@@ -882,6 +921,7 @@ class InteractivePianoRoll(QGraphicsView):
         self.scene.clearSelection()
         item.setSelected(True)
         self._update_scene_rect()
+        self.notes_changed.emit()
         self.model_changed.emit()
         low, high = playable_range(track.program, track.is_drum)
         if not low <= pitch <= high:
@@ -946,6 +986,7 @@ class InteractivePianoRoll(QGraphicsView):
         item = self._add_clip_item(clip)
         self._update_scene_rect()
         self.viewport().update()
+        self.notes_changed.emit()
         return item
 
     def clip_id_for_menu(self, position=None):
@@ -963,6 +1004,7 @@ class InteractivePianoRoll(QGraphicsView):
         item.refresh_geometry(self.vm.pixels_per_second)
         self._update_scene_rect()
         self.viewport().update()
+        self.notes_changed.emit()
 
     def trim_clip(self, clip_id, start, end):
         if start is None or end is None:
@@ -974,6 +1016,7 @@ class InteractivePianoRoll(QGraphicsView):
             if item is not None:
                 item.refresh_geometry()
             self._update_scene_rect()
+            self.notes_changed.emit()
             self.clips_changed.emit()
             self.model_changed.emit()
         return changed
@@ -988,6 +1031,7 @@ class InteractivePianoRoll(QGraphicsView):
         if item is not None:
             item.update_tooltip()
             item.update()
+        self.notes_changed.emit()
         self.clips_changed.emit()
         self.model_changed.emit()
 
@@ -1017,6 +1061,7 @@ class InteractivePianoRoll(QGraphicsView):
         self._press_item = None
         self.scene.clear()
         self.playhead = self._create_playhead()
+        self._applied_looks = self._track_looks()
 
         tracks = self.model.tracks
         for note in self.model.notes:
@@ -1036,6 +1081,76 @@ class InteractivePianoRoll(QGraphicsView):
 
         self._update_scene_rect()
         self.viewport().update()
+        self.notes_changed.emit()
+
+    def _track_looks(self):
+        return {
+            track_id: (
+                track.color,
+                track.name,
+                track.muted,
+                track.visible,
+                track.program,
+                track.is_drum,
+            )
+            for track_id, track in self.model.tracks.items()
+        }
+
+    def sync_with_model(self):
+        tracks = self.model.tracks
+        looks = self._track_looks()
+        changed = {
+            track_id
+            for track_id in set(looks) | set(self._applied_looks)
+            if looks.get(track_id) != self._applied_looks.get(track_id)
+        }
+        sounds_changed = any(
+            looks.get(track_id, ())[4:]
+            != self._applied_looks.get(track_id, ())[4:]
+            for track_id in changed
+        )
+        self._applied_looks = looks
+        present = {note.id for note in self.model.notes}
+        reshaped = False
+        for note_id, item in list(self._note_items.items()):
+            if item.track_id not in changed and note_id in present:
+                continue
+            track = tracks.get(item.track_id)
+            if track is None or not track.visible or note_id not in present:
+                if self._press_item is item:
+                    self._press_item = None
+                self.scene.removeItem(item)
+                del self._note_items[note_id]
+                reshaped = True
+            else:
+                item.set_track_style(track.color, track.name, track.muted)
+        for note in self.model.notes:
+            if note.id in self._note_items:
+                continue
+            track = tracks.get(note.track_id)
+            if track is None or not track.visible:
+                continue
+            item = self._make_note_item(note, track)
+            self.scene.addItem(item)
+            self._note_items[note.id] = item
+            reshaped = True
+        clips = {clip.id: clip for clip in self.model.clips}
+        for clip_id, item in list(self._clip_items.items()):
+            if clip_id not in clips:
+                self.scene.removeItem(item)
+                del self._clip_items[clip_id]
+                reshaped = True
+            else:
+                item.refresh_geometry(self.vm.pixels_per_second)
+        for clip_id, clip in clips.items():
+            if clip_id not in self._clip_items:
+                self._add_clip_item(clip)
+                reshaped = True
+        if reshaped or clips:
+            self._update_scene_rect()
+        if reshaped or sounds_changed:
+            self.viewport().update()
+        self.notes_changed.emit()
 
     def _adopt_orphan_items(self):
         orphans = [
@@ -1059,6 +1174,7 @@ class InteractivePianoRoll(QGraphicsView):
             item.track_id = track.id
             item.set_track_style(track.color, track.name, track.muted)
             self._note_items[note.id] = item
+        self.notes_changed.emit()
 
     def sync_model_from_scene(self):
         self._adopt_orphan_items()
@@ -1160,7 +1276,7 @@ class InteractivePianoRoll(QGraphicsView):
         self.model.remove_notes(note_ids)
         for clip_id in clip_ids:
             self.model.remove_clip(clip_id)
-        self.load_model()
+        self.sync_with_model()
         if clip_ids:
             self.clips_changed.emit()
         self.model_changed.emit()
@@ -1303,6 +1419,7 @@ class InteractivePianoRoll(QGraphicsView):
         self.model.adjust_notes_velocity(
             note_ids, delta_sign * VELOCITY_WHEEL_STEP
         )
+        self.notes_changed.emit()
         self.model_changed.emit()
 
     def undo(self):
@@ -1417,6 +1534,32 @@ class InteractivePianoRoll(QGraphicsView):
             return
         super().keyPressEvent(event)
 
+    def set_follow_playhead(self, enabled):
+        self.follow_playhead = bool(enabled)
+        if self.follow_playhead and self.is_monitoring:
+            self._show_playhead(self.playhead.line().x1())
+
+    def _playhead_span(self):
+        scale_x, _ = self._view_scales()
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        return visible.left(), visible.right() - FOLLOW_EDGE_PX / scale_x
+
+    def _show_playhead(self, x):
+        scale_x, _ = self._view_scales()
+        visible = self.mapToScene(self.viewport().rect()).boundingRect()
+        wanted_left = x - visible.width() * FOLLOW_LEAD
+        bar = self.horizontalScrollBar()
+        bar.setValue(
+            bar.value() + int(round((wanted_left - visible.left()) * scale_x))
+        )
+
+    def _follow(self, previous, x):
+        left, edge = self._playhead_span()
+        jumped_back = x < previous and not left <= x <= edge
+        ran_off_right = left <= previous <= edge < x
+        if jumped_back or ran_off_right:
+            self._show_playhead(x)
+
     def set_playhead_time(self, seconds):
         x = self.vm.time_to_x(max(0.0, float(seconds)))
         self.playhead.setLine(x, 0, x, self._rows_height())
@@ -1424,20 +1567,30 @@ class InteractivePianoRoll(QGraphicsView):
     def update_playhead(self, ms):
         if not self.is_monitoring:
             return
+        previous = self.playhead.line().x1()
         x = self.vm.playhead_x(ms)
         self.playhead.setLine(x, 0, x, self._rows_height())
-        if (
-            x
-            > self.mapToScene(self.viewport().rect()).boundingRect().right()
-            - 50
-        ):
-            self.centerOn(
-                x,
-                self.mapToScene(self.viewport().rect())
-                .boundingRect()
-                .center()
-                .y(),
-            )
+        if self.follow_playhead:
+            self._follow(previous, x)
+
+    def song_width(self):
+        right = 0.0
+        for items in (self._note_items, self._clip_items):
+            for item in items.values():
+                right = max(right, item.x() + item.rect().width())
+        if right > 0:
+            return right
+        return FIT_EMPTY_BARS * self.vm.beats_per_bar * self.vm.beat_width
+
+    def zoom_to_fit(self):
+        room = self.viewport().width()
+        target = clamp_zoom(room / (self.song_width() * FIT_MARGIN))
+        if target is not None:
+            scale_x, _ = self._view_scales()
+            self.scale(target / scale_x, 1.0)
+        bar = self.horizontalScrollBar()
+        bar.setValue(bar.minimum())
+        return self.transform().m11()
 
     def _queue_zoom(self, factor_x, factor_y):
 

@@ -15,6 +15,7 @@ from korshmer.constants import (
 )
 from korshmer.event_bus import Event, publish
 from korshmer.midi.utils import generate_piano_roll_image
+from korshmer.mixins.files import is_audio_path, reveal_folder
 from korshmer.mixins.path_guard import reject_unsafe_path
 from korshmer.project_management.validators.project_validator import (
     resolve_inside,
@@ -122,17 +123,14 @@ class CoreActionsMixin:
                 QMessageBox.information(
                     self, "Success", f"File saved successfully:\n{save_path}"
                 )
-                parent_dir = os.path.dirname(save_path)
-                if sys.platform == "win32":
-                    os.startfile(parent_dir)
-                else:
-                    subprocess.call(["open", parent_dir])
             except Exception as e:
                 QMessageBox.critical(
                     self, "Error", f"Conversion failed:\n{str(e)}"
                 )
+                return
             finally:
                 publish(Event.CONVERT_BUTTON_STATE, enabled=True)
+            reveal_folder(os.path.dirname(save_path))
 
     def run_json_export(self):
 
@@ -211,20 +209,10 @@ class CoreActionsMixin:
             self, "Select Folder for Processing"
         )
         if folder:
-            valid_extensions = (
-                ".mp3",
-                ".wav",
-                ".flac",
-                ".ogg",
-                ".oga",
-                ".opus",
-                ".aiff",
-                ".aif",
-            )
             count = 0
             for root, _dirs, files in os.walk(folder):
                 for f in files:
-                    if f.lower().endswith(valid_extensions):
+                    if is_audio_path(f):
                         self.add_file(os.path.join(root, f))
                         count += 1
             if count > 0:

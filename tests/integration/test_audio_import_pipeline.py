@@ -147,7 +147,9 @@ class TestAudioImportPipeline:
         audio = 0.3 * np.sin(2 * np.pi * 440 * t)
 
         output_file = tmp_path / "normalized.wav"
-        save_normalized_audio(audio, sample_rate, str(output_file))
+        save_normalized_audio(
+            audio, sample_rate, str(output_file), normalize=True
+        )
 
         assert output_file.exists()
         data, sr = sf.read(output_file)

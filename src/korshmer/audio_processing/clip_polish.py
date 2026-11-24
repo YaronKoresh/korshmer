@@ -10,6 +10,7 @@ from scipy import signal
 from scipy.ndimage import maximum_filter1d
 
 from korshmer.audio_processing import clip_elastic, clip_level, clip_tempo
+from korshmer.audio_processing.clip_stems import KINDS, MUSIC, VOCALS
 from korshmer.constants import DATA_DIR
 
 POLISHED_FOLDER = "clip_edits"
@@ -34,7 +35,8 @@ NOISE = "noise"
 QUALITY = "quality"
 ALIGN = "align"
 EARLIER_TAGS = re.compile(
-    rf"(_({NOISE_TAG}|{QUALITY_TAG}|{ELASTIC_TAG}|{TEMPO_TAG}[0-9.]*)"
+    rf"(_({NOISE_TAG}(?:{VOCALS}|{MUSIC})?|{QUALITY_TAG}|{ELASTIC_TAG}"
+    rf"|{TEMPO_TAG}[0-9.]*|{VOCALS}|{MUSIC})"
     rf"(_[0-9a-f]{{8}})?)+$"
 )
 NOISE_STAGE = "Removing background noise"
@@ -60,6 +62,7 @@ LOWEST_HEARD_HZ = 30.0
 MIN_PART_S = 0.6
 PART_EDGE_S = 0.05
 PART_BELOW_LOUDEST_DB = 15.0
+PART_NEARBY_S = 3.0
 PART_SILENT_DB = -120.0
 PART_LOUD_PERCENTILE = 90.0
 PART_SPARSE_SOUND_DB = 10.0
@@ -75,6 +78,8 @@ PART_SOUND_SHARE_OF_NOISE = 0.5
 SHORT_PART_S = 2.0
 ON_NEIGHBOUR = "nearby part"
 PART_FRAME = 1024
+PART_ROOM_S = 0.5
+PART_MIN_FADE_S = 0.01
 
 
 class ClipFixCancelled(Exception):
@@ -212,6 +217,16 @@ def clip_beat_shift(
     return None, SILENT
 
 
+def clip_file_beat_shift(
+    path, beats_at, start=0.0, offset=0.0, duration=None, grid_steps=None
+):
+    data, sample_rate = _read(path)
+    shift, _anchor = clip_beat_shift(
+        data, sample_rate, beats_at, start, offset, duration, grid_steps
+    )
+    return shift
+
+
 def clip_own_tempo(data, sample_rate, song_bpm, offset=0.0, duration=None):
     mono = _kept_part(data, sample_rate, offset, duration)
     if mono.shape[0] < MIN_PULSE_SECONDS * sample_rate:
@@ -220,18 +235,23 @@ def clip_own_tempo(data, sample_rate, song_bpm, offset=0.0, duration=None):
     return clip_tempo.own_tempo(seconds, weights, float(song_bpm))
 
 
-def remove_noise_file(path, folder=None):
-    from korshmer.audio_processing.vocal_cleanup import clean_vocal
+def remove_noise_file(path, folder=None, kind=VOCALS):
+    if kind == MUSIC:
+        from korshmer.audio_processing.music_cleanup import clean_music as clean
+    else:
+        from korshmer.audio_processing.vocal_cleanup import clean_vocal as clean
 
     data, sample_rate = _read(path)
     return _write(
-        fixed_clip_path(path, NOISE_TAG, folder),
-        clean_vocal(data, sample_rate),
+        fixed_clip_path(path, f"{NOISE_TAG}{kind}", folder),
+        clean(data, sample_rate),
         sample_rate,
     )
 
 
-def improve_quality_file(path, folder=None, notes=None, origin=0.0):
+def improve_quality_file(
+    path, folder=None, notes=None, origin=0.0, kind=VOCALS
+):
     from korshmer.audio_processing.clip_notes import beside_clip
 
     data, sample_rate = _read(path)
@@ -241,7 +261,7 @@ def improve_quality_file(path, folder=None, notes=None, origin=0.0):
         if heard is None
         else beside_clip(heard, sample_rate, origin, data.shape[0])
     )
-    improved, readings = clip_level.improve(data, sample_rate, music)
+    improved, readings = clip_level.improve(data, sample_rate, music, kind)
     if not readings or clip_level.unchanged(readings):
         return path, readings
     target = fixed_clip_path(path, QUALITY_TAG, folder)
@@ -303,7 +323,9 @@ def fix_clip(
     folder=None,
     notes=None,
     grid_steps=None,
+    kind=None,
 ):
+    kind = kind if kind in KINDS else VOCALS
     stages = _stages(steps, clip, song_bpm, notes, grid_steps)
     made = []
     done = 0
@@ -335,7 +357,7 @@ def fix_clip(
                     continue
                 if step == NOISE:
                     enter(NOISE_STAGE)
-                    fixed = remove_noise_file(current[role], folder)
+                    fixed = remove_noise_file(current[role], folder, kind)
                 else:
                     enter(QUALITY_STAGE)
                     fixed, readings = improve_quality_file(
@@ -343,6 +365,7 @@ def fix_clip(
                         folder,
                         notes if role == "path" else None,
                         clip.start - clip.offset,
+                        kind,
                     )
                     if role == "path":
                         result["readings"] = readings
@@ -505,19 +528,19 @@ def _usual_sound_db(levels):
     return max(usual, float(levels.max()) - PART_SPARSE_SOUND_DB)
 
 
-def _sound_threshold_db(levels, sample_rate, change=None):
-    loud = _usual_sound_db(levels)
-    lowest = loud - PART_BELOW_LOUDEST_DB
+def _nearby_sound_db(levels, sample_rate):
+    frames = max(1, int(PART_NEARBY_S * sample_rate / PART_FRAME)) | 1
+    return maximum_filter1d(levels, size=frames, mode="nearest")
+
+
+def _noise_threshold_db(levels, sample_rate, change, loud):
     lasting = _lasting_levels(levels, sample_rate)
-    pauses = np.maximum(
-        lasting[lasting <= np.percentile(lasting, PART_PAUSE_PERCENTILE)],
-        lowest,
-    )
+    pauses = lasting[lasting <= np.percentile(lasting, PART_PAUSE_PERCENTILE)]
     floor = float(np.max(pauses))
     steady = floor - float(np.min(pauses)) <= PART_STEADY_PAUSE_DB
     contrast = loud - floor
     if not steady:
-        return lowest
+        return loud - PART_BELOW_LOUDEST_DB
     if contrast >= PART_MIN_CONTRAST_DB:
         return floor + min(PART_RISE_OVER_PAUSE_DB, contrast / 2.0)
     if (
@@ -526,7 +549,14 @@ def _sound_threshold_db(levels, sample_rate, change=None):
         and _noise_between_sounds(levels, change, floor, loud)
     ):
         return floor + contrast / 2.0
-    return lowest
+    return loud - PART_BELOW_LOUDEST_DB
+
+
+def _sound_threshold_db(levels, sample_rate, change=None):
+    loud = _usual_sound_db(levels)
+    noise = _noise_threshold_db(levels, sample_rate, change, loud)
+    nearby = _nearby_sound_db(levels, sample_rate) - PART_BELOW_LOUDEST_DB
+    return np.maximum(noise, nearby)
 
 
 def _joined_spans(heard, frame, pause):
@@ -596,6 +626,41 @@ def _fix_trimmed(clip, span, length, whole, options):
     return result
 
 
+def _part_cuts(spans, first, last):
+    cuts = []
+    for index, (begin, end) in enumerate(spans):
+        before = spans[index - 1][1] if index else first
+        after = spans[index + 1][0] if index + 1 < len(spans) else last
+        cuts.append(
+            (
+                max(before, first, begin - PART_ROOM_S),
+                min(after, last, end + PART_ROOM_S),
+            )
+        )
+    return cuts
+
+
+def _faded(part, sample_rate, head_s, tail_s):
+    faded = np.array(part, dtype=np.float32, copy=True)
+    count = faded.shape[0]
+    for seconds, at_start in ((head_s, True), (tail_s, False)):
+        length = min(
+            count, max(1, int(max(seconds, PART_MIN_FADE_S) * sample_rate))
+        )
+        ramp = np.sin(
+            0.5 * np.pi * (np.arange(length, dtype=np.float32) + 0.5) / length
+        ).astype(np.float32)
+        if not at_start:
+            ramp = ramp[::-1]
+        if faded.ndim > 1:
+            ramp = ramp[:, np.newaxis]
+        if at_start:
+            faded[:length] *= ramp
+        else:
+            faded[count - length :] *= ramp
+    return faded
+
+
 def _short_parts_follow_neighbours(parts):
     steady = [part for part in parts if part.get("anchor") == ON_PULSE]
     for part in parts:
@@ -620,6 +685,7 @@ def fix_clip_parts(
     folder=None,
     notes=None,
     grid_steps=None,
+    kind=None,
 ):
     def whole():
         return fix_clip(
@@ -632,6 +698,7 @@ def fix_clip_parts(
             folder,
             notes,
             grid_steps,
+            kind,
         )
 
     if clip.source_path is not None:
@@ -655,6 +722,7 @@ def fix_clip_parts(
                 folder,
                 notes,
                 grid_steps,
+                kind,
             ),
         )
     if len(spans) < 2:
@@ -662,12 +730,25 @@ def fix_clip_parts(
     made = []
     parts = []
     try:
-        for number, (begin, end) in enumerate(spans, 1):
+        whole_s = data.shape[0] / sample_rate
+        kept_end = (
+            whole_s
+            if clip.duration is None
+            else min(whole_s, clip.offset + clip.duration)
+        )
+        cuts = _part_cuts(spans, clip.offset, kept_end)
+        for number, ((begin, end), (head, tail)) in enumerate(
+            zip(spans, cuts, strict=True), 1
+        ):
             cut = fixed_clip_path(clip.path, f"part{number}", folder)
-            first, last = int(begin * sample_rate), int(end * sample_rate)
-            _write(cut, data[first:last], sample_rate)
+            first, last = int(head * sample_rate), int(tail * sample_rate)
+            _write(
+                cut,
+                _faded(data[first:last], sample_rate, begin - head, tail - end),
+                sample_rate,
+            )
             made.append(cut)
-            piece = ClipAudio(cut, clip.start + begin - clip.offset)
+            piece = ClipAudio(cut, clip.start + head - clip.offset)
 
             def part_report(stage, done, total, number=number):
                 if report is not None:
@@ -687,6 +768,7 @@ def fix_clip_parts(
                 folder,
                 notes,
                 grid_steps,
+                kind,
             )
             fixed["start"] = piece.start
             fixed["seconds"] = end - begin

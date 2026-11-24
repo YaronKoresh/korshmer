@@ -9,8 +9,7 @@ from korshmer.audio_processing.dynamics import Compressor, Limiter
 
 def _python_compress(audio, **kw):
     out = np.zeros_like(audio)
-    for ch in range(audio.shape[0]):
-        kernels.compress_channel_python(audio[ch], out[ch], **kw)
+    kernels.compress_linked_python(audio, out, **kw)
     return out
 
 

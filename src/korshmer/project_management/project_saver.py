@@ -39,6 +39,17 @@ def save_compressed(project_data, project_path, temp_root):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+ALREADY_COMPRESSED_AUDIO = frozenset(
+    {".mp3", ".ogg", ".flac", ".m4a", ".opus", ".aac", ".wma"}
+)
+
+
+def _asset_storage(asset_path):
+    if asset_path.suffix.lower() in ALREADY_COMPRESSED_AUDIO:
+        return zipfile.ZIP_STORED
+    return zipfile.ZIP_DEFLATED
+
+
 def _archive_name(asset_path, used_names):
     name = asset_path.name
     counter = 1
@@ -90,7 +101,9 @@ def _write_archive(project_data, project_path, temp_dir):
         zf.write(manifest_path, "manifest.json")
 
         for asset_path, arcname in planned:
-            zf.write(asset_path, arcname)
+            zf.write(
+                asset_path, arcname, compress_type=_asset_storage(asset_path)
+            )
 
 
 def save_uncompressed(project_data, project_path):

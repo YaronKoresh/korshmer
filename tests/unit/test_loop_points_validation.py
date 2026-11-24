@@ -101,7 +101,7 @@ class TestAudioEngineLoop:
         assert eng.idx == 1050
 
     def test_cb_does_not_stop_with_loop(self):
-        import sounddevice as sd
+        from korshmer.core.audio_engine import sd
 
         eng = self._engine()
         eng.data = np.arange(10000, dtype="float32").reshape(-1, 1)

@@ -1,4 +1,5 @@
 import math
+from functools import lru_cache
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import (
@@ -17,6 +18,11 @@ MIN_CLIP_WIDTH = 40.0
 EDGE_GRAB_PIXELS = 8.0
 TRIM_HINT = "Drag the left or right edge to trim the clip."
 CLIP_CORNER_RADIUS = 6
+
+
+@lru_cache(maxsize=1)
+def caption_font():
+    return QFont("Tahoma", 8, QFont.Bold)
 
 
 class AudioClipItem(QGraphicsRectItem):
@@ -40,6 +46,7 @@ class AudioClipItem(QGraphicsRectItem):
         self.lane_padding = float(CLIP_LANE_PADDING)
         self.snap_provider = snap_provider
         self.mute_toggle = mute_toggle
+        self._waveform_shape = None
         super().__init__(
             0,
             0,
@@ -53,6 +60,7 @@ class AudioClipItem(QGraphicsRectItem):
             | QGraphicsItem.ItemSendsGeometryChanges
         )
         self.setAcceptHoverEvents(True)
+        self.setCacheMode(QGraphicsItem.DeviceCoordinateCache)
         self.setZValue(5)
         self.setCursor(Qt.OpenHandCursor)
         self.update_tooltip()
@@ -193,6 +201,7 @@ class AudioClipItem(QGraphicsRectItem):
         fill = self._fill_color()
         painter.setBrush(QBrush(fill))
         outline = QPen(Qt.white if self.isSelected() else fill.darker(150), 2)
+        outline.setCosmetic(True)
         painter.setPen(outline)
         painter.drawRoundedRect(rect, CLIP_CORNER_RADIUS, CLIP_CORNER_RADIUS)
         self._paint_waveform(painter, rect)
@@ -200,7 +209,7 @@ class AudioClipItem(QGraphicsRectItem):
             self._paint_hatching(painter, rect)
         self._paint_label(painter, rect)
 
-    def _paint_waveform(self, painter, rect):
+    def _visible_peaks(self):
         points = self.clip.waveform
         if points and self.clip.length > 0:
             first = int(len(points) * self.clip.offset / self.clip.length)
@@ -212,25 +221,54 @@ class AudioClipItem(QGraphicsRectItem):
                 )
             )
             points = points[first : max(first + 2, last)]
-        if not points or rect.width() < 8:
-            return
+        return points
+
+    def _build_waveform(self, rect):
+        points = self._visible_peaks()
+        if not points:
+            return None
         mid_y = rect.height() / 2.0
         half = max(1.0, mid_y - 4)
         step = rect.width() / max(1, len(points) - 1)
-        upper = QPolygonF()
+        upper = []
         lower = []
         for index, value in enumerate(points):
             amplitude = max(0.0, min(1.0, float(value))) * half
             x = index * step
             upper.append(QPointF(x, mid_y - amplitude))
             lower.append(QPointF(x, mid_y + amplitude))
-        for point in reversed(lower):
-            upper.append(point)
+        lower.reverse()
+        return QPolygonF(upper + lower)
+
+    def waveform_polygon(self):
+        rect = self.rect()
+        clip = self.clip
+        peaks = clip.waveform
+        key = (
+            len(peaks),
+            clip.offset,
+            clip.duration,
+            clip.length,
+            rect.width(),
+            rect.height(),
+        )
+        cached = self._waveform_shape
+        if cached is None or cached[0] is not peaks or cached[1] != key:
+            cached = (peaks, key, self._build_waveform(rect))
+            self._waveform_shape = cached
+        return cached[2]
+
+    def _paint_waveform(self, painter, rect):
+        if rect.width() < 8:
+            return
+        polygon = self.waveform_polygon()
+        if polygon is None:
+            return
         painter.setPen(Qt.NoPen)
         painter.setBrush(
             QBrush(QColor(255, 255, 255, 60 if self.clip.muted else 150))
         )
-        painter.drawPolygon(upper)
+        painter.drawPolygon(polygon)
 
     def _paint_hatching(self, painter, rect):
         painter.save()
@@ -247,7 +285,7 @@ class AudioClipItem(QGraphicsRectItem):
         if rect.width() < 24:
             return
         painter.setPen(QColor(255, 255, 255, 230))
-        painter.setFont(QFont("Tahoma", 8, QFont.Bold))
+        painter.setFont(caption_font())
         label = self.clip.name
         if self.clip.muted:
             label = f"{label} (muted)"
@@ -284,7 +322,7 @@ class ClipLaneBackgroundItem(QGraphicsRectItem):
         painter.drawRect(rect)
         painter.setPen(QPen(QColor(0, 0, 0, 90), 1))
         painter.drawLine(rect.bottomLeft(), rect.bottomRight())
-        font = QFont("Tahoma", 8, QFont.Bold)
+        font = caption_font()
         caption = "AUDIO CLIPS"
         text_width = QFontMetrics(font).horizontalAdvance(caption)
         if self.caption_right is None:

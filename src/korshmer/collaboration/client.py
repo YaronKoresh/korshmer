@@ -19,7 +19,11 @@ except ImportError:
 
 class CollaborationClient:
     def __init__(
-        self, server_url: str, session_id: str, peer_id: str | None = None
+        self,
+        server_url: str,
+        session_id: str,
+        peer_id: str | None = None,
+        token: str | None = None,
     ):
         if not _HAS_WEBSOCKETS:
             raise ImportError(
@@ -29,13 +33,14 @@ class CollaborationClient:
         self.server_url = server_url
         self.session_id = session_id
         self.peer_id = peer_id or new_id()
+        self.token = token
         self.websocket: Any | None = None
         self.on_operation_callback: Callable[[Operation], None] | None = None
         self.logger = logging.getLogger(__name__)
 
     async def connect(self):
         try:
-            self.websocket = await websockets.connect(self.server_url)
+            self.websocket = await self._open()
             asyncio.create_task(self._receive_loop())
             self.logger.info(
                 f"Connected to collaboration server: {self.server_url}"
@@ -43,6 +48,19 @@ class CollaborationClient:
         except Exception as e:
             self.logger.error(f"Failed to connect: {e}")
             raise
+
+    async def _open(self):
+        if not self.token:
+            return await websockets.connect(self.server_url)
+        headers = {"Authorization": f"Bearer {self.token}"}
+        try:
+            return await websockets.connect(
+                self.server_url, additional_headers=headers
+            )
+        except TypeError:
+            return await websockets.connect(
+                self.server_url, extra_headers=headers
+            )
 
     async def disconnect(self):
         if self.websocket:

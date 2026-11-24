@@ -1,3 +1,5 @@
+from functools import lru_cache
+
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QFont, QPen, QPolygonF
 
@@ -8,6 +10,26 @@ MUTED_TRACK_ALPHA = 0.4
 MIN_NOTE_WIDTH_PX = 2.0
 SLIDE_MARK_ALPHA = 0.9
 SLIDE_MARK_WIDTH_PX = 14.0
+MIN_LABEL_ALPHA = 0.35
+
+
+@lru_cache(maxsize=1)
+def label_font():
+    return QFont("Tahoma", 8, QFont.Bold)
+
+
+@lru_cache(maxsize=1)
+def selection_pen():
+    pen = QPen(Qt.white, 2)
+    pen.setCosmetic(True)
+    return pen
+
+
+@lru_cache(maxsize=8)
+def label_pen(dim_alpha):
+    color = QColor(255, 255, 255)
+    color.setAlphaF(max(MIN_LABEL_ALPHA, dim_alpha))
+    return QPen(color)
 
 
 class NoteRenderer:
@@ -84,7 +106,7 @@ class NoteRenderer:
     def paint_note(painter, rect, fill_brush, pen, selected, label, dim_alpha):
         if selected:
             painter.setBrush(fill_brush.color().lighter(130))
-            painter.setPen(QPen(Qt.white, 2))
+            painter.setPen(selection_pen())
         else:
             painter.setBrush(fill_brush)
             painter.setPen(pen)
@@ -92,10 +114,8 @@ class NoteRenderer:
         painter.drawRoundedRect(rect, 4, 4)
 
         if rect.width() > 24 and label:
-            text_color = QColor(255, 255, 255)
-            text_color.setAlphaF(max(0.35, dim_alpha))
-            painter.setPen(text_color)
-            painter.setFont(QFont("Tahoma", 8, QFont.Bold))
+            painter.setPen(label_pen(dim_alpha))
+            painter.setFont(label_font())
             painter.drawText(rect, Qt.AlignCenter, label)
 
     @staticmethod

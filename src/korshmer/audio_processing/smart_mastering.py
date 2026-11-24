@@ -46,9 +46,13 @@ EXCITER_HIGH_HZ = 22000.0
 EXCITER_BAND_COUNT = 40
 EXCITER_WORKING_BYTES = 1.5e9
 SATURATION_BLOCK = 1 << 18
-MASTERING_PEAK_COPIES = 12
+MASTERING_PEAK_COPIES = 15
 LIMITER_BLOCK = 1 << 20
-EXCITER_COPIES_PER_BAND = 3
+EXCITER_COPIES_PER_BAND = 4
+EXCITER_SHARED_COPIES = 6
+EXCITER_MAX_BANDS_AT_ONCE = (
+    MASTERING_PEAK_COPIES - EXCITER_SHARED_COPIES
+) // EXCITER_COPIES_PER_BAND
 EXCITER_BANDS_PER_OCTAVE = 10
 EXCITER_FILTER_ORDER = 4
 EXCITER_MAX_HARMONIC_ORDER = 7
@@ -678,7 +682,13 @@ def _bands_at_once(band_count: int, song_bytes: int) -> int:
         EXCITER_WORKING_BYTES // (EXCITER_COPIES_PER_BAND * song_bytes)
     )
     return max(
-        1, min(band_count, compute_worker_count(KIND_COMPUTE), affordable)
+        1,
+        min(
+            band_count,
+            compute_worker_count(KIND_COMPUTE),
+            affordable,
+            EXCITER_MAX_BANDS_AT_ONCE,
+        ),
     )
 
 

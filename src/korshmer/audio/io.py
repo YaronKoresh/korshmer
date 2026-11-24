@@ -9,8 +9,12 @@ import soundfile as sf
 
 from korshmer.constants import DATA_DIR, TEMP_DIR
 
+PEAK_CEILING = 0.95
 
-def _save_normalized_audio_internal(path, audio_data, sample_rate):
+
+def _save_normalized_audio_internal(
+    path, audio_data, sample_rate, normalize=False
+):
     start_time = time.time()
     try:
         path = Path(path)
@@ -24,8 +28,8 @@ def _save_normalized_audio_internal(path, audio_data, sample_rate):
                 audio_data, nan=0.0, posinf=0.0, neginf=0.0
             )
         max_val = np.max(np.abs(audio_data))
-        if max_val > 0:
-            audio_data = (audio_data / max_val) * 0.95
+        if max_val > PEAK_CEILING or (normalize and max_val > 0):
+            audio_data = (audio_data / max_val) * PEAK_CEILING
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             sf.write(str(path), audio_data, sample_rate)
@@ -37,7 +41,7 @@ def _save_normalized_audio_internal(path, audio_data, sample_rate):
 
 
 def save_normalized_audio(
-    audio_or_path, sample_rate_or_audio, output_path_or_sr=None
+    audio_or_path, sample_rate_or_audio, output_path_or_sr=None, normalize=False
 ):
 
     if isinstance(audio_or_path, (str, Path)):
@@ -49,7 +53,7 @@ def save_normalized_audio(
         sample_rate = sample_rate_or_audio
         path = output_path_or_sr
 
-    _save_normalized_audio_internal(path, audio_data, sample_rate)
+    _save_normalized_audio_internal(path, audio_data, sample_rate, normalize)
 
 
 def cleanup_temp_files():

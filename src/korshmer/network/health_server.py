@@ -36,6 +36,11 @@ LOG_STREAM_PATH = "/health/logs/stream"
 MAX_LOG_LIMIT = 1000
 STREAM_KEEPALIVE_SECONDS = 15.0
 STREAM_POLL_SECONDS = 1.0
+MAX_STREAM_CLIENTS = 8
+REQUEST_TIMEOUT_SECONDS = 30.0
+LOCAL_HOST_NAMES = ("127.0.0.1", "localhost", "[::1]")
+UNSPECIFIED_HOSTS = ("", "0.0.0.0", "::")
+DEFAULT_HTTP_PORT = 80
 
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; "
@@ -140,6 +145,7 @@ class HealthServer:
         self._clock = clock
         self.log_stream = log_stream
         self._stopping = threading.Event()
+        self._stream_slots = threading.BoundedSemaphore(MAX_STREAM_CLIENTS)
         self._started_at = clock()
         self._lock = threading.Lock()
         self._checks: dict[str, Check] = {}
@@ -272,9 +278,24 @@ class HealthServer:
             return 200, {"status": STATUS_OK, "traces": tracer.snapshot()}
         return 404, {"status": STATUS_ERROR, "detail": "not found"}
 
+    def _own_names(self) -> set[str]:
+        names = set(LOCAL_HOST_NAMES)
+        bound = str(self.host).strip().lower()
+        if bound not in UNSPECIFIED_HOSTS:
+            names.add(f"[{bound}]" if ":" in bound else bound)
+        return names
+
+    def host_allowed(self, host_header: str | None) -> bool:
+        host = (host_header or "").strip().lower()
+        names = self._own_names()
+        if host in {f"{name}:{self.port}" for name in names}:
+            return True
+        return self.port == DEFAULT_HTTP_PORT and host in names
+
     def stream_logs(self, handler: BaseHTTPRequestHandler) -> None:
         parts = urlsplit(handler.path)
-        if self.log_stream is None:
+        stream = self.log_stream
+        if stream is None:
             handler.send_error(404, "log streaming is off")
             return
         params, error = self._log_query(
@@ -283,6 +304,23 @@ class HealthServer:
         if params is None:
             handler.send_error(400, error)
             return
+        slots, stopping = self._stream_slots, self._stopping
+        if not slots.acquire(blocking=False):
+            handler.close_connection = True
+            handler.send_error(503, "too many log stream clients")
+            return
+        try:
+            self._stream_entries(handler, stream, params, stopping)
+        finally:
+            slots.release()
+
+    def _stream_entries(
+        self,
+        handler: BaseHTTPRequestHandler,
+        stream: LogStreamHandler,
+        params: dict[str, Any],
+        stopping: threading.Event,
+    ) -> None:
         handler.send_response(200)
         handler.send_header("Content-Type", "text/event-stream")
         handler.send_header("Cache-Control", "no-store")
@@ -290,10 +328,9 @@ class HealthServer:
         handler.end_headers()
         handler.close_connection = True
         since = params.pop("since")
-        stream = self.log_stream
         idle = 0.0
         try:
-            while not self._stopping.is_set() and not stream.closed:
+            while not stopping.is_set() and not stream.closed:
                 entries, last_seq, _ = stream.read(since=since, **params)
                 if entries:
                     chunks = [
@@ -320,12 +357,23 @@ class HealthServer:
         health = self
 
         class Handler(BaseHTTPRequestHandler):
+            timeout = REQUEST_TIMEOUT_SECONDS
+
+            def _local(self) -> bool:
+                if health.host_allowed(self.headers.get("Host")):
+                    return True
+                self.close_connection = True
+                self.send_error(403, "Host not allowed")
+                return False
+
             def end_headers(self) -> None:
                 for name, value in SECURITY_HEADERS:
                     self.send_header(name, value)
                 super().end_headers()
 
             def do_GET(self) -> None:
+                if not self._local():
+                    return
                 if urlsplit(self.path).path.rstrip("/") == LOG_STREAM_PATH:
                     health.stream_logs(self)
                     return
@@ -333,6 +381,8 @@ class HealthServer:
                 self._send(code, body)
 
             def do_HEAD(self) -> None:
+                if not self._local():
+                    return
                 if urlsplit(self.path).path.rstrip("/") == LOG_STREAM_PATH:
                     self.send_response(200)
                     self.send_header("Content-Type", "text/event-stream")
@@ -343,6 +393,8 @@ class HealthServer:
                 self._send(code, body, include_body=False)
 
             def _refuse(self) -> None:
+                if not self._local():
+                    return
                 try:
                     length = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
@@ -390,7 +442,8 @@ class HealthServer:
             )
             return False
         server.daemon_threads = True
-        self._stopping.clear()
+        self._stopping = threading.Event()
+        self._stream_slots = threading.BoundedSemaphore(MAX_STREAM_CLIENTS)
         self.port = server.server_address[1]
         self._server = server
         self._thread = threading.Thread(

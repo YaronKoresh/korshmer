@@ -1,0 +1,87 @@
+name: Autobot Smart Link
+
+on:
+  issues:
+    types: [opened, reopened, closed]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  repository_dispatch:
+    types: [smart-link-alert]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  checks: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  autobot-smart-link:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Preflight trigger gate
+        id: preflight
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const eventName = context.eventName;
+            const payload = context.payload || {};
+            const action = String(payload.action || "").toLowerCase();
+            let shouldRun = true;
+            let reason = "accepted";
+
+            if (eventName === "repository_dispatch") {
+              const dispatchSource = payload.client_payload && (payload.client_payload.source || payload.client_payload);
+              const dispatchKind = String(dispatchSource && (dispatchSource.kind || dispatchSource.sourceKind || "")).toLowerCase();
+              if (dispatchKind !== "security_alert") {
+                shouldRun = false;
+                reason = `dispatch-kind:${dispatchKind || "unknown"}`;
+              }
+            }
+
+            core.setOutput("should_run", shouldRun ? "true" : "false");
+            core.setOutput("reason", reason);
+      - name: Analyze Unified Automation State
+        id: analyze
+        if: steps.preflight.outputs.should_run == 'true'
+        env:
+          UNIFIED_AUTOMATION_STATE_FILE: /tmp/autobot_smart_link_state.json
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const helperPath = `${process.env.GITHUB_WORKSPACE || process.cwd()}/.github/scripts/autobot/unified.cjs`;
+            const { analyzeUnifiedAutomationState } = require(helperPath);
+            const { owner, repo } = context.repo;
+            const outputs = await analyzeUnifiedAutomationState({
+              context,
+              core,
+              github,
+              owner,
+              repo,
+              stateFile: process.env.UNIFIED_AUTOMATION_STATE_FILE
+            });
+            for (const [name, value] of Object.entries(outputs)) {
+              core.setOutput(name, value);
+            }
+      - name: Apply Unified Automation State
+        if: steps.preflight.outputs.should_run == 'true' && steps.analyze.outputs.ready == 'true'
+        env:
+          UNIFIED_AUTOMATION_STATE_FILE: /tmp/autobot_smart_link_state.json
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const helperPath = `${process.env.GITHUB_WORKSPACE || process.cwd()}/.github/scripts/autobot/unified.cjs`;
+            const { applyUnifiedAutomationState } = require(helperPath);
+            const { owner, repo } = context.repo;
+            await applyUnifiedAutomationState({
+              context,
+              github,
+              owner,
+              repo,
+              stateFile: process.env.UNIFIED_AUTOMATION_STATE_FILE
+            });

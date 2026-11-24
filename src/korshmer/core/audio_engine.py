@@ -3,10 +3,10 @@ import logging
 import threading
 import time as _time
 from enum import IntEnum
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import psutil
-import sounddevice as sd
 import soundfile as sf
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -28,23 +28,33 @@ from korshmer.constants import (
     BUFFER_UNDERRUN_THRESHOLD,
     BUFFER_UNDERRUN_WINDOW_SECONDS,
     DEFAULT_PLAYBACK_BUFFER_SIZE,
+    DROPOUT_LOG_INTERVAL_SECONDS,
+    LOOP_LOAD_CHUNK_FRAMES,
     MAX_PLAYBACK_BUFFER_SIZE,
     MIN_PLAYBACK_BUFFER_SIZE,
     PERFORMANCE_LOGGER_NAME,
+    PREFETCH_START_WAIT_SECONDS,
     SEGMENT_CACHE_MAX_BYTES,
 )
 from korshmer.core.looper import Looper
 from korshmer.core.sample_trigger import SampleBank
 from korshmer.core.segment_cache import SegmentCache
+from korshmer.event_bus import Event, publish
 from korshmer.exceptions import AudioFileTooLargeError, AudioFormatError
 from korshmer.utils.audio_host import (
     active_output_latency,
     open_and_start_output_stream,
+    sounddevice_module,
 )
 from korshmer.utils.playback import validate_loop_points
 from korshmer.utils.tempo import validate_bpm
 from korshmer.utils.tracked_lock import TrackedLock
 from korshmer.workers.audio_worker import AudioPrefetcher
+
+if TYPE_CHECKING:
+    import sounddevice
+
+sd = sounddevice_module()
 
 
 class PlaybackState(IntEnum):
@@ -65,7 +75,7 @@ class AudioEngine(QObject):
         self.idx: int = 0
         self.loop_start_idx: int | None = None
         self.loop_end_idx: int | None = None
-        self.stream: sd.OutputStream | None = None
+        self.stream: sounddevice.OutputStream | None = None
         self._volume: float = 1.0
         self.current_path: str | None = None
         self.timer = QTimer()
@@ -96,6 +106,66 @@ class AudioEngine(QObject):
         self._perf_logger = logging.getLogger(PERFORMANCE_LOGGER_NAME)
         self._underrun_window_start: float | None = None
         self._low_load_since: float | None = None
+        self._dropouts_logged_at: float | None = None
+
+        self._preferred_buffer_size: int | None = None
+        self._stream_buffer_size: int | None = None
+        self._output_device: int | None = None
+        self._status_events: int = 0
+        self._reported_status_events: int = 0
+        self._last_status: object = None
+        self._loop_source: tuple[np.ndarray, int] | None = None
+
+    @property
+    def active_buffer_size(self) -> int:
+        if self.stream is not None and self._stream_buffer_size is not None:
+            return self._stream_buffer_size
+        return self._current_buffer_size
+
+    @property
+    def output_latency_ms(self) -> float:
+        latency = active_output_latency()
+        if latency <= 0 and self.stream is not None:
+            latency = self._stream_latency(self.stream)
+        return latency * 1000.0
+
+    @property
+    def output_device(self) -> int | None:
+        return self._output_device
+
+    @property
+    def dropout_count(self) -> int:
+        return self._total_underruns
+
+    @staticmethod
+    def _stream_latency(stream: Any) -> float:
+        try:
+            latency = float(stream.latency)
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+        return latency if 0.0 < latency < float("inf") else 0.0
+
+    def set_preferred_buffer_size(self, frames: int | None) -> None:
+        if frames is not None:
+            validate_buffer_size(frames)
+        with self._state_lock:
+            self._preferred_buffer_size = frames
+            if frames is None:
+                self._default_buffer_size = DEFAULT_PLAYBACK_BUFFER_SIZE
+            else:
+                self._default_buffer_size = frames
+            self._current_buffer_size = self._default_buffer_size
+            self._reset_buffer_tracking(_time.monotonic())
+
+    def set_output_device(self, index: int | None) -> None:
+        if index is not None and (
+            isinstance(index, bool) or not isinstance(index, int) or index < 0
+        ):
+            raise ValueError(
+                f"Output device must be a device number or None, got {index!r}"
+            )
+        with self._state_lock:
+            self._output_device = index
 
     def _transition_state(
         self, new_state: PlaybackState, caller: str = ""
@@ -161,6 +231,9 @@ class AudioEngine(QObject):
                 self._logger.error(f"Failed to read CPU load: {e}")
                 cpu_percent = 0.0
         with self._state_lock:
+            if self._preferred_buffer_size is not None:
+                self._reset_buffer_tracking(now)
+                return self._current_buffer_size
             if self._underrun_window_start is None:
                 self._underrun_window_start = now
             underruns = self._underrun_count
@@ -207,6 +280,10 @@ class AudioEngine(QObject):
     def _reduce_buffer_size(self) -> None:
         old_size = self._current_buffer_size
         new_size = max(self._min_buffer_size, self._current_buffer_size // 2)
+        if self._preferred_buffer_size is not None:
+            self._segment_cache.clear()
+            gc.collect()
+            return
 
         if new_size < old_size:
             self._current_buffer_size = new_size
@@ -341,17 +418,41 @@ class AudioEngine(QObject):
         if data is None:
             raise RuntimeError("No audio data is loaded")
         self.samples.configure(self.fs, data.shape[1])
-        self.stream = open_and_start_output_stream(
-            sd,
-            samplerate=self.fs,
-            channels=data.shape[1],
-            callback=self._cb,
-            latency="high",
-            blocksize=self._current_buffer_size,
-        )
+        options: dict[str, Any] = {
+            "samplerate": self.fs,
+            "channels": data.shape[1],
+            "callback": self._cb,
+            "latency": "high" if self._preferred_buffer_size is None else "low",
+            "blocksize": self._current_buffer_size,
+        }
+        self._stream_buffer_size = self._current_buffer_size
+        device = self.output_device
+        if device is not None:
+            try:
+                self.stream = self._open_chosen_device(device, options)
+                return
+            except (sd.PortAudioError, ValueError) as e:
+                self._output_device = None
+                message = (
+                    f"Could not open output device {device} ({e}); "
+                    "using the default output instead"
+                )
+                self._logger.warning(message)
+                publish(Event.STATUS_UPDATE, text=message)
+        self.stream = open_and_start_output_stream(sd, **options)
+
+    def _open_chosen_device(self, device: int, options: dict[str, Any]) -> Any:
+        stream = sd.OutputStream(device=device, **options)
+        try:
+            stream.start()
+        except BaseException:
+            stream.close()
+            raise
+        return stream
 
     def _start_stream(self) -> None:
         self._retry_cancel.clear()
+        self._start_prefetch()
         try:
             for attempt in range(1, AUDIO_DEVICE_OPEN_ATTEMPTS + 1):
                 try:
@@ -370,14 +471,16 @@ class AudioEngine(QObject):
                         AUDIO_DEVICE_RETRY_DELAY_SECONDS
                     ):
                         self._logger.info("Audio device retry cancelled")
+                        self._stop_prefetch()
                         return
             self._log_output_latency()
             self.timer.start()
-            self._start_prefetch()
         except sd.PortAudioError:
+            self._stop_prefetch()
             self._transition_state(PlaybackState.STOPPED, caller="play_error")
         except Exception as e:
             self._logger.error(f"Playback start error: {e}")
+            self._stop_prefetch()
             self._transition_state(PlaybackState.STOPPED, caller="play_error")
 
     def _close_failed_stream(self) -> None:
@@ -390,21 +493,49 @@ class AudioEngine(QObject):
             self._logger.debug(f"Failed stream close error: {e}")
 
     def _log_output_latency(self) -> None:
-        latency = active_output_latency()
+        latency = self.output_latency_ms
         if latency > 0:
             self._perf_logger.info(
-                f"Output latency: {latency * 1000:.1f} ms "
+                f"Output latency: {latency:.1f} ms "
                 f"(buffer {self._current_buffer_size} frames, {self.fs} Hz)"
             )
 
     def _log_audio_dropouts(self) -> None:
-        total = self._total_underruns
-        if total > self._logged_underruns:
-            self._perf_logger.warning(
-                f"Audio dropouts: +{total - self._logged_underruns} "
-                f"(total {total})"
+        total = self.dropout_count
+        if total <= self._logged_underruns:
+            return
+        now = _time.monotonic()
+        last = self._dropouts_logged_at
+        if last is not None and now - last < DROPOUT_LOG_INTERVAL_SECONDS:
+            return
+        self._perf_logger.warning(
+            f"Audio dropouts: +{total - self._logged_underruns} (total {total})"
+        )
+        self._logged_underruns = total
+        self._dropouts_logged_at = now
+
+    def _log_stream_status(self) -> None:
+        events = self._status_events
+        if events > self._reported_status_events:
+            self._logger.warning(
+                f"Audio stream status: {self._last_status} "
+                f"(reported {events - self._reported_status_events} times)"
             )
-            self._logged_underruns = total
+            self._reported_status_events = events
+
+    def _stop_when_the_file_is_unreadable(self) -> None:
+        prefetch = self._prefetch
+        if prefetch is None or not prefetch.failed:
+            return
+        if not isinstance(self.data, StreamedAudio):
+            return
+        message = (
+            "Playback stopped: the audio file can no longer be read "
+            f"({prefetch.error})"
+        )
+        self._logger.error(message)
+        self.stop()
+        publish(Event.STATUS_UPDATE, text=message)
 
     def _start_prefetch(self) -> None:
 
@@ -416,8 +547,21 @@ class AudioEngine(QObject):
             lambda start, stop: data[start:stop],
             block_frames=self._current_buffer_size,
         )
+        streamed = isinstance(data, StreamedAudio)
+        if streamed:
+            self._aim_prefetch_at_loop(prefetch)
         prefetch.start(self.idx, len(data))
         self._prefetch = prefetch
+        if streamed:
+            prefetch.wait_until_primed(PREFETCH_START_WAIT_SECONDS)
+
+    def _aim_prefetch_at_loop(self, prefetch: AudioPrefetcher) -> None:
+        start, end = self.loop_start_idx, self.loop_end_idx
+        if start is None or end is None:
+            return
+        if not start <= self.idx < end:
+            self.idx = start
+        prefetch.set_loop(start, end, self.idx)
 
     def _stop_prefetch(self) -> None:
         if self._prefetch is not None:
@@ -514,17 +658,61 @@ class AudioEngine(QObject):
             )
             return False
 
+        data = self.data
         with self._state_lock:
+            self._loop_source = None
             self.loop_start_idx = start_idx
             self.loop_end_idx = end_idx
+            if isinstance(data, StreamedAudio):
+                if self._prefetch is not None:
+                    self._aim_prefetch_at_loop(self._prefetch)
+                self._load_loop_in_background(data, start_idx, end_idx)
         return True
+
+    def _load_loop_in_background(
+        self, data: StreamedAudio, start_idx: int, end_idx: int
+    ) -> None:
+        region_bytes = (end_idx - start_idx) * data.channels * 4
+        if region_bytes > SEGMENT_CACHE_MAX_BYTES:
+            return
+        threading.Thread(
+            target=self._load_loop,
+            args=(data, start_idx, end_idx),
+            name="korshmer-loop-loader",
+            daemon=True,
+        ).start()
+
+    def _loop_is(self, data: object, start_idx: int, end_idx: int) -> bool:
+        return (
+            self.data is data
+            and self.loop_start_idx == start_idx
+            and self.loop_end_idx == end_idx
+        )
+
+    def _load_loop(
+        self, data: StreamedAudio, start_idx: int, end_idx: int
+    ) -> None:
+        region = np.zeros((end_idx - start_idx, data.channels), "float32")
+        try:
+            for first in range(start_idx, end_idx, LOOP_LOAD_CHUNK_FRAMES):
+                if not self._loop_is(data, start_idx, end_idx):
+                    return
+                last = min(first + LOOP_LOAD_CHUNK_FRAMES, end_idx)
+                region[first - start_idx : last - start_idx] = data[first:last]
+        except Exception as e:
+            self._logger.warning(f"Could not preload the loop region: {e}")
+            return
+        with self._state_lock:
+            if self._loop_is(data, start_idx, end_idx):
+                self._loop_source = (region, start_idx)
 
     def clear_loop(self) -> None:
         with self._state_lock:
             self.loop_start_idx = None
             self.loop_end_idx = None
+            self._loop_source = None
             if self._prefetch is not None:
-                self._prefetch.seek(self.idx)
+                self._prefetch.clear_loop(self.idx)
 
     def _cb(self, outdata: np.ndarray, frames: int, time, status) -> None:
         try:
@@ -535,35 +723,24 @@ class AudioEngine(QObject):
                 samples.mix_into(outdata, self._volume)
 
     def _cb_main(self, outdata: np.ndarray, frames: int, time, status) -> None:
-
         if status:
-            self._logger.warning(f"Audio stream status: {status}")
+            self._status_events += 1
+            self._last_status = status
             if getattr(status, "output_underflow", True):
                 self._underrun_count += 1
                 self._total_underruns += 1
 
         chunk = len(outdata)
-        if self.data is None or len(self.data) == 0:
-            self._logger.error(
-                "Audio callback called with no data, filling with silence"
-            )
+        data = self.data
+        total = 0 if data is None else len(data)
+        if data is None or total == 0:
             outdata.fill(0)
             raise sd.CallbackStop
 
         loop_start = self.loop_start_idx
         loop_end = self.loop_end_idx
         if loop_start is not None and loop_end is not None:
-            filled = 0
-            while filled < chunk:
-                if self.idx >= loop_end or self.idx < loop_start:
-                    self.idx = loop_start
-                    self._stream_start_time = None
-                n = min(chunk - filled, loop_end - self.idx)
-                outdata[filled : filled + n] = (
-                    self.data[self.idx : self.idx + n] * self._volume
-                )
-                self.idx += n
-                filled += n
+            self._render_loop(outdata, data, loop_start, loop_end)
             return
 
         if time and hasattr(time, "outputBufferDacTime"):
@@ -578,28 +755,85 @@ class AudioEngine(QObject):
                     )
 
                     if abs(samples_played - self.idx) > self.fs // 10:
-                        self.idx = samples_played
+                        self.idx = min(max(samples_played, 0), total)
 
-        if self.idx + chunk > len(self.data):
-            rem = len(self.data) - self.idx
-            outdata[:rem] = self.data[self.idx :] * self._volume
-            outdata[rem:] = 0
-            self.idx += rem
+        idx = self.idx
+        wanted = min(chunk, total - idx)
+        if wanted <= 0:
+            outdata.fill(0)
+            self.idx = total
             raise sd.CallbackStop
-        else:
-            prefetch = self._prefetch
-            block = (
-                prefetch.take(self.idx, chunk) if prefetch is not None else None
-            )
-            if block is None:
-                block = self.data[self.idx : self.idx + chunk]
-            outdata[:] = block * self._volume
-            self.idx += chunk
+        done = self._render(outdata[:wanted], data, idx, True)
+        outdata[done:].fill(0)
+        self.idx = idx + done
+        if done == wanted and wanted < chunk:
+            raise sd.CallbackStop
+
+    def _render_loop(
+        self,
+        outdata: np.ndarray,
+        data: np.ndarray | StreamedAudio,
+        loop_start: int,
+        loop_end: int,
+    ) -> None:
+        chunk = len(outdata)
+        source = self._loop_source
+        region: np.ndarray | None = None
+        if source is not None and source[1] == loop_start:
+            if len(source[0]) == loop_end - loop_start:
+                region = source[0]
+        filled = 0
+        while filled < chunk:
+            if self.idx >= loop_end or self.idx < loop_start:
+                self.idx = loop_start
+                self._stream_start_time = None
+            wanted = min(chunk - filled, loop_end - self.idx)
+            target = outdata[filled : filled + wanted]
+            if region is not None:
+                offset = self.idx - loop_start
+                np.multiply(
+                    region[offset : offset + wanted], self._volume, out=target
+                )
+                done = wanted
+            else:
+                done = self._render(target, data, self.idx, False)
+            self.idx += done
+            filled += done
+            if done < wanted:
+                outdata[filled:].fill(0)
+                return
+
+    def _render(
+        self,
+        target: np.ndarray,
+        data: np.ndarray | StreamedAudio,
+        start: int,
+        prefetched: bool,
+    ) -> int:
+        wanted = len(target)
+        prefetch = self._prefetch
+        if isinstance(data, StreamedAudio):
+            if prefetch is None:
+                return 0
+            done = prefetch.read_into(target, start, self._volume)
+            if done < wanted and not prefetch.priming:
+                self._underrun_count += 1
+                self._total_underruns += 1
+            return done
+        block = None
+        if prefetched and prefetch is not None:
+            block = prefetch.take(start, wanted)
+        if block is None:
+            block = data[start : start + wanted]
+        np.multiply(block, self._volume, out=target)
+        return wanted
 
     def _tick(self) -> None:
         self.positionChanged.emit(self.position())
         self._adjust_buffer_size()
         self._log_audio_dropouts()
+        self._log_stream_status()
+        self._stop_when_the_file_is_unreadable()
         loop_active = (
             self.loop_start_idx is not None and self.loop_end_idx is not None
         )

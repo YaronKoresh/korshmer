@@ -2,15 +2,38 @@ import json
 import logging
 import sys
 import threading
+import types
 import weakref
+from functools import cache
+from typing import Any
 
-from korshmer.constants import AUDIO_FALLBACK_DEVICE_TRIES, AUDIO_HOST_FILE
+from korshmer.constants import (
+    AUDIO_FALLBACK_DEVICE_TRIES,
+    AUDIO_HOST_FILE,
+    MAX_PLAYBACK_BUFFER_SIZE,
+    MIN_PLAYBACK_BUFFER_SIZE,
+)
 
 HOST_DEFAULT = "default"
 HOST_ASIO = "asio"
 HOST_COREAUDIO = "coreaudio"
 HOST_JACK = "jack"
 HOST_CHOICES = (HOST_DEFAULT, HOST_ASIO, HOST_COREAUDIO, HOST_JACK)
+HOST_KEY = "host"
+OUTPUT_DEVICE_KEY = "output_device"
+BUFFER_SIZE_KEY = "buffer_size"
+
+
+def _buffer_size_choices() -> tuple:
+    sizes = []
+    size = MIN_PLAYBACK_BUFFER_SIZE
+    while size <= MAX_PLAYBACK_BUFFER_SIZE:
+        sizes.append(size)
+        size *= 2
+    return tuple(sizes)
+
+
+BUFFER_SIZE_CHOICES = _buffer_size_choices()
 
 
 _HOST_LABELS = {
@@ -27,6 +50,7 @@ _HOST_API_MATCH = {
 _logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 _preference = None
+_missing_devices_told: set = set()
 
 
 def asio_supported() -> bool:
@@ -61,18 +85,146 @@ def _normalize(value) -> str:
     return HOST_DEFAULT
 
 
+def _read_settings() -> dict:
+    try:
+        if AUDIO_HOST_FILE.exists():
+            data = json.loads(AUDIO_HOST_FILE.read_text("utf-8"))
+            if isinstance(data, dict):
+                return data
+    except (OSError, ValueError) as e:
+        _logger.warning(f"Could not read audio settings: {e}")
+    return {}
+
+
+def _write_setting(key: str, value) -> None:
+    settings = _read_settings()
+    settings[key] = value
+    try:
+        AUDIO_HOST_FILE.parent.mkdir(parents=True, exist_ok=True)
+        AUDIO_HOST_FILE.write_text(json.dumps(settings), "utf-8")
+    except OSError as e:
+        _logger.warning(f"Could not save audio settings: {e}")
+
+
+def _valid_buffer_size(value):
+    if type(value) is int and value in BUFFER_SIZE_CHOICES:
+        return value
+    return None
+
+
+def _valid_device_name(value):
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def get_buffer_size_preference():
+    return _valid_buffer_size(_read_settings().get(BUFFER_SIZE_KEY))
+
+
+def set_buffer_size_preference(frames):
+    frames = _valid_buffer_size(frames)
+    with _lock:
+        _write_setting(BUFFER_SIZE_KEY, frames)
+    return frames
+
+
+def get_output_device_preference():
+    return _valid_device_name(_read_settings().get(OUTPUT_DEVICE_KEY))
+
+
+def set_output_device_preference(name):
+    name = _valid_device_name(name)
+    with _lock:
+        _write_setting(OUTPUT_DEVICE_KEY, name)
+    return name
+
+
+def _unavailable_sounddevice(reason: str) -> types.ModuleType:
+    module = types.ModuleType("sounddevice")
+
+    class PortAudioError(Exception):
+        pass
+
+    class CallbackStop(Exception):
+        pass
+
+    def unavailable(*_args, **_kwargs):
+        raise PortAudioError(reason)
+
+    module.__dict__.update(
+        PortAudioError=PortAudioError,
+        CallbackStop=CallbackStop,
+        OutputStream=unavailable,
+        InputStream=unavailable,
+        Stream=unavailable,
+        query_devices=unavailable,
+        query_hostapis=unavailable,
+        default=types.SimpleNamespace(device=(None, None), reset=lambda: None),
+    )
+    return module
+
+
+@cache
+def sounddevice_module() -> Any:
+    try:
+        import sounddevice
+    except Exception as e:
+        _logger.warning(f"Audio devices are unavailable: {e}")
+        return _unavailable_sounddevice(str(e))
+    return sounddevice
+
+
+def list_output_devices(sd_module=None) -> list:
+    if sd_module is None:
+        sd_module = sounddevice_module()
+    try:
+        apis = [str(api.get("name", "")) for api in sd_module.query_hostapis()]
+        found = []
+        for index, info in enumerate(sd_module.query_devices()):
+            if info.get("max_output_channels", 0) <= 0:
+                continue
+            api = info.get("hostapi", -1)
+            name = str(info.get("name", f"Device {index}"))
+            if isinstance(api, int) and 0 <= api < len(apis) and apis[api]:
+                name = f"{name} ({apis[api]})"
+            found.append((index, name))
+    except Exception as e:
+        _logger.warning(f"Could not list audio output devices: {e}")
+        return []
+    return found
+
+
+def _saved_output_device(sd_module):
+    name = get_output_device_preference()
+    if name is None:
+        return None, None
+    for index, label in list_output_devices(sd_module):
+        if label == name:
+            return index, None
+    _logger.warning(f"Saved audio output {name!r} was not found")
+    if name in _missing_devices_told:
+        return None, None
+    _missing_devices_told.add(name)
+    return None, (
+        f"Audio output '{name}' is not connected. "
+        "Playing on the default output instead."
+    )
+
+
+def apply_audio_preferences(engine, sd_module=None):
+    if hasattr(engine, "set_preferred_buffer_size"):
+        engine.set_preferred_buffer_size(get_buffer_size_preference())
+    if not hasattr(engine, "set_output_device"):
+        return None
+    index, notice = _saved_output_device(sd_module)
+    engine.set_output_device(index)
+    return notice
+
+
 def get_host_preference() -> str:
     global _preference
     with _lock:
         if _preference is None:
-            _preference = HOST_DEFAULT
-            try:
-                if AUDIO_HOST_FILE.exists():
-                    data = json.loads(AUDIO_HOST_FILE.read_text("utf-8"))
-                    if isinstance(data, dict):
-                        _preference = _normalize(data.get("host"))
-            except (OSError, ValueError) as e:
-                _logger.warning(f"Could not read audio host setting: {e}")
+            _preference = _normalize(_read_settings().get(HOST_KEY))
         preference = _preference
     if not host_supported(preference):
         return HOST_DEFAULT
@@ -86,11 +238,7 @@ def set_host_preference(value: str) -> str:
         value = HOST_DEFAULT
     with _lock:
         _preference = value
-    try:
-        AUDIO_HOST_FILE.parent.mkdir(parents=True, exist_ok=True)
-        AUDIO_HOST_FILE.write_text(json.dumps({"host": value}), "utf-8")
-    except OSError as e:
-        _logger.warning(f"Could not save audio host setting: {e}")
+        _write_setting(HOST_KEY, value)
     return value
 
 
@@ -98,6 +246,7 @@ def reset_host_preference_cache() -> None:
     global _preference
     with _lock:
         _preference = None
+        _missing_devices_told.clear()
 
 
 def find_host_device(sd_module, host: str, kind: str = "output"):
