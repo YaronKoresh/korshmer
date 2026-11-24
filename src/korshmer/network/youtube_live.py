@@ -32,11 +32,11 @@ MIN_SAMPLE_RATE = 8000
 MAX_SAMPLE_RATE = 192000
 MAX_QUEUE_BLOCKS = 100000
 
-_KEY_RE = re.compile(r"^[A-Za-z0-9_\-]+(?:-[A-Za-z0-9_\-]+)*$")
+_KEY_RE = re.compile(r"[A-Za-z0-9_\-]+")
 
 
 def valid_stream_key(key: str) -> bool:
-    return bool(key) and len(key) <= 128 and bool(_KEY_RE.match(key))
+    return bool(key) and len(key) <= 128 and bool(_KEY_RE.fullmatch(key))
 
 
 def _whole_number(value: SupportsInt) -> bool:
