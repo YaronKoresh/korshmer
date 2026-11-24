@@ -1,10 +1,12 @@
 import os
 import subprocess
 import sys
+import tempfile
 import textwrap
 
 import pytest
 
+from korshmer import numba_cache
 from korshmer.numba_cache import (
     CACHE_DIR_VARIABLE,
     OWNER_VARIABLE,
@@ -91,3 +93,112 @@ def test_tempo_survives_processes_compiling_at_the_same_time():
         out, err = run.communicate(timeout=600)
         assert run.returncode == 0, err
         assert abs(float(out) - 120.0) < 2.0
+
+
+def _compiled(folder, names):
+    for name in names:
+        path = os.path.join(folder, "librosa", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as file:
+            file.write(name)
+
+
+def test_a_process_publishes_what_it_compiled(tmp_path):
+    private, snapshot = tmp_path / "private", tmp_path / "shared" / "key"
+    _compiled(private, ["f.nbi", "f.1.nbc"])
+
+    assert numba_cache.publish(str(private), str(snapshot))
+    assert sorted(os.listdir(snapshot / "librosa")) == ["f.1.nbc", "f.nbi"]
+    assert sorted(os.listdir(tmp_path / "shared")) == ["key"]
+
+
+def test_a_smaller_cache_does_not_replace_a_fuller_snapshot(tmp_path):
+    private, snapshot = tmp_path / "private", tmp_path / "shared" / "key"
+    _compiled(snapshot, ["f.nbi", "f.1.nbc", "g.nbi", "g.1.nbc"])
+    _compiled(private, ["f.nbi", "f.1.nbc"])
+
+    assert not numba_cache.publish(str(private), str(snapshot))
+    assert len(os.listdir(snapshot / "librosa")) == 4
+
+
+def test_a_fuller_cache_replaces_the_snapshot(tmp_path):
+    private, snapshot = tmp_path / "private", tmp_path / "shared" / "key"
+    _compiled(snapshot, ["f.nbi", "f.1.nbc"])
+    _compiled(private, ["f.nbi", "f.1.nbc", "g.nbi", "g.1.nbc"])
+
+    assert numba_cache.publish(str(private), str(snapshot))
+    assert len(os.listdir(snapshot / "librosa")) == 4
+    assert sorted(os.listdir(tmp_path / "shared")) == ["key"]
+
+
+def test_a_new_process_starts_from_the_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    base = tmp_path / numba_cache.CACHE_FOLDER
+    _compiled(numba_cache.snapshot_folder(str(base)), ["f.nbi", "f.1.nbc"])
+
+    folder = use_private_cache({})
+
+    assert sorted(os.listdir(os.path.join(folder, "librosa"))) == [
+        "f.1.nbc",
+        "f.nbi",
+    ]
+
+
+def test_the_snapshot_changes_with_the_numba_version(monkeypatch):
+    first = numba_cache.snapshot_folder("base")
+    real = numba_cache.metadata.version
+    monkeypatch.setattr(
+        numba_cache.metadata,
+        "version",
+        lambda name: "0.0" if name == "numba" else real(name),
+    )
+    assert numba_cache.snapshot_folder("base") != first
+
+
+@pytest.mark.slow
+def test_a_later_process_reuses_the_numba_code_compiled_before(tmp_path):
+    pytest.importorskip("librosa")
+    code = textwrap.dedent(
+        """
+        import os, korshmer
+        folder = os.environ["NUMBA_CACHE_DIR"]
+        print(sum(len(files) for _r, _d, files in os.walk(folder)))
+        import numpy as np, librosa
+        y = np.zeros(22050 * 4, np.float32)
+        y[::11025] = 1.0
+        e = librosa.onset.onset_strength(y=y, sr=22050)
+        librosa.beat.beat_track(onset_envelope=e, sr=22050)
+        """
+    )
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in (CACHE_DIR_VARIABLE, OWNER_VARIABLE)
+    }
+    env["TMPDIR"] = str(tmp_path)
+    runs = [
+        subprocess.run(
+            [sys.executable, "-c", code],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=600,
+        )
+        for _ in range(2)
+    ]
+    snapshots = os.listdir(tmp_path / numba_cache.CACHE_FOLDER / "shared")
+    assert len(snapshots) == 1
+    assert int(runs[0].stdout) == 0
+    assert int(runs[1].stdout) > 0
+
+
+def test_folders_left_by_processes_that_died_are_removed(tmp_path):
+    gone = tmp_path / "999999999-abc"
+    mine = tmp_path / f"{os.getpid()}-abc"
+    for folder in (gone, mine, tmp_path / "shared"):
+        folder.mkdir()
+
+    numba_cache.remove_abandoned(str(tmp_path))
+
+    assert sorted(os.listdir(tmp_path)) == sorted([mine.name, "shared"])
