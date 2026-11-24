@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -59,7 +60,10 @@ def test_a_youtube_streamer_uses_the_encrypted_address_by_default():
     cmd = started_command(
         lambda popen: YouTubeLiveStreamer(KEY, popen=popen, ffmpeg="ffmpeg")
     )
-    assert cmd[-1].startswith("rtmps://a.rtmps.youtube.com:443/")
+    address = urlsplit(cmd[-1])
+    assert address.scheme == "rtmps"
+    assert address.hostname == "a.rtmps.youtube.com"
+    assert address.port == 443
 
 
 @pytest.mark.parametrize("platform", ["youtube", "twitch", "facebook"])
@@ -69,8 +73,9 @@ def test_every_platform_sends_its_stream_key_encrypted(platform):
             platform, KEY, popen=popen, ffmpeg="ffmpeg"
         )
     )
-    assert cmd[-1].startswith("rtmps://")
-    assert cmd[-1].endswith("/" + KEY)
+    address = urlsplit(cmd[-1])
+    assert address.scheme == "rtmps"
+    assert address.path.endswith("/" + KEY)
 
 
 def test_both_streaming_modules_share_one_address_table():
