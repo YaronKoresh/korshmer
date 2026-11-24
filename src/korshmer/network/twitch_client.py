@@ -181,10 +181,15 @@ class RateLimiter:
         return True
 
 
+def chat_tls_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 def _default_connect(timeout: float):
     raw = socket.create_connection((HOST, PORT), timeout=timeout)
-    context = ssl.create_default_context()
-    return context.wrap_socket(raw, server_hostname=HOST)
+    return chat_tls_context().wrap_socket(raw, server_hostname=HOST)
 
 
 class TwitchClient:
