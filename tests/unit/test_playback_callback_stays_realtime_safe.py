@@ -28,14 +28,36 @@ class DacTime:
         self.outputBufferDacTime = seconds
 
 
+class DiskGate:
+    def __init__(self):
+        self._turn = threading.Condition()
+        self._open = True
+        self.parked = threading.Event()
+
+    def set(self):
+        with self._turn:
+            self._open = True
+            self.parked.clear()
+            self._turn.notify_all()
+
+    def clear(self):
+        with self._turn:
+            self._open = False
+
+    def wait(self, timeout):
+        with self._turn:
+            if not self._open:
+                self.parked.set()
+            return self._turn.wait_for(lambda: self._open, timeout)
+
+
 class WatchedFile(StreamedAudio):
     def __init__(self, path):
         super().__init__(path)
         self.reads = []
         self.activity = threading.Event()
         self.entered = threading.Event()
-        self.gate = threading.Event()
-        self.gate.set()
+        self.gate = DiskGate()
         self.broken = False
 
     def readers(self):
@@ -176,6 +198,16 @@ def _hear(eng, frames_wanted, block=BLOCK):
     return np.concatenate(heard)
 
 
+def _drain_until_the_disk_is_stuck(eng, block=BLOCK):
+    for _ in range(4000):
+        stuck = eng.data.gate.parked.is_set()
+        out, _ = _callback(eng, block)
+        if stuck and not out.any():
+            return
+        eng.data.gate.parked.wait(0.01)
+    raise AssertionError("the prefetch thread never reached the closed gate")
+
+
 def _thread_named(name):
     return [t for t in threading.enumerate() if t.name == name]
 
@@ -277,8 +309,7 @@ def test_a_streamed_song_waits_in_silence_when_the_disk_is_behind(streamed):
     streamed.play()
     _hear(streamed, BLOCK)
     streamed.data.gate.clear()
-    for _ in range(12):
-        _callback(streamed, BLOCK)
+    _drain_until_the_disk_is_stuck(streamed)
     position = streamed.idx
 
     out, _ = _callback(streamed, BLOCK)
