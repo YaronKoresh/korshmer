@@ -1082,8 +1082,7 @@ class ArrangerTimeline(QWidget):
         )
 
         def fixed(piece, wanted, kind, report, cancelled):
-            runner = fix if piece is audio else clip_polish.fix_clip
-            return runner(
+            return fix(
                 piece,
                 wanted,
                 beats_at,
@@ -1379,35 +1378,55 @@ class ArrangerTimeline(QWidget):
         return notes
 
     def _apply_split(self, clip, result):
-        from korshmer.audio_processing import clip_level
-
         self.model.snapshot()
         start = self._fixed_clip_start(clip, result)
+        moved_by = start - clip.start
         self.model.remove_clip(clip.id)
+        added = []
         for kind, _path, fixed in result["split"]:
             self._clip_edit_files.update(fixed.get("made", ()))
-            readings = fixed.get("readings")
-            improved = bool(readings) and not clip_level.unchanged(readings)
-            placed = {"pan": clip.pan} if hasattr(clip, "pan") else {}
-            part = self.model.add_clip(
-                fixed["path"],
-                start=start,
-                name=f"{clip.name} ({kind})",
-                kind=kind,
-                gain=1.0 if improved else clip.gain,
-                **placed,
-            )
+            name = f"{clip.name} ({kind})"
+            if "parts" in fixed:
+                for number, piece in enumerate(fixed["parts"], 1):
+                    part = self._split_part(
+                        clip, piece, piece["start"], f"{name} {number}", kind
+                    )
+                    part.start += moved_by
+                    added.append(part)
+                continue
+            part = self._split_part(clip, fixed, clip.start, name, kind)
             part.offset = clip.offset
             part.duration = clip.duration
-            part.color = clip.color
-            part.muted = clip.muted
-            part.solo = clip.solo
+            if "trim" in fixed:
+                part.trim(*fixed["trim"])
+            part.start += moved_by
+            added.append(part)
+        for part in added:
             self._queue_waveform(part)
         self.piano_roll.sync_with_model()
         self._start_visible_waveforms()
         self._on_model_changed()
         self._drop_unused_clip_files()
         self._refresh_clip_edit_bar()
+
+    def _split_part(self, clip, fixed, start, name, kind):
+        from korshmer.audio_processing import clip_level
+
+        readings = fixed.get("readings")
+        improved = bool(readings) and not clip_level.unchanged(readings)
+        placed = {"pan": clip.pan} if hasattr(clip, "pan") else {}
+        part = self.model.add_clip(
+            fixed["path"],
+            start=start,
+            name=name,
+            kind=kind,
+            gain=1.0 if improved else clip.gain,
+            **placed,
+        )
+        part.color = clip.color
+        part.muted = clip.muted
+        part.solo = clip.solo
+        return part
 
     def _replace_with_parts(self, clip, label, result, kind=None):
         from korshmer.audio_processing import clip_level

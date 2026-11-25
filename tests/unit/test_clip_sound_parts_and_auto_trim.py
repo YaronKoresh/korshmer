@@ -320,6 +320,26 @@ def test_each_separated_sound_takes_only_the_room_it_needs(
     assert sum(lengths) < 14.0
 
 
+def test_fixing_a_part_again_keeps_the_room_around_its_sound(
+    qapp, tmp_path, fixed_files
+):
+    recording = _recording(
+        tmp_path / "takes.wav", [(3.0, 0.0), (14.0, 0.0)], 24
+    )
+    timeline, _said = _fixed(qapp, recording)
+    part = min(timeline.model.clips, key=lambda clip: clip.start)
+    before = (part.offset, part.duration)
+
+    timeline.fix_clip_automatically(part.id)
+    timeline.wait_for_clip_edits()
+    QApplication.processEvents()
+    QApplication.processEvents()
+
+    assert len(timeline.model.clips) == 2
+    again = min(timeline.model.clips, key=lambda clip: clip.start)
+    assert (again.offset, again.duration) == pytest.approx(before, abs=0.01)
+
+
 def test_a_clip_with_silence_at_both_ends_is_trimmed_to_its_sound(
     qapp, tmp_path, fixed_files
 ):

@@ -79,6 +79,7 @@ SHORT_PART_S = 2.0
 ON_NEIGHBOUR = "nearby part"
 PART_FRAME = 1024
 PART_ROOM_S = 0.5
+KEPT_ROOM_S = PART_ROOM_S + MIN_TRIM_S
 PART_MIN_FADE_S = 0.01
 
 
@@ -612,7 +613,7 @@ def clip_parts(data, sample_rate, offset=0.0, duration=None):
 def _fix_trimmed(clip, span, length, whole, options):
     begin, end = span
     kept_end = length if clip.duration is None else clip.offset + clip.duration
-    if begin - clip.offset < MIN_TRIM_S and kept_end - end < MIN_TRIM_S:
+    if begin - clip.offset < KEPT_ROOM_S and kept_end - end < KEPT_ROOM_S:
         return whole()
     trimmed = ClipAudio(
         clip.path,

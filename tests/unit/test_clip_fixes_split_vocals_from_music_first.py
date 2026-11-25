@@ -131,6 +131,70 @@ def test_a_clip_with_only_singing_stays_one_clip_marked_as_vocals(
     assert [clip.name for clip in editor.model.clips] == ["Sung"]
 
 
+def test_background_noise_under_singing_is_dropped_instead_of_kept_as_music(
+    editor, tmp_path, voice_model
+):
+    voice = _tone(3.0, 440.0, 0.2)
+    voice_model["part"] = voice
+    hiss = np.random.default_rng(7).normal(0.0, 0.02, voice.shape)
+    _clip(editor, tmp_path, voice + hiss, name="sung")
+
+    editor.remove_clip_noise(editor.model.clips[0].id)
+    _settle(editor)
+
+    assert [clip.kind for clip in editor.model.clips] == ["vocals"]
+    assert [clip.name for clip in editor.model.clips] == ["Sung"]
+
+
+def test_noise_is_told_apart_from_music():
+    time = np.arange(3 * RATE) / RATE
+    rng = np.random.default_rng(3)
+    hiss = rng.normal(0.0, 0.02, time.shape)
+    chords = sum(0.1 * np.sin(2 * np.pi * f * time) for f in (110, 220, 277))
+    drums = np.zeros_like(time)
+    for start in range(0, time.size, RATE // 2):
+        hit = min(4000, time.size - start)
+        drums[start : start + hit] = rng.normal(0.0, 0.3, hit) * np.exp(
+            -np.arange(hit) / 600
+        )
+
+    assert clip_stems._sounds_like_noise(np.stack([hiss, hiss]))
+    assert not clip_stems._sounds_like_noise(np.stack([chords, chords]))
+    assert not clip_stems._sounds_like_noise(np.stack([drums, drums]))
+    assert not clip_stems._sounds_like_noise(
+        np.stack([chords + hiss, chords + hiss])
+    )
+
+
+def test_one_automatic_fix_splits_a_song_clip_and_its_vocal_phrases(
+    editor, tmp_path, voice_model
+):
+    gap = np.zeros(4 * RATE)
+    voice = np.concatenate(
+        [gap[:RATE], _tone(2.0, 440.0, 0.2), gap, _tone(2.0, 440.0, 0.2)]
+    )
+    voice = np.concatenate([voice, gap[:RATE]])
+    voice_model["part"] = voice
+    editor.notes_audio = lambda _song, _tempo, _rate: None
+    _clip(editor, tmp_path, voice + _tone(voice.size / RATE, 110.0, 0.3))
+
+    editor.fix_clip_automatically(editor.model.clips[0].id)
+    _settle(editor)
+
+    clips = sorted(editor.model.clips, key=lambda clip: clip.name)
+    assert [clip.name for clip in clips] == [
+        "Take (music)",
+        "Take (vocals) 1",
+        "Take (vocals) 2",
+    ]
+    assert [clip.kind for clip in clips] == ["music", "vocals", "vocals"]
+    for clip in clips[1:]:
+        assert clip.duration == pytest.approx(
+            2.0 + 2 * (clip_polish.PART_EDGE_S + clip_polish.PART_ROOM_S),
+            abs=0.15,
+        )
+
+
 def test_a_clip_already_known_as_vocals_is_not_split_again(
     editor, tmp_path, voice_model
 ):
