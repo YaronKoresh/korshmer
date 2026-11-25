@@ -29,7 +29,7 @@ from korshmer.core.window_initializer import (
     paint_window_frame,
     update_frame_margin,
 )
-from korshmer.event_bus import Event, publish, subscribe
+from korshmer.event_bus import Event, publish, subscribe, unsubscribe
 from korshmer.mixins.actions import ActionsMixin
 from korshmer.mixins.files import FilesMixin, is_audio_path
 from korshmer.mixins.performance_mode import PerformanceModeMixin
@@ -283,19 +283,28 @@ class MainWindow(
             self.workspace_manager.remember_layout_value("time_display", mode)
 
     def _subscribe_events(self):
-        subscribe(Event.STATUS_UPDATE, self._on_status_update)
-        subscribe(Event.AUDIO_LOAD_REQUESTED, self._on_audio_load)
-        subscribe(Event.PROGRESS_UPDATE, self._on_progress_update)
-        subscribe(Event.CONVERT_BUTTON_STATE, self._on_convert_button_state)
-        subscribe(Event.CONVERT_BUTTON_TEXT, self._on_convert_button_text)
-        subscribe(Event.CONVERT_BUTTON_ROLE, self._on_convert_button_role)
-        subscribe(Event.PROGRESS_BAR_STATE, self._on_progress_bar_state)
-        subscribe(Event.UI_RESET, self._on_ui_reset)
-        subscribe(Event.OUTPUT_VIEW_REFRESH, self._on_output_refresh)
-        subscribe(Event.FILE_LOCK_RELEASED, self._on_file_lock_released)
-        subscribe(Event.EDITOR_ADD_AUDIO_CLIP, self._on_editor_add_clip)
-        subscribe(Event.EDITOR_LOAD_MIDI, self._on_editor_load_midi)
-        subscribe(Event.STEMS_READY, self._on_stems_ready)
+        self._event_handlers = (
+            (Event.STATUS_UPDATE, self._on_status_update),
+            (Event.AUDIO_LOAD_REQUESTED, self._on_audio_load),
+            (Event.PROGRESS_UPDATE, self._on_progress_update),
+            (Event.CONVERT_BUTTON_STATE, self._on_convert_button_state),
+            (Event.CONVERT_BUTTON_TEXT, self._on_convert_button_text),
+            (Event.CONVERT_BUTTON_ROLE, self._on_convert_button_role),
+            (Event.PROGRESS_BAR_STATE, self._on_progress_bar_state),
+            (Event.UI_RESET, self._on_ui_reset),
+            (Event.OUTPUT_VIEW_REFRESH, self._on_output_refresh),
+            (Event.FILE_LOCK_RELEASED, self._on_file_lock_released),
+            (Event.EDITOR_ADD_AUDIO_CLIP, self._on_editor_add_clip),
+            (Event.EDITOR_LOAD_MIDI, self._on_editor_load_midi),
+            (Event.STEMS_READY, self._on_stems_ready),
+        )
+        for event, handler in self._event_handlers:
+            subscribe(event, handler)
+
+    def _unsubscribe_events(self):
+        for event, handler in getattr(self, "_event_handlers", ()):
+            unsubscribe(event, handler)
+        self._event_handlers = ()
 
     def _on_status_update(self, text=""):
         self.control_bar.lbl_status.setText(text)
@@ -610,6 +619,7 @@ class MainWindow(
         if not self.confirm_unsaved_changes():
             event.ignore()
             return
+        self._unsubscribe_events()
         try:
             if hasattr(self, "control_bar"):
                 self.control_bar.player.stop()
