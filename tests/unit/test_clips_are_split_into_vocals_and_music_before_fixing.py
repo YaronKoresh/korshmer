@@ -58,6 +58,50 @@ def test_a_clip_with_only_singing_keeps_only_the_vocals(tmp_path, known_voice):
     assert [kind for kind, _path in parts] == [clip_stems.VOCALS]
 
 
+def _sung(seconds):
+    time = np.arange(int(seconds * RATE)) / RATE
+    syllables = np.clip(np.sin(2 * np.pi * 3.0 * time), 0.0, None)
+    phrases = np.sin(2 * np.pi * time / 4.0) > -0.3
+    voice = sum(
+        np.sin(2 * np.pi * 220.0 * harmonic * time) / harmonic
+        for harmonic in (1, 2, 3, 4)
+    )
+    return 0.2 * voice * syllables * phrases
+
+
+def _strummed(seconds):
+    time = np.arange(int(seconds * RATE)) / RATE
+    strums = np.exp(-(time % 0.75) * 4.0)
+    chord = sum(np.sin(2 * np.pi * f * time) for f in (130.8, 164.8, 196.0))
+    return 0.08 * chord * strums
+
+
+def test_voice_left_behind_by_the_separation_is_not_kept_as_music(
+    tmp_path, known_voice
+):
+    voice = _sung(12.0)
+    known_voice["part"] = voice
+    left_behind = 0.05 * np.convolve(voice, np.ones(40) / 40, "same")
+    path = _write(tmp_path / "sung.wav", voice + left_behind)
+
+    parts = clip_stems.separate_clip_file(path, folder=tmp_path)
+
+    assert [kind for kind, _path in parts] == [clip_stems.VOCALS]
+
+
+def test_music_with_its_own_rhythm_under_singing_is_kept(tmp_path, known_voice):
+    voice = _sung(12.0)
+    known_voice["part"] = voice
+    path = _write(tmp_path / "song.wav", voice + _strummed(12.0))
+
+    parts = clip_stems.separate_clip_file(path, folder=tmp_path)
+
+    assert [kind for kind, _path in parts] == [
+        clip_stems.VOCALS,
+        clip_stems.MUSIC,
+    ]
+
+
 def test_a_clip_with_only_instruments_keeps_only_the_music(
     tmp_path, known_voice
 ):
