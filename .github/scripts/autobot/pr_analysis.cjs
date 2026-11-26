@@ -25,32 +25,31 @@ const {
   resolveSnapshotFile: resolveSnapshotFileFromGatherInfo
 } = require("./gather_info.cjs");
 const { AutobotLabelRegistry, sortLabels } = require("./labels/registry.cjs");
-const { PR_SUPPRESSED_BY_TECHNICAL_LABELS, LABEL_SUPPORT_PATTERNS } = require("./constants.cjs");
+const {
+  ACCESSIBILITY_TEXT_PATTERN,
+  AUTOMATION_TEXT_PATTERN,
+  FEATURE_FLAG_TEXT_PATTERN,
+  LABEL_SUPPORT_PATTERNS,
+  LOCALIZATION_TEXT_PATTERN,
+  MAINTENANCE_ONLY_CATEGORIES,
+  MAX_TOP_DIRECTORIES,
+  MAX_TOP_FILES,
+  MIN_BEHAVIORAL_ADDITION_LINES,
+  MIN_PUBLIC_CONTRACT_MOVES,
+  PACKAGE_JSON_DEPENDENCY_METADATA_KEYS,
+  PACKAGE_JSON_DEPENDENCY_VALUE_PATTERN,
+  PR_PIPELINE_CLUTTER_LABELS,
+  PR_SUPPRESSED_BY_TECHNICAL_LABELS,
+  PYPROJECT_DEPENDENCY_CONTEXT_PATTERNS,
+  PYPROJECT_DIRECT_REQUIREMENT_PATTERN,
+  PYPROJECT_SECTION_ENTRY_PATTERNS,
+  RUNTIME_SUPPORT_TEXT_PATTERN,
+  SECURITY_SECRET_TEXT_PATTERN,
+  SNAPSHOT_FILE,
+  WORKFLOW_ACTION_REFERENCE_PATTERN,
+  WORKFLOW_TEST_EXECUTION_PATTERN
+} = require("./constants.cjs");
 
-const SNAPSHOT_FILE = "/tmp/autobot_pr_snapshot.json";
-const MAX_TOP_DIRECTORIES = 8;
-const MAX_TOP_FILES = 10;
-const MIN_BEHAVIORAL_ADDITION_LINES = 80;
-const MIN_PUBLIC_CONTRACT_MOVES = 3;
-const MAINTENANCE_ONLY_CATEGORIES = new Set(["documentation", "test", "workflow", "github", "config", "dependencies", "tooling"]);
-const PR_ABSTRACT_TYPE_LABELS = new Set(["bug", "enhancement", "improvement", "proposal"]);
-const PR_GENERIC_MAINTENANCE_LABELS = Object.freeze(["cleanup", "config", "dependencies", "documentation", "test", "tooling"]);
-const PR_INFRASTRUCTURE_LABELS = Object.freeze(["automation", "github", "workflow"]);
-const PR_PIPELINE_CLUTTER_LABELS = new Set([
-  "action pin",
-  "artifact upload",
-  "branch filter",
-  "build job",
-  "cache restore",
-  "github actions",
-  "os matrix",
-  "python matrix"
-]);
-const WORKFLOW_TEST_EXECUTION_PATTERN = /\b(pytest|unittest|tox|nox|jest|vitest|mocha|playwright test|coverage run)\b|node\s+--test\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?test\b|\bpoe\s+(test|coverage)\b|\b(go|cargo|dotnet|mvn|gradle)\s+test\b|^\s*-?\s*name:\s*[^\n]*\btests?\b|^\s*tests?\s*:\s*$/m;
-const WORKFLOW_ACTION_REFERENCE_PATTERN = /^\s*-?\s*uses:\s*[a-z0-9_.-]+\/[a-z0-9_.\/-]+@\S+/m;
-const ACCESSIBILITY_TEXT_PATTERN = /\baria-|accessib|a11y|screen reader|keyboard nav/;
-const AUTOMATION_TEXT_PATTERN = /\b(autobot|release[-_ ]script|automation[-_ ]bot|repo automation)\b/;
-const FEATURE_FLAG_TEXT_PATTERN = /\b(feature[\s_-]?(?:flag|toggle)|kill[\s_-]?switch|rollout(?:\s+gate|\s+policy)?|cohort(?:\s+rule)?|segment(?:ation)?|bucket(?:ing)?)\b/;
 const FEATURE_FLAG_PATH_PATTERN = /(^|\/)(feature[-_]?flag|feature[-_]?toggle|rollout|gate|segment|cohort|bucket|kill[-_ ]switch)(\/|$)/;
 
 function isFeatureFlagSurfacePath(normalizedPath) {
@@ -62,21 +61,17 @@ function hasFeatureFlagEvidence(normalizedPath, text) {
     && FEATURE_FLAG_TEXT_PATTERN.test(text);
 }
 
-const LOCALIZATION_TEXT_PATTERN = /\bi18n\b|\bl10n\b|\blocale\b|\btranslations?\b|\bgettext\b/;
-const PACKAGE_JSON_DEPENDENCY_CONTEXT_PATTERNS = Object.freeze([/^"(dependencies|devDependencies|peerDependencies|optionalDependencies|bundledDependencies|bundleDependencies)"\s*:\s*\{,?$/i]);
+const DESTRUCTIVE_SQL_STATEMENT_PATTERN = /\bdrop\s+(?:table|column|index|constraint|view|schema)\b|\btruncate\s+(?:table\s+)?[a-z_"`]|\balter\s+table\b[^;\n]*\b(?:drop|rename)\s+column\b/;
+const PIPFILE_SECTION_CONTEXTS = Object.freeze({
+  "dev-packages": "dev",
+  packages: "runtime",
+  pipenv: "ignored",
+  requires: "runtime",
+  scripts: "ignored",
+  source: "ignored"
+});
+const PACKAGE_JSON_ENGINE_KEYS = new Set(["bun", "deno", "node", "npm", "pnpm", "vscode", "yarn"]);
 const PACKAGE_JSON_DEPENDENCY_KEYS = Object.freeze(["dependencies", "devDependencies", "peerDependencies", "optionalDependencies", "bundledDependencies", "bundleDependencies", "overrides", "resolutions"]);
-const PYPROJECT_DEPENDENCY_CONTEXT_PATTERNS = Object.freeze([
-  /^\[(project\.optional-dependencies|dependency-groups|tool\.poetry\.dependencies|tool\.poetry\.group\.[^\]]+\.dependencies|tool\.pdm(?:\.[^\]]+)?\.(?:dependencies|dev-dependencies)|build-system)\]$/i,
-  /^(dependencies|optional-dependencies|requires)\s*=\s*[\[{]/i
-]);
-const PYPROJECT_DIRECT_REQUIREMENT_PATTERN = /^"[a-z0-9][a-z0-9._-]*(?:\[[^"\]]+\])?(?:\s*(?:[<>=!~]{1,2}|===|@).+)"[,]?$/i;
-const PYPROJECT_SECTION_ENTRY_PATTERNS = Object.freeze([
-  /^"[a-z0-9][a-z0-9._-]*(?:\[[^"\]]+\])?(?:\s*(?:[<>=!~]{1,2}|===|@).*)?"[,]?$/i,
-  /^[a-z0-9._-]+\s*=\s*"(?:\^|~|>=?|<=?|==|!=|===|\*|file:|path:|git\+|https?:|ssh:).+"[,]?$/i,
-  /^[a-z0-9._-]+\s*=\s*\[/i
-]);
-const RUNTIME_SUPPORT_TEXT_PATTERN = /\brequires-python\b|\bpython 3\.\d+\b|\bcuda\b|\bffmpeg\b|\bubuntu\b|\bwindows\b|\blinux\b|\bmacos\b|\bnvidia\b|\bplatform_system\b/;
-const SECURITY_SECRET_TEXT_PATTERN = /authorization:\s*bearer|\b(access token|bearer token|secret|secrets|credential|permissions?)\b/;
 const GENERAL_LABEL_REPLACEMENT_COUNTS = Object.freeze({
   moderatelySpecific: 5,
   verySpecific: 15
@@ -110,6 +105,17 @@ const VISUAL_STYLE_TEXT_PATTERN = /\b(class(name)?=|style=|styles?\.|theme|color
 const VISUAL_LOGIC_GUARD_PATTERN = /\b(fetch|axios|router|route|endpoint|sql|query|mutation|auth|token|database|subprocess|spawn|fork|exec\(|if\s*\(|while\s*\(|for\s*\()\b/;
 const DEPENDENCY_VERSION_MUTATION_PATTERN = /\b(?:workspace:|file:|link:|npm:|github:|git\+|https?:|~|\^|>=?|<=?|==|!=|===|[0-9]+\.[0-9]+(?:\.[0-9]+)?)\b/i;
 const DEPENDENCY_REMEDIATION_ACTION_PATTERN = /\b(upgrad(?:e|ed|ing)|bump(?:ed|ing)?|remediat(?:e|ed|ing|ion)|patch(?:ed|ing)?|fix(?:ed|ing)?)\b/;
+const DEV_DEPENDENCY_GROUP_NAMES = new Set(["bench", "benchmark", "ci", "dev", "develop", "development", "doc", "docs", "format", "lint", "linting", "style", "test", "testing", "tests", "types", "typing"]);
+const DEV_DEPENDENCY_TITLE_PATTERN = /^\s*(?:[a-z][a-z0-9-]*\(deps-dev\)|deps-dev)!?:/;
+const DEV_REQUIREMENTS_PATH_PATTERN = /^requirements(?:[-_.]|\/)(?:bench|benchmark|ci|dev|devel|develop|development|doc|docs|lint|linting|test|testing|tests|typing)\b[^/]*\.txt$/;
+const BUG_TITLE_TEXT_PATTERN = /\b(bugs?|bugfix(?:es)?|fix(?:es|ed|ing)?|hotfix(?:es)?|regressions?|errors?|broken|failures?|fails?|failing|repair(?:s|ed|ing)?|crash(?:es|ed|ing)?|resolve[sd]?|resolving|correct(?:s|ed|ing|ion)|incorrect(?:ly)?|wrong|typos?|defects?|glitch(?:es)?|faulty|misbehav\w*|hang(?:s|ing)?|leak(?:s|ing)?|off[\s-]by[\s-]one)\b/;
+const CONVENTIONAL_COMMIT_TYPE_PATTERN = /^\s*([a-z][a-z0-9-]*)(?:\([^)]*\))?!?:/;
+const CONVENTIONAL_BUG_TYPES = new Set(["bugfix", "fix", "hotfix"]);
+const CONVENTIONAL_ENHANCEMENT_TYPES = new Set(["enhancement", "feat", "feature"]);
+const BUG_FIX_ISSUE_REFERENCE_PATTERN = /\b(?:fix|fixes|fixed)\s*:?\s+(?:(?:[\w.-]+\/[\w.-]+)?#\d+\b|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)/;
+const SECURITY_ADVISORY_ID_PATTERN = /\b(?:cve-\d{4}-\d{4,}|ghsa-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})\b/;
+const VULNERABILITY_CLASS_TEXT_PATTERN = /\b(xss|csrf|ssrf|xxe|rce|redos|sqli|(?:sql|command|code|header|template|ldap|xpath)[\s-]injection|(?:path|directory)[\s-]traversal|open[\s-]redirect|remote code execution|prototype pollution|insecure deserialization|privilege escalation|auth(?:entication|orization)?[\s-]bypass)\b/;
+const VULNERABILITY_FIX_PATCH_PATTERN = /\b(sanitiz\w*|escape_?html|html\.escape|markupsafe|bleach\.clean|dompurify|shlex\.quote|secure_filename|safe_load|defusedxml|parameteriz\w*|prepared statement|timingsafeequal|compare_digest)\b|dangerouslysetinnerhtml|\.innerhtml\b|shell\s*=\s*true|\beval\s*\(|\bpickle\.loads?\s*\(|\byaml\.load\s*\(|\bos\.path\.(?:realpath|commonpath)\s*\(/;
 const CODEQL_SECURITY_NOTIFICATION_PATTERN = /\b(codeql|code scanning)\b[\s\S]{0,80}\b(alerts?|notifications?)\b|\b(alerts?|notifications?)\b[\s\S]{0,80}\b(codeql|code scanning)\b/;
 const BEFORE_AFTER_ALERT_COUNT_PATTERN = /\b(?:before|from)\b[^0-9]{0,24}(\d+)[^0-9]{0,24}\b(?:after|to)\b[^0-9]{0,24}(\d+)/;
 const TRANSITION_ALERT_COUNT_PATTERN = /\b(?:alerts?|notifications?)\b[^0-9]{0,24}(\d+)\s*(?:->|→|to)\s*(\d+)/;
@@ -158,9 +164,13 @@ function matchesAnyPattern(value, patterns) {
   return patterns.some((pattern) => pattern.test(value));
 }
 
+function isPackageJsonPath(normalizedPath) {
+  return /(^|\/)package\.json$/.test(normalizedPath);
+}
+
 function isDependencyLockfilePath(normalizedPath) {
   return /^requirements.*\.txt$/.test(normalizedPath)
-    || /(^|\/)(poetry\.lock|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|uv\.lock|pdm\.lock)$/.test(normalizedPath);
+    || /(^|\/)(poetry\.lock|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|uv\.lock|pdm\.lock|pipfile\.lock)$/.test(normalizedPath);
 }
 
 function hasPyprojectDependencyChange(patch) {
@@ -332,16 +342,79 @@ function parsePackageJsonDependencyTreeFromPatch(patch, mode = "after") {
   return extractPackageJsonDependencyTreeFromPatchLines(patch, mode);
 }
 
+function hasHeaderlessPackageJsonDependencyEntryChange(patch) {
+  return splitPatchLines(patch)
+    .filter((line) => isChangedPatchLine(line))
+    .map((line) => stripDiffLinePrefix(line).trim())
+    .some((line) => {
+      const entryMatch = line.match(/^"([^"]+)"\s*:\s*"([^"]*)",?$/);
+      if (!entryMatch) {
+        return false;
+      }
+      const [, key, value] = entryMatch;
+      return !PACKAGE_JSON_DEPENDENCY_METADATA_KEYS.has(key)
+        && !PACKAGE_JSON_ENGINE_KEYS.has(key)
+        && PACKAGE_JSON_DEPENDENCY_VALUE_PATTERN.test(value);
+    });
+}
+
 function hasPackageJsonDependencyChange(patch) {
   const beforeTree = parsePackageJsonDependencyTreeFromPatch(patch, "before");
   const afterTree = parsePackageJsonDependencyTreeFromPatch(patch, "after");
   if (!beforeTree && !afterTree) {
-    return false;
+    return hasHeaderlessPackageJsonDependencyEntryChange(patch);
   }
   if (!beforeTree || !afterTree) {
     return true;
   }
   return JSON.stringify(beforeTree) !== JSON.stringify(afterTree);
+}
+
+function collectPipfileChangedEntries(patch) {
+  const entries = [];
+  let section = null;
+  for (const rawLine of splitPatchLines(patch)) {
+    if (/^(diff --git |index |\+\+\+ |--- |\\ No newline at end of file)/.test(rawLine)) {
+      continue;
+    }
+    if (rawLine.startsWith("@@")) {
+      section = null;
+      continue;
+    }
+    const line = stripDiffLinePrefix(rawLine).trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const headerMatch = line.match(/^\[\[?\s*([^\[\]]+?)\s*\]\]?$/);
+    if (headerMatch) {
+      section = headerMatch[1].replace(/["']/g, "").toLowerCase();
+      continue;
+    }
+    if (isChangedPatchLine(rawLine)) {
+      entries.push({
+        context: section ? (PIPFILE_SECTION_CONTEXTS[section] || "unknown") : "unknown",
+        isPackageEntry: /^["']?[a-z0-9][a-z0-9._-]*["']?\s*=\s*["'{*]/i.test(line),
+        section
+      });
+    }
+  }
+  return entries;
+}
+
+function hasPipfileDependencyChange(patch) {
+  return collectPipfileChangedEntries(patch).some((entry) => entry.isPackageEntry
+    && (entry.section === "packages" || entry.section === "dev-packages" || entry.context === "unknown"));
+}
+
+function classifyPipfileDependencyChange(patch) {
+  const contexts = collectPipfileChangedEntries(patch).map((entry) => entry.context);
+  if (contexts.includes("runtime")) {
+    return "runtime";
+  }
+  if (contexts.includes("unknown") || !contexts.includes("dev")) {
+    return "unknown";
+  }
+  return "dev";
 }
 
 function hasDependencySurfaceChange(normalizedPath, patch) {
@@ -351,10 +424,146 @@ function hasDependencySurfaceChange(normalizedPath, patch) {
   if (normalizedPath === "pyproject.toml") {
     return hasPyprojectDependencyChange(patch);
   }
-  if (normalizedPath === "package.json") {
+  if (isPackageJsonPath(normalizedPath)) {
     return hasPackageJsonDependencyChange(patch);
   }
+  if (normalizedPath === "pipfile") {
+    return hasPipfileDependencyChange(patch);
+  }
   return false;
+}
+
+function isDevRequirementsPath(normalizedPath) {
+  return DEV_REQUIREMENTS_PATH_PATTERN.test(normalizedPath);
+}
+
+function classifyPackageJsonDependencyChange(patch) {
+  const beforeTree = parsePackageJsonDependencyTreeFromPatch(patch, "before");
+  const afterTree = parsePackageJsonDependencyTreeFromPatch(patch, "after");
+  if (!beforeTree || !afterTree) {
+    return "unknown";
+  }
+  const sections = new Set([...Object.keys(beforeTree), ...Object.keys(afterTree)]);
+  const changedSections = [...sections].filter((section) => JSON.stringify(beforeTree[section] ?? null) !== JSON.stringify(afterTree[section] ?? null));
+  if (changedSections.length === 0) {
+    return "unknown";
+  }
+  return changedSections.every((section) => section === "devDependencies") ? "dev" : "runtime";
+}
+
+function classifyPyprojectDependencyContext(table, key) {
+  if (!table) {
+    return "unknown";
+  }
+  if (table === "dependency-groups" || table === "tool.poetry.dev-dependencies" || table === "tool.pdm.dev-dependencies") {
+    return "dev";
+  }
+  const poetryGroupMatch = table.match(/^tool\.poetry\.group\.([^.]+)\.dependencies$/);
+  if (poetryGroupMatch) {
+    return poetryGroupMatch[1] === "main" ? "runtime" : "dev";
+  }
+  if (table === "tool.uv" && key === "dev-dependencies") {
+    return "dev";
+  }
+  if (table === "project.optional-dependencies") {
+    if (!key) {
+      return "unknown";
+    }
+    return DEV_DEPENDENCY_GROUP_NAMES.has(key) ? "dev" : "runtime";
+  }
+  if (table.startsWith("tool.") && table !== "tool.poetry" && !/dependencies|extras/.test(table)) {
+    return "ignored";
+  }
+  return "runtime";
+}
+
+function classifyPyprojectDependencyChange(patch) {
+  let table = null;
+  let arrayKey = null;
+  let sawDevChange = false;
+  let sawUnknownChange = false;
+
+  for (const rawLine of splitPatchLines(patch)) {
+    if (/^(diff --git |index |\+\+\+ |--- |\\ No newline at end of file)/.test(rawLine)) {
+      continue;
+    }
+    if (rawLine.startsWith("@@")) {
+      table = null;
+      arrayKey = null;
+      continue;
+    }
+    const changed = isChangedPatchLine(rawLine);
+    const line = stripDiffLinePrefix(rawLine).trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+
+    let lineKey = arrayKey;
+    const headerMatch = line.match(/^\[\[?\s*([^\]]+?)\s*\]\]?$/);
+    if (headerMatch && !arrayKey) {
+      table = headerMatch[1].replace(/["']/g, "").toLowerCase();
+      lineKey = null;
+    } else if (!arrayKey) {
+      const keyMatch = line.match(/^([a-z0-9_-]+)\s*=\s*(.*)$/i);
+      if (keyMatch) {
+        lineKey = keyMatch[1].toLowerCase();
+        if (keyMatch[2].startsWith("[") && !keyMatch[2].includes("]")) {
+          arrayKey = lineKey;
+        }
+      }
+    } else if (line.startsWith("]")) {
+      arrayKey = null;
+    }
+
+    if (!changed) {
+      continue;
+    }
+    const context = classifyPyprojectDependencyContext(table, lineKey);
+    if (context === "dev") {
+      sawDevChange = true;
+    } else if (context === "unknown") {
+      sawUnknownChange = true;
+    } else if (context !== "ignored") {
+      return "runtime";
+    }
+  }
+
+  if (sawUnknownChange || !sawDevChange) {
+    return "unknown";
+  }
+  return "dev";
+}
+
+function classifyDependencyManifestChange(normalizedPath, patch) {
+  if (isDevRequirementsPath(normalizedPath)) {
+    return "dev";
+  }
+  if (isPackageJsonPath(normalizedPath)) {
+    return classifyPackageJsonDependencyChange(patch);
+  }
+  if (normalizedPath === "pyproject.toml") {
+    return classifyPyprojectDependencyChange(patch);
+  }
+  if (normalizedPath === "pipfile") {
+    return classifyPipfileDependencyChange(patch);
+  }
+  return "runtime";
+}
+
+function isDevOnlyDependencyChange(filesWithContext, titleDeclaresDevDependencies = false) {
+  const manifestFiles = filesWithContext.filter((file) => {
+    const normalizedPath = String(file.filename || "").toLowerCase();
+    return new Set(file.categories || []).has("dependencies")
+      && (!isDependencyLockfilePath(normalizedPath) || /^requirements/.test(normalizedPath));
+  });
+  if (manifestFiles.length === 0) {
+    return titleDeclaresDevDependencies
+      && filesWithContext.some((file) => new Set(file.categories || []).has("dependencies"));
+  }
+  return manifestFiles.every((file) => {
+    const classification = classifyDependencyManifestChange(String(file.filename || "").toLowerCase(), String(file.patch || ""));
+    return classification === "dev" || (classification === "unknown" && titleDeclaresDevDependencies);
+  });
 }
 
 function changedPatchBodyLines(patch) {
@@ -414,7 +623,8 @@ function hasDependencyVersionMutation(patch) {
 }
 
 function hasVulnerabilityKeywordEvidence(text) {
-  return /\b(vulnerab\w*|advisory|cve-\d{4}-\d+|ghsa-[a-z0-9-]+|exploit(?:able)?|security advisory|security notification)\b/.test(text);
+  return /\b(vulnerab\w*|advisory|cve-\d{4}-\d+|ghsa-[a-z0-9-]+|exploit(?:able)?|security advisory|security notification)\b/.test(text)
+    || VULNERABILITY_CLASS_TEXT_PATTERN.test(text);
 }
 
 function hasDependencyVulnerabilityRemediationEvidence({ normalizedPath, patch, rawPatch, securityContextText }) {
@@ -753,8 +963,8 @@ function hasSecurityTextEvidence(patch) {
     || /\bcsrf\b/.test(patch)
     || /\bxss\b/.test(patch)
     || /\bjwt\b/.test(patch)
-    || /\brauth(?:entication|orization)?\b/.test(patch)
-    || /\brauthz\b/.test(patch)
+    || /\bauth(?:entication|orization)?\b/.test(patch)
+    || /\bauthz\b/.test(patch)
     || /\brbac\b/.test(patch)
     || /\bleast privilege\b/.test(patch)
     || /\bpermissions?\s*[:=]/.test(patch);
@@ -771,6 +981,16 @@ function hasSecurityEvidence(normalizedPath, patch) {
     || hasHardeningEvidence(text, pathBased)
     || hasPenTestEvidence(text, pathBased)
   );
+}
+
+function hasSecurityIntentText(text) {
+  return /\bsecurity\b/.test(text)
+    || hasVulnerabilityKeywordEvidence(text);
+}
+
+function hasVulnerabilityFixPatchEvidence(patch) {
+  return VULNERABILITY_FIX_PATCH_PATTERN.test(patch)
+    || VULNERABILITY_CLASS_TEXT_PATTERN.test(patch);
 }
 
 function hasVulnerabilityEvidence(text, hasSecurityPath = false) {
@@ -811,11 +1031,21 @@ function hasBreakingChangeEvidence(normalizedPath, patch) {
     && hasBreakingChangeStructuralEvidence(normalizedPath, patch);
 }
 
-function deriveTitleSignals(prSignalText) {
-  const bug = /\b(bug|fix|fixes|fixed|regression|hotfix|error|broken|failure|repair)\b/.test(prSignalText);
-  const enhancement = !bug && /(^|\s)(feat|feature|enhancement)(:|\b)/.test(prSignalText);
+function hasBugFixIssueReference(bodyText) {
+  return BUG_FIX_ISSUE_REFERENCE_PATTERN.test(String(bodyText || "").replace(/<!--[\s\S]*?-->/g, ""));
+}
+
+function deriveTitleSignals(prSignalText, prBodyText = "") {
+  const conventionalType = prSignalText.match(CONVENTIONAL_COMMIT_TYPE_PATTERN)?.[1] || "";
+  const titleEnhancement = conventionalType
+    ? CONVENTIONAL_ENHANCEMENT_TYPES.has(conventionalType)
+    : /(^|\s)(feat|feature|enhancement)(:|\b)/.test(prSignalText);
+  const bug = conventionalType
+    ? CONVENTIONAL_BUG_TYPES.has(conventionalType)
+    : BUG_TITLE_TEXT_PATTERN.test(prSignalText) || (!titleEnhancement && hasBugFixIssueReference(prBodyText));
+  const enhancement = !bug && titleEnhancement;
   const documentation = /\b(doc|docs|documentation|readme)\b/.test(prSignalText);
-  const security = /\b(security|vulnerab\w*|advisory|cve-\d{4}-\d+|ghsa-[a-z0-9-]+)\b/.test(prSignalText);
+  const security = hasSecurityIntentText(prSignalText);
   const ui = /\b(ui|ux|frontend)\b/.test(prSignalText);
   return {
     bug,
@@ -870,7 +1100,8 @@ function classifyFile(file) {
   }
   if (
     /^pyproject\.toml$/.test(normalized)
-    || /^package\.json$/.test(normalized)
+    || isPackageJsonPath(normalized)
+    || /^pipfile$/.test(normalized)
     || /^manifest\.in$/.test(normalized)
     || /^tox\.ini$/.test(normalized)
     || /^setup\.(cfg|py)$/.test(normalized)
@@ -1428,20 +1659,24 @@ function deriveTechnicalLabels(filesWithContext) {
         if (/==|~=|\^/.test(patch)) addTechnicalLabel(technicalLabels, "version pin");
       }
     }
-    if (normalizedPath === "package.json") {
+    if (isPackageJsonPath(normalizedPath)) {
       addTechnicalLabel(technicalLabels, "package manifest");
       if (hasPackageJsonDependencyChange(rawPatch)) addTechnicalLabel(technicalLabels, "dependency group");
       if (/"scripts"\s*:/.test(text)) addTechnicalLabel(technicalLabels, "task runner");
+    }
+    if (normalizedPath === "pipfile" && hasPipfileDependencyChange(rawPatch)) {
+      addTechnicalLabel(technicalLabels, "requirement file");
+      addTechnicalLabel(technicalLabels, "dependency group");
     }
     if (/poetry\.lock$/.test(normalizedPath)) {
       addTechnicalLabel(technicalLabels, "lockfile");
       addTechnicalLabel(technicalLabels, "poetry lock");
     }
-    if (/package-lock\.json$/.test(normalizedPath)) {
+    if (/package-lock\.json$|npm-shrinkwrap\.json$/.test(normalizedPath)) {
       addTechnicalLabel(technicalLabels, "lockfile");
       addTechnicalLabel(technicalLabels, "package lock");
     }
-    if (/pnpm-lock\.yaml$|yarn\.lock$|uv\.lock$|pdm\.lock$|requirements.*\.txt$/.test(normalizedPath)) {
+    if (/pnpm-lock\.yaml$|yarn\.lock$|bun\.lockb?$|uv\.lock$|pdm\.lock$|pipfile\.lock$|requirements.*\.txt$/.test(normalizedPath)) {
       addTechnicalLabel(technicalLabels, "lockfile");
     }
 
@@ -1559,7 +1794,7 @@ function deriveTechnicalLabels(filesWithContext) {
       addTechnicalLabel(technicalLabels, "migration file");
       if (/\bseed\b/.test(text)) addTechnicalLabel(technicalLabels, "seed data");
       if (/rename table|alter table.*rename/.test(text)) addTechnicalLabel(technicalLabels, "table rename");
-      if (destructive) {
+      if (destructive || DESTRUCTIVE_SQL_STATEMENT_PATTERN.test(patch)) {
         addTechnicalLabel(technicalLabels, "destructive migration");
         if (/drop column|column .*drop/.test(text)) addTechnicalLabel(technicalLabels, "column drop");
         if (/drop table/.test(text)) addTechnicalLabel(technicalLabels, "table drop");
@@ -2176,6 +2411,7 @@ function buildDeterministicEvidence(filesWithContext, context) {
   const securitySecretFiles = [];
   const codeqlSecurityReductionFiles = [];
   const vulnerabilityFiles = [];
+  const vulnerabilityFixPatternFiles = [];
   const complianceFiles = [];
   const hardeningFiles = [];
   const penTestFiles = [];
@@ -2204,6 +2440,7 @@ function buildDeterministicEvidence(filesWithContext, context) {
   const publicAddedFiles = [];
   const behavioralAdditionFiles = [];
   const securityContextText = String(context.securityContextText || "").toLowerCase();
+  const prSecurityIntent = Boolean(context.titleSignals?.security) || hasSecurityIntentText(securityContextText);
 
   for (const file of filesWithContext) {
     const normalizedPath = String(file.filename || "").toLowerCase();
@@ -2277,6 +2514,17 @@ function buildDeterministicEvidence(filesWithContext, context) {
 
     if (hasCodeqlSecurityAlertReductionEvidence(normalizedPath, rawPatch)) {
       codeqlSecurityReductionFiles.push(file.filename);
+    }
+
+    if (
+      prSecurityIntent
+      && !isDocumentationPath(normalizedPath)
+      && !isTestPath(normalizedPath)
+      && !autobotClassificationInfrastructure
+      && !isDependencyLockfilePath(normalizedPath)
+      && hasVulnerabilityFixPatchEvidence(patch)
+    ) {
+      vulnerabilityFixPatternFiles.push(file.filename);
     }
 
     if (categories.has("docker")) {
@@ -2461,6 +2709,7 @@ function buildDeterministicEvidence(filesWithContext, context) {
   addEvidenceItem(evidenceMap, "security-auth-change", { occurrenceCount: securityAuthFiles.length, scope: "repo", confidence: "corroborated", sampleFiles: securityAuthFiles });
   addEvidenceItem(evidenceMap, "security-secret-handling", { occurrenceCount: securitySecretFiles.length, scope: "repo", confidence: "corroborated", sampleFiles: securitySecretFiles });
   addEvidenceItem(evidenceMap, "security-vulnerability", { occurrenceCount: vulnerabilityFiles.length, scope: "repo", confidence: "corroborated", sampleFiles: vulnerabilityFiles });
+  addEvidenceItem(evidenceMap, "security-vulnerability-fix-pattern", { occurrenceCount: vulnerabilityFixPatternFiles.length, scope: "subsystem", confidence: "corroborated", sampleFiles: vulnerabilityFixPatternFiles });
   addEvidenceItem(evidenceMap, "security-compliance", { occurrenceCount: complianceFiles.length, scope: "repo", confidence: "corroborated", sampleFiles: complianceFiles });
   addEvidenceItem(evidenceMap, "security-hardening", { occurrenceCount: hardeningFiles.length, scope: "repo", confidence: "corroborated", sampleFiles: hardeningFiles });
   addEvidenceItem(evidenceMap, "security-pen-test", { occurrenceCount: penTestFiles.length, scope: "repo", confidence: "corroborated", sampleFiles: penTestFiles });
@@ -2576,7 +2825,9 @@ function analyzePullRequestSnapshotData(snapshot) {
   const totalChanges = Number(snapshot.totals.totalChanges || 0);
   const prSignalText = `${snapshot.pullRequest.title}`.toLowerCase();
   const securityContextText = `${snapshot.pullRequest.title}\n${snapshot.pullRequest.body || ""}`.toLowerCase();
-  const titleSignals = deriveTitleSignals(prSignalText);
+  const titleSignals = deriveTitleSignals(prSignalText, `${snapshot.pullRequest.body || ""}`.toLowerCase());
+  const prSecurityIntent = titleSignals.security || hasSecurityIntentText(securityContextText);
+  const prNamesSecurityAdvisory = SECURITY_ADVISORY_ID_PATTERN.test(securityContextText);
   const categoryCounts = new Map();
   const directoryScores = new Map();
   const signalSet = new Set();
@@ -2621,15 +2872,16 @@ function analyzePullRequestSnapshotData(snapshot) {
     const rawPatch = String(file.patch || "").toLowerCase();
     const patch = changedPatchBodyText(rawPatch);
     return hasSecurityEvidence(normalizedPath, patch)
+      || (prSecurityIntent && !isDependencyLockfilePath(normalizedPath) && hasVulnerabilityFixPatchEvidence(patch))
       || hasCodeqlSecurityAlertReductionEvidence(normalizedPath, rawPatch)
-      || (!isDependencyLockfilePath(normalizedPath) && hasDependencyVulnerabilityRemediationEvidence({
+      || ((!isDependencyLockfilePath(normalizedPath) || prNamesSecurityAdvisory) && hasDependencyVulnerabilityRemediationEvidence({
         normalizedPath,
         patch,
         rawPatch,
         securityContextText
       }));
   });
-  if (titleSignals.security && hasDirectSecurityEvidence) {
+  if (prSecurityIntent && hasDirectSecurityEvidence) {
     signalSet.add("security");
   }
 
@@ -3177,10 +3429,17 @@ function analyzePullRequestSnapshotData(snapshot) {
       || hardSemverSignalSet.has("additive-database-change")
       || hardSemverSignalSet.has("explicit-migration-marker")
     ) {
+      const hasMigrationEvidence = signalSet.has("migration")
+        || hardSemverSignalSet.has("destructive-database-change")
+        || hardSemverSignalSet.has("explicit-migration-marker");
+      const migrationFamilyLabels = ["migration file", "destructive migration", "additive migration", "column drop", "column add"];
+      const derivedQueryLabels = ["write query", "read query"].filter((label) => technicalSignalSet.has(label));
       nextLabels = ensureRequiredLabelFamily(
         nextLabels,
         "database",
-        ["migration file", "destructive migration", "additive migration", "column drop", "column add", "write query", "read query", "database"],
+        hasMigrationEvidence
+          ? [...migrationFamilyLabels, "write query", "read query", "database"]
+          : [...derivedQueryLabels, "query", ...migrationFamilyLabels, "database"],
         prLabelPolicy
       );
     }
@@ -3255,8 +3514,10 @@ function analyzePullRequestSnapshotData(snapshot) {
     }));
     const hasStrongLabels = evidenceStrengths.some((entry) => entry.strength >= 0.03);
     if (hasStrongLabels) {
+      const isProtectedSecurityLabel = (label) => hasDirectSecurityEvidence
+        && AutobotLabelRegistry.matchesExpectedLabel(AutobotLabelRegistry.normalizeLabelName(label), "security");
       const filteredLabels = evidenceStrengths
-        .filter((entry) => entry.strength >= 0.03)
+        .filter((entry) => entry.strength >= 0.03 || isProtectedSecurityLabel(entry.label))
         .sort((left, right) => right.strength - left.strength)
         .map((entry) => entry.label);
       if (filteredLabels.length > 0) {
@@ -3369,7 +3630,19 @@ function analyzePullRequestSnapshotData(snapshot) {
     deterministicLabels = sortLabels([...parentSet]);
   }
 
+  const devOnlyDependencyMaintenance = filesWithContext.every((file) => {
+    const fileCategories = [...new Set(file.categories || [])];
+    return fileCategories.length > 0 && fileCategories.every((category) => MAINTENANCE_ONLY_CATEGORIES.has(category));
+  })
+    && isDevOnlyDependencyChange(filesWithContext, DEV_DEPENDENCY_TITLE_PATTERN.test(prSignalText))
+    && !AutobotLabelRegistry.hasReleaseRelevantLabel(
+      deterministicLabels.filter((label) => !AutobotLabelRegistry.matchesExpectedLabel(label, "dependencies"))
+    );
+  const semver = devOnlyDependencyMaintenance
+    ? { ...scoring.semver, decision: "none" }
+    : scoring.semver;
   const releaseRelevant = !autobotInfrastructureOnly
+    && !devOnlyDependencyMaintenance
     && AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels);
 
   labelRationaleLines = buildLabelRationaleLines(deterministicLabels, rationaleContext);
@@ -3397,7 +3670,7 @@ function analyzePullRequestSnapshotData(snapshot) {
   });
   const evidenceScaffold = [
     "PR EVIDENCE",
-    `Scored semver decision: ${scoring.semver.decision}`,
+    `Scored semver decision: ${semver.decision}`,
     `Final emitted technical labels: ${deterministicLabels.join(", ") || "(none)"}`,
     `Held back context labels: ${consideredButNotEmittedLabels.join(", ") || "(none)"}`,
     `General label replacements: ${Object.keys(replacementPlanOutput).length}`,
@@ -3427,8 +3700,8 @@ function analyzePullRequestSnapshotData(snapshot) {
     deterministic_category_scores_json: JSON.stringify(scoring.categoryScores),
     deterministic_impact_scores_json: JSON.stringify(scoring.impactScores),
     deterministic_label_scores_json: JSON.stringify(technicalLabelScores),
-    deterministic_semver_json: JSON.stringify(scoring.semver),
-    deterministic_semver_decision: String(scoring.semver.decision),
+    deterministic_semver_json: JSON.stringify(semver),
+    deterministic_semver_decision: String(semver.decision),
     deterministic_summary: deterministicSummary,
     evidence_chars: String(evidenceScaffold.length)
   };

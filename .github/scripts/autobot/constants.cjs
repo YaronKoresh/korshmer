@@ -91,6 +91,8 @@ const PYPROJECT_SECTION_ENTRY_PATTERNS = Object.freeze([
 ]);
 const RUNTIME_SUPPORT_TEXT_PATTERN = /\brequires-python\b|\bpython 3\.\d+\b|\bcuda\b|\bffmpeg\b|\bubuntu\b|\bwindows\b|\blinux\b|\bmacos\b|\bnvidia\b|\bplatform_system\b/;
 const SECURITY_SECRET_TEXT_PATTERN = /authorization:\s*bearer|\b(access token|bearer token|secret|secrets|credential|permissions?)\b/;
+const WORKFLOW_ACTION_REFERENCE_PATTERN = /^\s*-?\s*uses:\s*[a-z0-9_.-]+\/[a-z0-9_.\/-]+@\S+/m;
+const WORKFLOW_TEST_EXECUTION_PATTERN = /\b(pytest|unittest|tox|nox|jest|vitest|mocha|playwright test|coverage run)\b|node\s+--test\b|\b(npm|yarn|pnpm|bun)\s+(run\s+)?test\b|\bpoe\s+(test|coverage)\b|\b(go|cargo|dotnet|mvn|gradle)\s+test\b|^\s*-?\s*name:\s*[^\n]*\btests?\b|^\s*tests?\s*:\s*$/m;
 const LABEL_SUPPORT_PATTERNS = Object.freeze({
   auth: Object.freeze([/\b(auth|authentication|authorization|permissions?|sessions?|cookies?|jwt|oauth|rbac|csrf|authz|credentials?)\b|(?:^|[^a-z0-9])token(?:[^a-z0-9]|$)/]),
   compliance: Object.freeze([/\b(compliance|pci|soc ?2|gdpr|hipaa|iso ?27001|nist|fedramp)\b/, /\bsarbanes[-\s]+oxley\b/, /\bsox\s+(?:compliance|controls?|control matrix|attestation|audit)\b/]),
@@ -102,7 +104,8 @@ const LABEL_SUPPORT_PATTERNS = Object.freeze({
   "heap usage": Object.freeze([/\b(heap|peak memory|memory usage|memory footprint|memory pressure|buffer copy|buffer copies)\b/]),
   "import time": Object.freeze([/\bimport[-\s]+time\b.*\b(duration|latency|measure(?:d|ment)?|benchmark|startup|cold start|ms)\b/, /\b(duration|latency|measure(?:d|ment)?|benchmark|startup|cold start|ms)\b.*\bimport[-\s]+time\b/]),
   "image tag": Object.freeze([/from\s+[^\n]+:[^\s]+/, /image:\s*[^\s]+:[^\s]+/]),
-  lockfile: Object.freeze([/package-lock\.json|pnpm-lock\.yaml|yarn\.lock|poetry\.lock|uv\.lock|pdm\.lock|requirements.*\.txt/]),
+  "package lock": Object.freeze([/package-lock\.json|npm-shrinkwrap\.json/]),
+  lockfile: Object.freeze([/package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|poetry\.lock|uv\.lock|pdm\.lock|pipfile\.lock|requirements.*\.txt/]),
   process: Object.freeze([/(subprocess\.(?:popen|run|call|check_call|check_output)\s*\(|child_process\.(?:spawn|fork|exec|execfile|execsync|spawnsync)\s*\(|\bpopen\s*\()/]),
   "query param": Object.freeze([/\bquery param\b/, /\b(searchparams?|urlsearchparams)\b/, /\?[a-z_][a-z0-9_]*=/]),
   route: Object.freeze([/\broute\b/, /\brouter\b/, /@\w*router\.(get|post|put|delete|patch|options|head)\b/, /\.route\(/]),
@@ -120,7 +123,7 @@ const LABEL_SUPPORT_PATTERNS = Object.freeze({
   ]),
   dependencies: Object.freeze([
     /\b(dependencies|devDependencies|peerDependencies|optionalDependencies|bundledDependencies|bundleDependencies)\b/,
-    /package-lock\.json|pnpm-lock\.yaml|yarn\.lock|poetry\.lock|uv\.lock|pdm\.lock|requirements.*\.txt/
+    /package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|poetry\.lock|uv\.lock|pdm\.lock|pipfile\.lock|requirements.*\.txt/
   ]),
   security: Object.freeze([
     /(^|\/)(security|auth|policy|oauth|jwt|rbac|token)(\/|$)/,
@@ -188,5 +191,7 @@ module.exports = {
   SMALL_PR_FILE_LIMIT,
   SMALL_PR_GENERIC_LABEL_LIMIT,
   SMALL_PR_TOTAL_CHANGE_LIMIT,
-  SNAPSHOT_FILE
+  SNAPSHOT_FILE,
+  WORKFLOW_ACTION_REFERENCE_PATTERN,
+  WORKFLOW_TEST_EXECUTION_PATTERN
 };

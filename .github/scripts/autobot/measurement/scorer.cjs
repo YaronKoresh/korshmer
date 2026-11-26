@@ -510,6 +510,25 @@ const EVIDENCE_RULES = Object.freeze({
       hardening: 0.2
     })
   }),
+  "security-vulnerability-fix-pattern": Object.freeze({
+    baseWeight: 0.9,
+    defaultScope: "subsystem",
+    defaultConfidence: "corroborated",
+    defaultPolarity: "mixed",
+    titleBoost: 0.1,
+    categoryWeights: Object.freeze({
+      "security-policy": 1.0,
+      "validation-guards": 0.45,
+      "reliability-bugfix": 0.35
+    }),
+    impactWeights: Object.freeze({
+      "patch-maintenance": 0.35
+    }),
+    labelBoosts: Object.freeze({
+      security: 0.9,
+      vulnerability: 0.95
+    })
+  }),
   "security-compliance": Object.freeze({
     baseWeight: 0.88,
     defaultScope: "repo",
@@ -1056,8 +1075,7 @@ const EVIDENCE_RULES = Object.freeze({
       dependencies: 0.8,
       security: 0.75,
       vulnerability: 0.95,
-      "supply-chain": 0.45,
-      hardening: 0.25
+      "supply-chain": 0.45
     })
   }),
   "docker-runtime-expansion": Object.freeze({
