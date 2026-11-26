@@ -1401,6 +1401,22 @@ const EVIDENCE_RULES = Object.freeze({
       improvement: 0.12
     })
   }),
+  "conventional-feature-commit": Object.freeze({
+    baseWeight: 0.42,
+    defaultScope: "subsystem",
+    defaultConfidence: "title",
+    defaultPolarity: "additive",
+    categoryWeights: Object.freeze({
+      "feature-capability": 0.55
+    }),
+    impactWeights: Object.freeze({
+      "minor-additive-capability": 0.2
+    }),
+    labelBoosts: Object.freeze({
+      enhancement: 0.45
+    }),
+    hardSemver: "minor"
+  }),
   "issue-bug-report": Object.freeze({
     baseWeight: 1.0,
     defaultScope: "public",

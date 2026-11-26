@@ -1045,11 +1045,13 @@ function deriveTitleSignals(prSignalText, prBodyText = "") {
     ? CONVENTIONAL_BUG_TYPES.has(conventionalType)
     : BUG_TITLE_TEXT_PATTERN.test(prSignalText) || (!titleEnhancement && hasBugFixIssueReference(prBodyText));
   const enhancement = !bug && titleEnhancement;
+  const conventionalFeature = !bug && CONVENTIONAL_ENHANCEMENT_TYPES.has(conventionalType);
   const documentation = /\b(doc|docs|documentation|readme)\b/.test(prSignalText);
   const security = hasSecurityIntentText(prSignalText);
   const ui = /\b(ui|ux|frontend)\b/.test(prSignalText);
   return {
     bug,
+    conventionalFeature,
     enhancement,
     documentation,
     security,
@@ -2794,6 +2796,12 @@ function buildDeterministicEvidence(filesWithContext, context) {
   });
   addEvidenceItem(evidenceMap, "pr-title-enhancement-signal", {
     occurrenceCount: context.hasBehavioralSurfaceChange && context.titleSignals?.enhancement ? 1 : 0,
+    scope: "subsystem",
+    confidence: "title",
+    sampleFiles: behavioralAdditionFiles
+  });
+  addEvidenceItem(evidenceMap, "conventional-feature-commit", {
+    occurrenceCount: context.hasBehavioralSurfaceChange && context.titleSignals?.conventionalFeature ? 1 : 0,
     scope: "subsystem",
     confidence: "title",
     sampleFiles: behavioralAdditionFiles
