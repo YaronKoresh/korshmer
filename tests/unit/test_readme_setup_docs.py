@@ -20,7 +20,7 @@ def test_readme_python_version_matches_pyproject():
 
 
 def test_readme_scripts_exist():
-    names = set(re.findall(r"scripts/([\w.]+\.(?:bat|py))", README))
+    names = set(re.findall(r"scripts[\\/]([\w.]+\.(?:bat|py))", README))
     assert names
     for name in names:
         assert (ROOT / "scripts" / name).is_file(), name
