@@ -50,6 +50,7 @@ const {
   WORKFLOW_TEST_EXECUTION_PATTERN
 } = require("./constants.cjs");
 
+const BEHAVIOR_CHANGE_FALLBACK_LABEL = "runtime";
 const FEATURE_FLAG_PATH_PATTERN = /(^|\/)(feature[-_]?flag|feature[-_]?toggle|rollout|gate|segment|cohort|bucket|kill[-_ ]switch)(\/|$)/;
 
 function isFeatureFlagSurfacePath(normalizedPath) {
@@ -3628,6 +3629,20 @@ function analyzePullRequestSnapshotData(snapshot) {
   }
   if (parentSet.size > deterministicLabels.length) {
     deterministicLabels = sortLabels([...parentSet]);
+  }
+
+  if (
+    (titleSignals.bug || titleSignals.enhancement)
+    && hasBehavioralSurfaceChange
+    && !maintenanceOnlyEligible
+    && !autobotInfrastructureOnly
+    && !AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels)
+  ) {
+    deterministicLabels = sortLabels([...deterministicLabels, BEHAVIOR_CHANGE_FALLBACK_LABEL]);
+    const changeKind = titleSignals.bug ? "bug fix" : "feature";
+    rationaleContext.fallbackReasons = {
+      [BEHAVIOR_CHANGE_FALLBACK_LABEL]: `the title marks a ${changeKind} that changes source files, and no more specific release label matched them`
+    };
   }
 
   const devOnlyDependencyMaintenance = filesWithContext.every((file) => {

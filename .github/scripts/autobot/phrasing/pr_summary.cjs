@@ -258,6 +258,10 @@ function buildLabelRationale(label, context) {
       reasonParts.push(`correlated with hard release signals: ${hardSignalDetail}`);
     }
   }
+  const fallbackReason = context.fallbackReasons?.[label];
+  if (fallbackReason) {
+    reasonParts.push(fallbackReason);
+  }
   if (reasonParts.length === 0) {
     const nearestEvidence = (context.evidenceItems || [])
       .filter((item) => Number(item.occurrenceCount || 0) > 0)
