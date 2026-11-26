@@ -1866,7 +1866,7 @@ function deriveTechnicalLabels(filesWithContext) {
         addTechnicalLabel(technicalLabels, "shell command");
       }
     }
-    if (hasFilesystemPatchEvidence(normalizedPath, patch)) {
+    if (!documentationSurface && !testSurface && hasFilesystemPatchEvidence(normalizedPath, patch)) {
       addTechnicalLabel(technicalLabels, "filesystem");
       addSpecificFilesystemLabels(technicalLabels, text);
     }
@@ -3638,12 +3638,12 @@ function analyzePullRequestSnapshotData(snapshot) {
     && !AutobotLabelRegistry.hasReleaseRelevantLabel(
       deterministicLabels.filter((label) => !AutobotLabelRegistry.matchesExpectedLabel(label, "dependencies"))
     );
-  const semver = devOnlyDependencyMaintenance
-    ? { ...scoring.semver, decision: "none" }
-    : scoring.semver;
   const releaseRelevant = !autobotInfrastructureOnly
     && !devOnlyDependencyMaintenance
     && AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels);
+  const semver = devOnlyDependencyMaintenance || (!releaseRelevant && !scoring.semver.hardRule)
+    ? { ...scoring.semver, decision: "none" }
+    : scoring.semver;
 
   labelRationaleLines = buildLabelRationaleLines(deterministicLabels, rationaleContext);
 
