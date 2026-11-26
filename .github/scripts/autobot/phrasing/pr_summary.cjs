@@ -131,6 +131,15 @@ function collectSupportFilesForLabel(label, filesWithContext) {
   return supportFiles.map((file) => file.filename);
 }
 
+function collectChangedTestFilesForLabel(label, filesWithContext) {
+  if (!AutobotLabelRegistry.matchesExpectedLabel(label, "test")) {
+    return [];
+  }
+  return (filesWithContext || [])
+    .map((file) => String(file.filename || ""))
+    .filter((filename) => isTestPath(filename.toLowerCase()));
+}
+
 function deriveLabelConfidence(scoreEntry, directEvidence, supportFiles) {
   if (scoreEntry?.primary || scoreEntry?.emitted) {
     return "high";
@@ -232,7 +241,8 @@ function buildLabelRationale(label, context) {
   const scoreEntry = context.labelScores[label];
   const directEvidence = collectDirectEvidenceForLabel(label, context.evidenceItems);
   const supportFiles = collectSupportFilesForLabel(label, context.filesWithContext);
-  const confidence = deriveLabelConfidence(scoreEntry, directEvidence, supportFiles);
+  const changedTestFiles = supportFiles.length > 0 ? [] : collectChangedTestFilesForLabel(label, context.filesWithContext);
+  const confidence = deriveLabelConfidence(scoreEntry, directEvidence, supportFiles.length > 0 ? supportFiles : changedTestFiles);
   const reasonParts = [];
   const directEvidenceFiles = [...new Set(directEvidence.flatMap((item) => item.sampleFiles || []))].slice(0, 3);
   if (scoreEntry?.primary || scoreEntry?.emitted || scoreEntry?.retained) {
@@ -251,6 +261,8 @@ function buildLabelRationale(label, context) {
     }
   } else if (supportFiles.length > 0) {
     reasonParts.push(`label-specific pattern matches in ${supportFiles.join(", ")}`);
+  } else if (changedTestFiles.length > 0) {
+    reasonParts.push(`changed test files: ${changedTestFiles.slice(0, 3).join(", ")}`);
   }
   if (context.hardSignals.length > 0 && AutobotLabelRegistry.isReleaseRelevantLabel(label)) {
     const hardSignalDetail = describeHardSignalContext(context.hardSignals, context.evidenceItems);
