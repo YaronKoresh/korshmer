@@ -15,7 +15,7 @@ const {
 const {
   formatRegressionFixtureEntry,
   normalizeScenarioRegressionFixture
-} = require("./deterministic_scenario_regression_fixtures.cjs");
+} = require("../tests/deterministic_scenario_regression_fixtures.cjs");
 
 function readCaptureInputText(input = {}) {
   const env = input.env || process.env;

@@ -164,8 +164,13 @@ memray = { cmd = "python scripts/run_memray.py" }
 build-exe = { cmd = "python scripts/build_all.py --pyinstaller" }
 build-exe-signed = { cmd = "python scripts/build_all.py --pyinstaller --sign" }
 
-check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "check-types", "test-py", "clean"]
+check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "check-types", "test-js", "test-py", "clean"]
 coverage = ["_coverage-clean", "_coverage-run", "_coverage-clean"]
+
+test = ["test-js", "test-py"]
+
+[tool.poe.tasks.test-js]
+cmd = "node --test tests/autobot_smart_link_unified.test.cjs tests/autobot_scripts.test.cjs tests/smart_link_scripts.test.cjs tests/deterministic_scenario_lanes.test.cjs tests/autobot_adversarial.test.cjs"
 
 [tool.poe.tasks.test-py]
 cmd = "python -m pytest tests/"
@@ -182,6 +187,12 @@ COVERAGE_FILE = ".coverage.poe"
 
 [tool.poe.tasks._coverage-clean]
 cmd = "python -c \"from pathlib import Path; Path('.coverage.poe').unlink(missing_ok=True); Path('.coverage').unlink(missing_ok=True)\""
+
+[tool.poe.tasks.autobot-preview]
+cmd = "node scripts/print_autobot_regression_fixture.cjs"
+
+[tool.poe.tasks.autobot-random]
+cmd = "node scripts/run_autobot_scenario_lanes.cjs"
 
 [tool.poe.tasks.compile]
 cmd = "python -m compileall -q ."
