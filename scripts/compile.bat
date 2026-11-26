@@ -11,7 +11,7 @@ call ".venv\Scripts\activate.bat"
 python -m nuitka --version >nul 2>nul
 if errorlevel 1 (
     echo Installing the compiler...
-    python -m pip install "nuitka<=4.3.1"
+    python -m pip install -e ".[build]"
     if errorlevel 1 goto failed
 )
 
