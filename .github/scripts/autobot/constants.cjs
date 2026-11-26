@@ -23,9 +23,6 @@ const PR_CANONICAL_LABEL_REPLACEMENTS = Object.freeze({
   types: "type",
   ui: "view"
 });
-const PR_ABSTRACT_TYPE_LABELS = new Set(["bug", "enhancement", "improvement", "proposal"]);
-const PR_GENERIC_MAINTENANCE_LABELS = Object.freeze(["cleanup", "config", "dependencies", "documentation", "test", "tooling"]);
-const PR_INFRASTRUCTURE_LABELS = Object.freeze(["automation", "github", "workflow"]);
 const PR_SUPPRESSED_BY_TECHNICAL_LABELS = new Set([
   "automation",
   "build",
@@ -76,7 +73,6 @@ const ACCESSIBILITY_TEXT_PATTERN = /\baria-|accessib|a11y|screen reader|keyboard
 const AUTOMATION_TEXT_PATTERN = /\b(autobot|release[-_ ]script|automation[-_ ]bot|repo automation)\b/;
 const FEATURE_FLAG_TEXT_PATTERN = /\b(feature[\s_-]?(?:flag|toggle)|kill[\s_-]?switch|rollout(?:\s+gate|\s+policy)?|cohort(?:\s+rule)?|segment(?:ation)?|bucket(?:ing)?)\b/;
 const LOCALIZATION_TEXT_PATTERN = /\bi18n\b|\bl10n\b|\blocale\b|\btranslations?\b|\bgettext\b/;
-const PACKAGE_JSON_DEPENDENCY_CONTEXT_PATTERNS = Object.freeze([/^(?:\+|-)?\s*\"(dependencies|devDependencies|peerDependencies|optionalDependencies|bundledDependencies|bundleDependencies)\"\s*:\s*\{,?$/i]);
 const PACKAGE_JSON_DEPENDENCY_METADATA_KEYS = new Set(["browser", "description", "directories", "engines", "exports", "keywords", "main", "module", "name", "overrides", "packageManager", "repository", "resolutions", "scripts", "type", "version", "volta"]);
 const PACKAGE_JSON_DEPENDENCY_VALUE_PATTERN = /^(workspace:|file:|link:|npm:|github:|git\+|https?:|~|\^|>=?|<=?|=|\*|\d)/i;
 const PYPROJECT_DEPENDENCY_CONTEXT_PATTERNS = Object.freeze([
@@ -174,13 +170,9 @@ module.exports = {
   MAX_TOP_FILES,
   MIN_BEHAVIORAL_ADDITION_LINES,
   MIN_PUBLIC_CONTRACT_MOVES,
-  PACKAGE_JSON_DEPENDENCY_CONTEXT_PATTERNS,
   PACKAGE_JSON_DEPENDENCY_METADATA_KEYS,
   PACKAGE_JSON_DEPENDENCY_VALUE_PATTERN,
-  PR_ABSTRACT_TYPE_LABELS,
   PR_CANONICAL_LABEL_REPLACEMENTS,
-  PR_GENERIC_MAINTENANCE_LABELS,
-  PR_INFRASTRUCTURE_LABELS,
   PR_PIPELINE_CLUTTER_LABELS,
   PR_SUPPRESSED_BY_TECHNICAL_LABELS,
   PYPROJECT_DEPENDENCY_CONTEXT_PATTERNS,
