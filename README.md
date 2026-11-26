@@ -4,7 +4,7 @@
 
 KORSHMER is an audio workstation (DAW) that combines a multi-lane MIDI editor, audio clips, AI audio-to-MIDI conversion, stem separation and a song generator in one window.
 
-- [Choose how to get it](#choose-how-to-get-it)
+- [Installation options](#installation-options)
 - [Run from source (no compiling)](#run-from-source-no-compiling)
 - [Build korshmer.exe yourself](#build-korshmerexe-yourself)
 - [Use korshmer.exe](#use-korshmerexe)
@@ -14,10 +14,10 @@ KORSHMER is an audio workstation (DAW) that combines a multi-lane MIDI editor, a
 - [File formats](#file-formats)
 - [Where files are stored](#where-files-are-stored)
 - [Troubleshooting](#troubleshooting)
-- [Development](#development)
-- [Licenses](#licenses)
+- [Testing and development](#testing-and-development)
+- [License and Third-Party Licenses](#license-and-third-party-licenses)
 
-# Choose how to get it
+# Installation options
 
 | You want to | Do this | You need |
 |-------------|---------|----------|
@@ -244,20 +244,23 @@ Secrets are kept in the system keychain or in environment variables, never in th
 | macOS blocks the app | Allow it in **System Settings → Privacy & Security**. |
 | Linux has no audio device access | Add yourself to the audio group with `sudo usermod -a -G audio $USER`, then log in again. |
 
-# Development
+# Testing and development
 
 Setup, tests and style rules are in [CONTRIBUTING.md](CONTRIBUTING.md). In short:
 
 ```bash
 pip install -e ".[dev]"
+QT_QPA_PLATFORM=offscreen pytest -q tests/unit
+ruff format --check .
+ruff check .
 poe check
 ```
 
-`poe check` runs the full gate, including the tests. On Windows, `scripts\check.bat` runs the same gate.
+`poe check` runs the full gate: compile, dead code, comment stripping, the pre-commit hooks, mypy and all the tests. On Windows, `scripts\check.bat` runs the same gate.
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
-# Licenses
+# License and Third-Party Licenses
 
 KORSHMER is released under the [MIT License](LICENSE). The bundled files in `fluidsynth/` keep their own licences. Include those licences when you share a build:
 
