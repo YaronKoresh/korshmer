@@ -56,7 +56,7 @@ One behaviour per test. Name tests as plain sentences a musician or any develope
 - Describe what changed for the user and why.
 - Add a line to the Unreleased section of [CHANGELOG.md](CHANGELOG.md). A changed default, file format key, environment variable or public function contract also needs a line under its Migration notes.
 - Update [README.md](README.md) when a visible name, file format, setting or environment variable changes.
-- CI (`.github/workflows/ci.yml`) runs ruff, mypy and the unit, integration and regression tests on Python 3.10 to 3.13; it must be green.
+- CI (`.github/workflows/check-quality.yml`) runs ruff, mypy and the unit, integration and regression tests on Python 3.10 to 3.13; it must be green.
 
 ## Security
 
