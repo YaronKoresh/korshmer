@@ -1,6 +1,14 @@
 import librosa
 import soundfile as sf
-from PySide6.QtCore import QRectF, QSize, Qt, QThread, Signal, Slot
+from PySide6.QtCore import (
+    QCoreApplication,
+    QRectF,
+    QSize,
+    Qt,
+    QThread,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -8,6 +16,24 @@ from korshmer.ui.utils.throttle import EventThrottle
 from korshmer.ui.viewmodels.spectrogram_vm import SpectrogramViewModel
 from korshmer.ui.widgets.material import MAT_BG, MAT_PRIMARY, MAT_TEXT
 from korshmer.visualization.spectrum import create_spectrogram_image
+
+
+def wait_for_spectrograms():
+    app = QCoreApplication.instance()
+    if app is None:
+        return
+    for thread in app.findChildren(GenerateSpectrogramThread):
+        thread.wait()
+
+
+def _start_spectrogram(path):
+    app = QCoreApplication.instance()
+    thread = GenerateSpectrogramThread(path, parent=app)
+    thread.finished.connect(thread.deleteLater)
+    if app is not None and not app.property("spectrograms_waited"):
+        app.setProperty("spectrograms_waited", True)
+        app.aboutToQuit.connect(wait_for_spectrograms)
+    return thread
 
 
 class GenerateSpectrogramThread(QThread):
@@ -65,16 +91,13 @@ class SpectrogramWidget(QWidget):
                 self.current_thread.finished_signal.disconnect()
             except Exception:
                 pass
-            self.current_thread.finished.connect(
-                self.current_thread.deleteLater
-            )
             self.current_thread = None
 
         self.spectrogram_image = None
         self.hover_text = ""
         self.update()
 
-        self.current_thread = GenerateSpectrogramThread(audio_path, parent=self)
+        self.current_thread = _start_spectrogram(audio_path)
         self.current_thread.finished_signal.connect(self.on_spectrogram_ready)
         self.current_thread.start()
 
