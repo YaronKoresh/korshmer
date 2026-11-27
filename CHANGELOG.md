@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The pull request bot asks for a major release when the title marks a breaking change with `!` (for example `feat(api)!:`) or the description has a `BREAKING CHANGE:` line, and labels the pull request `breaking-change`; before, such a pull request got a minor release or none.
 - The pull request bot labels a `perf` pull request that changes source files `performance` and includes it in the next release as a patch; before, it got no labels and was left out of the release.
+- Fixing a single audio clip that has silence at its ends keeps 0.5 s of the room sound around its sound, as the parts of a split clip do, instead of trimming it to 0.05 s from the sound; an end is trimmed only when that removes at least 0.1 s.
 
 ## [1.1.0] - 2026-11-21
 
