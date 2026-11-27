@@ -282,9 +282,14 @@ def test_the_build_stops_torch_from_rewriting_compiled_functions():
     )
     assert replacements
     for old, new in replacements.items():
-        assert old in source
         assert "__code__ =" in old
         assert "__code__" not in new
+    rewrites = [
+        line.strip()
+        for line in source.splitlines()
+        if re.search(r"\.__code__\s*=(?!=)", line)
+    ]
+    assert all(line in replacements for line in rewrites)
 
 
 def test_the_build_installs_the_nuitka_version_it_needs():
