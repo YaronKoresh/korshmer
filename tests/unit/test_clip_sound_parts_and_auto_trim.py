@@ -340,7 +340,7 @@ def test_fixing_a_part_again_keeps_the_room_around_its_sound(
     assert (again.offset, again.duration) == pytest.approx(before, abs=0.01)
 
 
-def test_a_clip_with_silence_at_both_ends_is_trimmed_to_its_sound(
+def test_a_clip_with_silence_at_both_ends_keeps_the_room_around_its_sound(
     qapp, tmp_path, fixed_files
 ):
     recording = _recording(tmp_path / "take.wav", [(4.0, 0.1)], 16)
@@ -349,10 +349,30 @@ def test_a_clip_with_silence_at_both_ends_is_trimmed_to_its_sound(
 
     clip = timeline.model.clips[0]
     assert len(timeline.model.clips) == 1
-    assert clip.duration == pytest.approx(5.65, abs=0.15)
-    assert clip.offset == pytest.approx(4.05, abs=0.1)
+    assert clip.duration == pytest.approx(
+        5.65 + 2 * clip_polish.PART_ROOM_S, abs=0.15
+    )
+    assert clip.offset == pytest.approx(4.05 - clip_polish.PART_ROOM_S, abs=0.1)
     assert _on_a_beat(_first_sound(clip))
-    assert abs(clip.start - (2.0 + 4.05)) <= BEAT_SECONDS / 2 + 0.05
+    assert (
+        abs(clip.start - (2.0 + 4.05 - clip_polish.PART_ROOM_S))
+        <= BEAT_SECONDS / 2 + 0.05
+    )
+    assert "trimmed" in said[-1]
+
+
+def test_an_end_with_less_silence_than_the_room_is_left_untrimmed(
+    qapp, tmp_path, fixed_files
+):
+    recording = _recording(tmp_path / "take.wav", [(0.3, 0.0)], 16)
+
+    timeline, said = _fixed(qapp, recording, start=2.0)
+
+    clip = timeline.model.clips[0]
+    assert clip.offset == pytest.approx(0.0, abs=1e-6)
+    assert clip.duration == pytest.approx(
+        5.85 + clip_polish.PART_ROOM_S, abs=0.15
+    )
     assert "trimmed" in said[-1]
 
 
@@ -479,7 +499,9 @@ def test_quiet_ends_that_hold_only_inaudible_drift_are_trimmed_off(
     timeline, said = _fixed(qapp, recording, start=2.0)
 
     clip = timeline.model.clips[0]
-    assert clip.duration == pytest.approx(5.65, abs=0.2)
+    assert clip.duration == pytest.approx(
+        5.65 + 2 * clip_polish.PART_ROOM_S, abs=0.2
+    )
     assert "trimmed" in said[-1]
 
 
