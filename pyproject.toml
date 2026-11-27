@@ -164,7 +164,7 @@ memray = { cmd = "python scripts/run_memray.py" }
 build-exe = { cmd = "python scripts/build_all.py --pyinstaller" }
 build-exe-signed = { cmd = "python scripts/build_all.py --pyinstaller --sign" }
 
-check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "check-types", "test-js", "test-py", "clean"]
+check = ["clean", "compile", "dead-code", "strip-comments", "pre-commit", "check-types", "lint", "format", "check-format", "test-js", "test-py", "clean"]
 coverage = ["_coverage-clean", "_coverage-run", "_coverage-clean"]
 
 test = ["test-js", "test-py"]
