@@ -3,6 +3,10 @@ const { applyLabelWordBudget } = require("./measurement/label_selection.cjs");
 const { AutobotLabelRegistry } = require("./labels/registry.cjs");
 
 const MAX_LABEL_WORDS = 2;
+const BUG_TITLE_PATTERN = /\b(bugs?|crash(?:es|ed|ing)?|errors?|fail(?:s|ed|ing|ures?)|broken|regressions?)\b/;
+const NEGATED_BUG_PATTERN = /\b(?:not|isn'?t|is not|no|never)\s+(?:an?\s+)?(?:bugs?|regressions?|defects?)\b/;
+const TRACEBACK_PATTERN = /\btraceback \(most recent call last\)/;
+const CRASH_PATTERN = /\bcrash(?:es|ed|ing)?\b/;
 
 class AutobotIssueClassifier {
   static ISSUE_RELEASE_RELEVANT_LABELS = new Set([...AutobotLabelRegistry.RELEASE_CRITICAL_LABELS]);
@@ -282,7 +286,8 @@ class AutobotIssueClassifier {
     const featureTemplate = AutobotIssueClassifier.hasAnyMarker(normalized.text, AutobotIssueClassifier.TEMPLATE_MARKERS.feature);
 
     const documentationSignal = documentationTemplate || /\b(docs?|documentation|readme)\b/.test(normalized.normalizedTitle);
-    const bugSignal = bugTemplate || /\b(bug|crash|error|failure|broken|regression)\b/.test(normalized.normalizedTitle);
+    const bugMention = BUG_TITLE_PATTERN.test(normalized.normalizedTitle) || TRACEBACK_PATTERN.test(normalized.normalizedBody);
+    const bugSignal = bugTemplate || (bugMention && !NEGATED_BUG_PATTERN.test(normalized.normalizedTitle));
     const enhancementSignal = featureTemplate || /\b(feature request|enhancement)\b/.test(normalized.normalizedTitle);
     const proposalSignal = /\b(proposal|rfc|request for comments|design proposal|roadmap|future work)\b/.test(normalized.normalizedTitle)
       || /\brequest for comments\b/.test(normalized.text);
@@ -329,6 +334,10 @@ class AutobotIssueClassifier {
     }
     if (apiSignal && !AutobotIssueClassifier.hasLabelOrAncestor(technicalLabels, "api")) {
       AutobotIssueClassifier.pushUnique(fallbackTechnicalLabels, "route");
+    }
+    const crashSignal = CRASH_PATTERN.test(normalized.normalizedTitle) || TRACEBACK_PATTERN.test(normalized.normalizedBody);
+    if (bugSignal && crashSignal && !AutobotIssueClassifier.hasLabelOrAncestor(technicalLabels, "process")) {
+      AutobotIssueClassifier.pushUnique(fallbackTechnicalLabels, "process");
     }
 
     if (documentationSignal && /\bproblem|incorrect|missing|unclear|outdated\b/.test(normalized.text)) {
@@ -403,7 +412,6 @@ class AutobotIssueClassifier {
       deterministicSemver: deterministicScoring.semver,
       releaseRelevant: outputLabels.some((label) => AutobotLabelRegistry.isReleaseRelevantLabel(label))
         || deterministicLabels.some((label) => AutobotIssueClassifier.ISSUE_RELEASE_RELEVANT_LABELS.has(label))
-        || /\b(bug|regression|security|runtime|breaking|migration|database|schema|api|vulnerab\w*|hardening|compliance|pen[\s-]?test)\b/.test(normalized.text)
     };
   }
 }
