@@ -98,7 +98,11 @@ def test_phonk_is_a_complete_style():
     ],
 )
 def test_auto_style_follows_tempo_and_scale(bpm, scale, expected):
-    assert resolve_style(AUTO_STYLE, bpm, scale) == expected
+    blend = resolve_style(AUTO_STYLE, bpm, scale)
+    assert genres.primary(blend) == expected
+    assert set(genres.parts(blend)) <= set(SONG_STYLES)
+    assert len(set(genres.parts(blend))) == len(genres.parts(blend))
+    assert 1 <= len(genres.parts(blend)) <= 1 + composer.AUTO_BLEND_PARTNERS
     assert resolve_style("Jazz", bpm, scale) == "Jazz"
     assert expected in SONG_STYLES
 
@@ -108,7 +112,7 @@ def test_auto_is_the_default_style_and_reports_what_it_chose():
     assert set(STYLE_CHOICES[1:]) == set(SONG_STYLES)
     options = ComposeOptions("A", "Minor", bpm=145.0, minutes=0.5, seed=2)
     assert options.style == AUTO_STYLE
-    assert compose(options).style == "Phonk"
+    assert genres.primary(compose(options).style) == "Phonk"
     with pytest.raises(ValueError, match="Unknown style"):
         compose(ComposeOptions("A", "Minor", style="Polka"))
 
@@ -218,3 +222,94 @@ def test_layer_sections_take_their_energy_from_the_song():
     energies = [section.energy for section in made.sections]
     assert max(energies) - min(energies) >= 0.3
     assert energies[0] < energies[-1]
+
+
+@pytest.mark.parametrize("bpm", [70.0, 95.0, 118.0, 128.0, 145.0])
+def test_auto_mixes_the_styles_that_fit_the_tempo(bpm):
+    blend = resolve_style(AUTO_STYLE, bpm, "Minor")
+    assert len(genres.parts(blend)) >= 2
+    lead, *partners = genres.parts(blend)
+    best = max(composer.style_fit(s, bpm, "Minor") for s in SONG_STYLES)
+    for partner in partners:
+        fit = composer.style_fit(partner, bpm, "Minor")
+        assert fit >= composer.AUTO_BLEND_KEEP * best
+
+
+def test_auto_partners_change_with_the_tempo():
+    slow = set(genres.parts(resolve_style(AUTO_STYLE, 75.0, "Minor")))
+    fast = set(genres.parts(resolve_style(AUTO_STYLE, 145.0, "Minor")))
+    assert slow != fast
+    assert "Phonk" not in slow
+    assert "Lo-Fi" not in fast
+
+
+def test_a_blend_takes_the_lead_feel_and_widens_its_pools():
+    blend = genres.blend_name(("Hip-Hop", "Lo-Fi", "Jazz"))
+    lead = genre_feel.feel_for("Hip-Hop")
+    mixed = genre_feel.feel_for(blend)
+    assert mixed.swing == lead.swing
+    assert mixed.phrases == lead.phrases
+    for name in ("Hip-Hop", "Lo-Fi", "Jazz"):
+        feel = genre_feel.feel_for(name)
+        assert all(g in mixed.grooves for g in feel.grooves)
+        assert all(p in mixed.progressions for p in feel.progressions)
+    share = sum(g in lead.grooves for g in mixed.grooves) / len(mixed.grooves)
+    assert share > 1 / 3
+    profile = genres.profile_for(blend)
+    assert profile.kit == genres.profile_for("Hip-Hop").kit
+    assert profile.kit not in profile.kits
+    for role in genres.PITCHED_ROLES:
+        for name in ("Hip-Hop", "Lo-Fi", "Jazz"):
+            assert set(genres.profile_for(name).programs[role]) <= set(
+                profile.programs[role]
+            )
+
+
+def test_a_blend_of_unknown_names_falls_back_like_a_single_style():
+    assert genres.profile_for("Polka + Waltz") is genres.GENRES["Pop"]
+    assert genres.profile_for("Jazz + Polka") is genres.GENRES["Jazz"]
+    assert genre_feel.feel_for("Jazz + Polka") is genre_feel.FEELS["Jazz"]
+
+
+def test_an_auto_song_uses_instruments_from_every_style_it_mixes():
+    seen = {}
+    for seed in range(1, 9):
+        made = compose(
+            ComposeOptions(
+                "A",
+                "Minor",
+                bpm=95.0,
+                minutes=1.0,
+                seed=seed,
+                texture_batches=0,
+            )
+        )
+        lead, *partners = genres.parts(made.style)
+        for inst in made.instruments:
+            if inst.is_drum:
+                continue
+            for name in (lead, *partners):
+                pools = genres.profile_for(name).programs.values()
+                if any(inst.program in pool for pool in pools):
+                    seen.setdefault(name, set()).add(inst.program)
+    assert len(seen) >= 2
+
+
+@pytest.mark.parametrize(
+    "bpm, minor, expected",
+    [
+        (70.0, True, {"Melancholic", "Dreamy"}),
+        (140.0, True, {"Melancholic", "Dreamy", "Energetic"}),
+        (70.0, False, {"Dreamy", "Uplifting"}),
+        (140.0, False, {"Uplifting", "Energetic"}),
+    ],
+)
+def test_auto_mood_follows_tempo_and_scale(bpm, minor, expected):
+    assert set(composer.auto_moods(bpm, minor)) == expected
+
+
+@pytest.mark.parametrize("style", SONG_STYLES)
+def test_every_style_offers_several_sounds_for_its_band(style):
+    programs = genres.profile_for(style).programs
+    for role in ("chords", "pad", "arp", "pluck", "counter"):
+        assert len(set(programs[role])) >= 4, (style, role)

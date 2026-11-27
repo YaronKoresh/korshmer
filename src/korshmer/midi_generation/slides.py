@@ -2,6 +2,7 @@ import random
 
 import pretty_midi
 
+from korshmer.midi_generation.genres import primary
 from korshmer.utils.bend_range import bend_for, set_bend_range
 
 SLIDE_STYLES = frozenset({"Phonk"})
@@ -168,7 +169,7 @@ def _slides_for(rng, notes, sections, bar, origin):
 
 
 def add_bass_slides(basses, style, seed, sections, bar, origin=0.0):
-    if style not in SLIDE_STYLES:
+    if primary(style) not in SLIDE_STYLES:
         return
     rng = random.Random() if seed is None else random.Random(f"slides:{seed}")
     for inst in basses:

@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
+from functools import cache
 
 DEFAULT_GENRE = "Pop"
+BLEND_JOIN = " + "
 
 PITCHED_ROLES = (
     "melody",
@@ -57,13 +59,13 @@ GENRES = {
     "Pop": _p(
         "Pop",
         {
-            "melody": (0, 4, 11, 27, 25),
-            "chords": (0, 4, 25, 27),
-            "bass": (33, 34, 35),
-            "pad": (89, 88, 50, 49),
-            "arp": (46, 12, 24),
-            "pluck": (24, 45, 12),
-            "counter": (40, 73, 41, 71),
+            "melody": (0, 4, 11, 27, 25, 5, 73, 22),
+            "chords": (0, 4, 25, 27, 5, 24),
+            "bass": (33, 34, 35, 38),
+            "pad": (89, 88, 50, 49, 48, 52),
+            "arp": (46, 12, 24, 8, 108),
+            "pluck": (24, 45, 12, 46, 108),
+            "counter": (40, 73, 41, 71, 68, 56),
         },
         KIT_STANDARD,
         {
@@ -91,13 +93,13 @@ GENRES = {
     "Rock": _p(
         "Rock",
         {
-            "melody": (29, 30, 27, 28),
-            "chords": (29, 30, 27),
-            "bass": (34, 33),
-            "pad": (18, 16, 17, 48),
-            "arp": (27, 25, 28),
-            "pluck": (28, 29, 25),
-            "counter": (18, 16, 40),
+            "melody": (29, 30, 27, 28, 18, 25),
+            "chords": (29, 30, 27, 25, 18),
+            "bass": (34, 33, 35),
+            "pad": (18, 16, 17, 48, 49, 61),
+            "arp": (27, 25, 28, 24),
+            "pluck": (28, 29, 25, 27),
+            "counter": (18, 16, 40, 61, 42),
         },
         KIT_POWER,
         {
@@ -123,13 +125,13 @@ GENRES = {
     "Hip-Hop": _p(
         "Hip-Hop",
         {
-            "melody": (4, 5, 11, 8, 14, 9),
-            "chords": (4, 5, 2, 0),
+            "melody": (4, 5, 11, 8, 14, 9, 73, 75, 0),
+            "chords": (4, 5, 2, 0, 11, 48),
             "bass": (38, 39),
-            "pad": (89, 94, 91, 99),
-            "arp": (8, 9, 10),
-            "pluck": (9, 10, 112),
-            "counter": (53, 54, 41),
+            "pad": (89, 94, 91, 99, 92, 52),
+            "arp": (8, 9, 10, 108, 11),
+            "pluck": (9, 10, 112, 108, 45),
+            "counter": (53, 54, 41, 73, 52),
         },
         KIT_808,
         {
@@ -157,13 +159,13 @@ GENRES = {
     "Lo-Fi": _p(
         "Lo-Fi",
         {
-            "melody": (4, 5, 11, 24, 0),
-            "chords": (4, 2, 0, 24),
+            "melody": (4, 5, 11, 24, 0, 8, 73, 10),
+            "chords": (4, 2, 0, 24, 5, 11),
             "bass": (35, 33, 32),
-            "pad": (88, 89, 49),
-            "arp": (46, 10, 24),
-            "pluck": (24, 10, 11),
-            "counter": (11, 71, 53),
+            "pad": (88, 89, 49, 52, 92),
+            "arp": (46, 10, 24, 8, 108),
+            "pluck": (24, 10, 11, 46, 108),
+            "counter": (11, 71, 53, 73, 65),
         },
         KIT_ROOM,
         {
@@ -190,12 +192,12 @@ GENRES = {
         "Jazz",
         {
             "melody": (65, 66, 56, 59, 11, 26, 71),
-            "chords": (0, 26, 4),
+            "chords": (0, 26, 4, 11, 5),
             "bass": (32, 33, 35),
-            "pad": (49, 89, 52),
-            "arp": (11, 26, 0),
-            "pluck": (26, 28, 11),
-            "counter": (71, 73, 66, 59),
+            "pad": (49, 89, 52, 48, 60),
+            "arp": (11, 26, 0, 46),
+            "pluck": (26, 28, 11, 45),
+            "counter": (71, 73, 66, 59, 56, 65),
         },
         KIT_JAZZ,
         {
@@ -223,12 +225,12 @@ GENRES = {
         "EDM",
         {
             "melody": (81, 80, 87, 62, 90, 84),
-            "chords": (62, 81, 90, 86),
+            "chords": (62, 81, 90, 86, 50, 88),
             "bass": (38, 39),
-            "pad": (89, 95, 91, 94),
-            "arp": (98, 100, 9, 112),
-            "pluck": (80, 83, 98),
-            "counter": (81, 54, 84),
+            "pad": (89, 95, 91, 94, 50, 88),
+            "arp": (98, 100, 9, 112, 84),
+            "pluck": (80, 83, 98, 45),
+            "counter": (81, 54, 84, 85),
         },
         KIT_DANCE,
         {
@@ -257,12 +259,12 @@ GENRES = {
         "Phonk",
         {
             "melody": (113,),
-            "chords": (19, 52, 48),
+            "chords": (19, 52, 48, 0, 49, 20),
             "bass": (87,),
-            "pad": (91, 53, 94),
-            "arp": (115, 113),
-            "pluck": (115, 113),
-            "counter": (53, 54, 52),
+            "pad": (91, 53, 94, 92, 95, 52),
+            "arp": (115, 113, 117, 47),
+            "pluck": (115, 113, 117, 45),
+            "counter": (53, 54, 52, 85, 91),
         },
         KIT_808,
         {
@@ -288,5 +290,55 @@ GENRES = {
 }
 
 
+def parts(style):
+    return tuple(style.split(BLEND_JOIN)) if style else (style,)
+
+
+def primary(style):
+    return parts(style)[0]
+
+
+def blend_name(styles):
+    return BLEND_JOIN.join(styles)
+
+
+def blended(lead, others):
+    lead = tuple(lead)
+    extra = []
+    for pool in others:
+        for item in pool:
+            if item not in lead and item not in extra:
+                extra.append(item)
+    return lead + lead + tuple(extra) if extra else lead
+
+
+@cache
+def _blend_profile(names):
+    lead, *others = (GENRES[name] for name in names)
+    programs = {
+        role: blended(lead.programs[role], (o.programs[role] for o in others))
+        for role in lead.programs
+    }
+    kits = []
+    for kit in (*lead.kits, *(k for o in others for k in (o.kit, *o.kits))):
+        if kit != lead.kit and kit not in kits:
+            kits.append(kit)
+    return _p(
+        blend_name(names),
+        programs,
+        lead.kit,
+        lead.texture_long,
+        lead.texture_short,
+        kits=tuple(kits),
+    )
+
+
 def profile_for(style):
-    return GENRES.get(style, GENRES[DEFAULT_GENRE])
+    if style in GENRES:
+        return GENRES[style]
+    names = tuple(name for name in parts(style) if name in GENRES)
+    if not names:
+        return GENRES[DEFAULT_GENRE]
+    if len(names) == 1:
+        return GENRES[names[0]]
+    return _blend_profile(names)
