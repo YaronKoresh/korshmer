@@ -92,7 +92,7 @@ function conventionalVotes(source, text, detail) {
   const match = header.match(CONVENTIONAL_HEADER_PATTERN);
   const votes = [];
   if (match && KIND_BY_CONVENTIONAL_TYPE[match[1]]) {
-    votes.push({ source, kind: KIND_BY_CONVENTIONAL_TYPE[match[1]], detail: `${detail} has type ${match[1]}` });
+    votes.push({ source, kind: KIND_BY_CONVENTIONAL_TYPE[match[1]], detail: `${detail} is typed ${match[1]}` });
   }
   if (match && match[3]) {
     votes.push({ source, kind: "breaking", detail: `${detail} is marked breaking with "!"` });
@@ -159,19 +159,28 @@ function addedChangelogEntries(file) {
 function changelogVotes(files) {
   return files
     .filter((file) => CHANGELOG_PATH_PATTERN.test(String(file.filename || "").toLowerCase()) && file.status !== "removed")
-    .flatMap((file) => addedChangelogEntries(file).map((heading) => ({
-      source: "changelog",
-      kind: changelogSectionOf(heading) || "change",
-      detail: heading
-        ? `${file.filename} adds an entry under ${heading}`
-        : `${file.filename} adds an entry`
-    })));
+    .flatMap((file) => {
+      const counts = new Map();
+      for (const heading of addedChangelogEntries(file)) {
+        counts.set(heading, (counts.get(heading) || 0) + 1);
+      }
+      return [...counts].map(([heading, count]) => {
+        const entries = count === 1 ? "a new entry" : `${count} new entries`;
+        return {
+          source: "changelog",
+          kind: changelogSectionOf(heading) || "change",
+          detail: heading
+            ? `${file.filename} gains ${entries} under "${heading}"`
+            : `${file.filename} gains ${entries}`
+        };
+      });
+    });
 }
 
 function branchVotes(headRef) {
   const type = String(headRef || "").toLowerCase().match(BRANCH_TYPE_PATTERN)?.[1] || "";
   const kind = KIND_BY_CONVENTIONAL_TYPE[type];
-  return kind ? [{ source: "branch", kind, detail: `branch ${headRef} has type ${type}` }] : [];
+  return kind ? [{ source: "branch", kind, detail: `the branch "${headRef}" is typed ${type}` }] : [];
 }
 
 function wordingVotes(titleSignals) {
@@ -190,7 +199,7 @@ function wordingVotes(titleSignals) {
 function collectReleaseImpactVotes({ title, body, headRef, commits, files, titleSignals, changesTests, uiCapabilityFiles }) {
   const commitVotes = (commits || []).flatMap((commit, index) => {
     const message = String(commit?.message || "");
-    const detail = `commit ${index + 1} (${message.split("\n")[0].trim()})`;
+    const detail = `the commit "${message.split("\n")[0].trim()}"`;
     return [...conventionalVotes("commit", message, detail), ...footerVotes("commit", message, detail)];
   });
   return [
@@ -230,7 +239,7 @@ function resolveReleaseImpact(input) {
   const kind = deciding.length > 0 ? strongestKind(deciding) : declaresInternal ? "internal" : "unclassified";
   const decidingVotes = deciding.filter((vote) => vote.kind === kind);
   const conflicts = declaresInternal && authoritativeRelease.length > 0
-    ? [`a declared internal type is overruled by ${authoritativeRelease.map((vote) => vote.detail).join("; ")}`]
+    ? [`the declared internal type is overruled because ${summarizeEvidence(authoritativeRelease).join("; ")}`]
     : [];
 
   const ships = Boolean(input.shipsBehavior);
@@ -263,10 +272,25 @@ function resolveReleaseImpact(input) {
   };
 }
 
-function describeReleaseImpact(impact) {
-  const evidence = impact.decidingVotes.map((vote) => vote.detail);
+const MAX_LISTED_COMMITS = 2;
+
+function summarizeEvidence(votes) {
+  const details = [...new Set(votes.filter((vote) => vote.source !== "commit").map((vote) => vote.detail))];
+  const commits = [...new Set(votes.filter((vote) => vote.source === "commit").map((vote) => vote.detail))];
+  const listed = commits.slice(0, MAX_LISTED_COMMITS);
+  const more = commits.length - listed.length;
   return [
-    `Change kind: ${impact.kind}${evidence.length > 0 ? ` (${evidence.join("; ")})` : ""}.`,
+    ...listed,
+    ...(more > 0 ? [`${more} more commit${more === 1 ? " says" : "s say"} the same`] : []),
+    ...details
+  ];
+}
+
+function describeReleaseImpact(impact) {
+  const evidence = summarizeEvidence(impact.decidingVotes);
+  return [
+    `Change kind: ${impact.kind}.`,
+    ...(evidence.length > 0 ? [`Why: ${evidence.join("; ")}.`] : []),
     ...impact.conflicts.map((conflict) => `Conflict: ${conflict}.`)
   ];
 }
@@ -275,5 +299,6 @@ module.exports = {
   CHANGELOG_PATH_PATTERN,
   collectReleaseImpactVotes,
   describeReleaseImpact,
+  summarizeEvidence,
   resolveReleaseImpact
 };

@@ -3695,7 +3695,7 @@ function analyzePullRequestSnapshotData(snapshot) {
     deterministicLabels = sortLabels([...deterministicLabels, fallbackLabel]);
     rationaleContext.fallbackReasons = {
       ...rationaleContext.fallbackReasons,
-      [fallbackLabel]: `the release impact is ${releaseImpact.kind}: ${releaseImpact.decidingVotes.map((vote) => vote.detail).join("; ")}`
+      [fallbackLabel]: `the release impact is ${releaseImpact.kind}, from the evidence listed under Decision`
     };
   }
 

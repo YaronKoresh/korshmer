@@ -759,7 +759,7 @@ test("release impact takes the change type from the commits when the title has n
   assert.equal(semver.decision, "patch");
   assert.equal(outputs.release_relevant, "true");
   assert.ok(labels.includes("bug"));
-  assert.ok(outputs.deterministic_summary.includes("Change kind: fix (commit 1 (fix(audio_processing): keep room tone on trimmed clips) has type fix)."));
+  assert.ok(outputs.deterministic_summary.includes("- Change kind: fix.\n- Why: the commit \"fix(audio_processing): keep room tone on trimmed clips\" is typed fix."));
 });
 
 test("release impact treats a changelog entry under Added as a minor release", () => {
@@ -780,7 +780,7 @@ test("release impact treats a changelog entry under Fixed as a patch release", (
   const { outputs, semver } = impactOf(createImpactSnapshot({ files: [changelogUnder("Fixed")] }));
 
   assert.equal(semver.decision, "patch");
-  assert.ok(outputs.deterministic_summary.includes("CHANGELOG.md adds an entry under Fixed"));
+  assert.ok(outputs.deterministic_summary.includes("CHANGELOG.md gains a new entry under \"Fixed\""));
 });
 
 test("release impact reads the changelog section from the patch when the file content is missing", () => {
@@ -817,7 +817,7 @@ test("release impact lets a changelog entry overrule a declared refactor and rep
   }));
 
   assert.equal(semver.decision, "patch");
-  assert.ok(outputs.deterministic_summary.includes("Conflict: a declared internal type is overruled by CHANGELOG.md adds an entry under Fixed."));
+  assert.ok(outputs.deterministic_summary.includes("Conflict: the declared internal type is overruled because CHANGELOG.md gains a new entry under \"Fixed\"."));
 });
 
 test("release impact releases an untyped source change whose tests change", () => {
@@ -1019,7 +1019,7 @@ test("PR label rationale no longer prints a confidence level", () => {
   const outputs = analyzePullRequestSnapshotData(createSourceSnapshot("fix(audio): keep the level meter steady"));
 
   assert.ok(!/Confidence (low|medium|high)/.test(outputs.deterministic_summary));
-  assert.ok(outputs.deterministic_summary.includes("the release impact is fix: the title has type fix."));
+  assert.ok(outputs.deterministic_summary.includes("the release impact is fix, from the evidence listed under Decision."));
 });
 
 test("issue classifier labels free-form feature requests", () => {
@@ -1220,6 +1220,29 @@ test("issue classifier does not read scope or regression as auth or test labels"
 
   assert.ok(!result.labels.includes("oauth scope"));
   assert.ok(!result.labels.includes("integration test"));
+});
+
+test("release impact names repeated evidence once", () => {
+  const entries = ["One.", "Two.", "Three.", "Four."].map((entry) => `+- ${entry}`);
+  const changelog = {
+    filename: "CHANGELOG.md",
+    status: "modified",
+    additions: entries.length,
+    deletions: 0,
+    patch: ["@@ -5,3 +5,7 @@", " ### Fixed", " ", ...entries].join("\n"),
+    rawPatchAvailable: true
+  };
+  const outputs = analyzePullRequestSnapshotData(createImpactSnapshot({
+    commits: ["fix(app): first", "fix(app): second", "fix(app): third", "fix(app): fourth"],
+    files: [changelog]
+  }));
+  const summary = outputs.deterministic_summary;
+  const lines = summary.split("\n");
+  const kind = lines.indexOf("- Change kind: fix.");
+
+  assert.ok(kind >= 0, summary);
+  assert.equal(lines[kind + 1], "- Why: the commit \"fix(app): first\" is typed fix; the commit \"fix(app): second\" is typed fix; 2 more commits say the same; CHANGELOG.md gains 4 new entries under \"Fixed\".");
+  assert.equal(summary.split("CHANGELOG.md gains").length - 1, 1);
 });
 
 function createWorkflowSnapshot(number, filename, patch) {
