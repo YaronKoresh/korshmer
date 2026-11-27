@@ -120,6 +120,7 @@ test("untrusted fork scenarios keep autobot active while suppressing smart-link 
   const suite = await evaluateUnifiedAutomationScenarioSuite({
     config: {
       count: 7,
+      requiredKinds: ["unified-pr-untrusted-fork"],
       seed: 20260413
     }
   });
@@ -136,6 +137,7 @@ test("reopened stale issue scenarios suppress historic smart-link targets while 
   const suite = await evaluateUnifiedAutomationScenarioSuite({
     config: {
       count: 7,
+      requiredKinds: ["unified-issue-stale-reopened"],
       seed: 20260413
     }
   });

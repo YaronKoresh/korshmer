@@ -675,8 +675,19 @@ const resolvedHeadRef = input.headRef
   const commitLog = commitRange
     ? runGitCommandOptional(["log", "--format=%B%x1e", commitRange], repoExecInput)
     : "";
-  const commits = String(commitLog || "")
-    .split("\x1e")
+  const pendingCommitMessage = String(
+    input.commitMessage !== undefined
+      ? input.commitMessage
+      : env.AUTOBOT_LOCAL_COMMIT_MESSAGE !== undefined
+        ? env.AUTOBOT_LOCAL_COMMIT_MESSAGE
+        : env.AUTOBOT_LOCAL_COMMIT_MESSAGE_FILE
+          ? readFileSync(path.resolve(repoRoot, env.AUTOBOT_LOCAL_COMMIT_MESSAGE_FILE), "utf8")
+          : ""
+  ).trim();
+  const commits = [
+    ...String(commitLog || "").split("\x1e"),
+    ...(previewMode === "pull-request" ? [] : [pendingCommitMessage])
+  ]
     .map((message) => message.trim())
     .filter(Boolean)
     .map((message) => ({ message }));

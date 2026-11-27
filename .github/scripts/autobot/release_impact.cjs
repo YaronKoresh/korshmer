@@ -187,7 +187,7 @@ function wordingVotes(titleSignals) {
   return [];
 }
 
-function collectReleaseImpactVotes({ title, body, headRef, commits, files, titleSignals, changesTests }) {
+function collectReleaseImpactVotes({ title, body, headRef, commits, files, titleSignals, changesTests, uiCapabilityFiles }) {
   const commitVotes = (commits || []).flatMap((commit, index) => {
     const message = String(commit?.message || "");
     const detail = `commit ${index + 1} (${message.split("\n")[0].trim()})`;
@@ -200,7 +200,10 @@ function collectReleaseImpactVotes({ title, body, headRef, commits, files, title
     ...changelogVotes(files || []),
     ...branchVotes(headRef),
     ...wordingVotes(titleSignals || {}),
-    ...(changesTests ? [{ source: "tests", kind: "change", detail: "tests change together with the source" }] : [])
+    ...(changesTests ? [{ source: "tests", kind: "change", detail: "tests change together with the source" }] : []),
+    ...((uiCapabilityFiles || []).length > 0
+      ? [{ source: "structure", kind: "feature", detail: `${uiCapabilityFiles.slice(0, 3).join(", ")} add${uiCapabilityFiles.length === 1 ? "s" : ""} new interface functions or classes` }]
+      : [])
   ];
 }
 

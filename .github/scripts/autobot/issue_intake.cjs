@@ -87,106 +87,106 @@ class AutobotIssueClassifier {
     const labels = [];
     const text = normalized.text;
 
-    if (/readme/.test(text)) {
+    if (/\b(?:readme)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "readme");
     }
     if (/docs?\/reference|openapi|swagger|api docs|reference docs/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "api doc");
     }
-    if (/architecture|module map|data flow/.test(text)) {
+    if (/\b(?:architecture|module map|data flow)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "architecture doc");
     }
-    if (/install|getting started|quickstart/.test(text)) {
+    if (/\b(?:install|getting started|quickstart)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "install guide");
-      if (/quickstart|getting started/.test(text)) {
+      if (/\b(?:quickstart|getting started)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "quickstart");
       }
     }
-    if (/troubleshoot|troubleshooting|faq/.test(text)) {
+    if (/\b(?:troubleshoot|troubleshooting|faq)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "troubleshoot guide");
-      if (/faq/.test(text)) {
+      if (/\b(?:faq)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "faq");
       }
     }
-    if (/pyproject/.test(text)) {
+    if (/\b(?:pyproject)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "pyproject");
     }
     if (/package-lock|poetry\.lock|pnpm-lock|yarn\.lock|lockfile/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "lockfile");
     }
-    if (/codeowners/.test(text)) {
+    if (/\b(?:codeowners)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "codeowners");
     }
-    if (/issue form|issue template/.test(text)) {
+    if (/\b(?:issue form|issue template)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "issue form");
     }
-    if (/pull request template|pr template/.test(text)) {
+    if (/\b(?:pull request template|pr template)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "pull template");
     }
-    if (/dependabot/.test(text)) {
+    if (/\b(?:dependabot)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "dependabot");
     }
 
-    if (/workflow|github actions/.test(text)) {
+    if (/\b(?:workflow|github actions)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "github actions");
-      if (/matrix/.test(text)) {
+      if (/\b(?:matrix)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "matrix job");
       }
     }
-    if (/unit test/.test(text)) {
+    if (/\b(?:unit test)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "unit test");
     }
-    if (/integration test|scenario|regression/.test(text)) {
+    if (/\b(?:integration tests?|end-to-end tests?|e2e tests?|scenario tests?)\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "integration test");
     }
 
     if (/\b(apis?|endpoints?|routes?|router|handlers?)\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "route");
-      if (/path param|route param/.test(text)) {
+      if (/\b(?:path param|route param)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "route param");
       }
-      if (/query param|querystring|search param/.test(text)) {
+      if (/\b(?:query param|querystring|search param)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "query param");
       }
     }
-    if (/graphql/.test(text)) {
+    if (/\b(?:graphql)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "graphql");
-      if (/resolver/.test(text)) {
+      if (/\b(?:resolver)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "resolver");
       }
     }
-    if (/webhook/.test(text)) {
+    if (/\b(?:webhook)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "webhook");
     }
-    if (/request body|request payload|input schema/.test(text)) {
+    if (/\b(?:request body|request payload|input schema)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "request body");
     }
-    if (/response body|response payload|output schema/.test(text)) {
+    if (/\b(?:response body|response payload|output schema)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "response body");
     }
-    if (/validation|validator|pydantic/.test(text)) {
+    if (/\b(?:validation|validator|pydantic)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "body validation");
     }
-    if (/openapi|swagger/.test(text)) {
+    if (/\b(?:openapi|swagger)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "openapi spec");
     }
 
-    if (/jwt/.test(text)) {
+    if (/\b(?:jwt)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "jwt");
     }
-    if (/refresh token/.test(text)) {
+    if (/\b(?:refresh token)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "refresh token");
     }
-    if (/rbac|role-based|role mapping/.test(text)) {
+    if (/\b(?:rbac|role-based|role mapping)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "rbac");
     }
-    if (/oauth|scope/.test(text)) {
+    if (/\b(?:oauth|oauth2|(?:oauth|token|access) scopes?)\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "oauth scope");
     }
-    if (/csrf/.test(text)) {
+    if (/\b(?:csrf)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "csrf");
     }
-    if (/authz|authorization/.test(text)) {
+    if (/\b(?:authz|authorization)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "authz");
     }
     if (VULNERABILITY_KEYWORD_PATTERN.test(text) || VULNERABILITY_CLASS_TEXT_PATTERN.test(text)) {
@@ -204,34 +204,34 @@ class AutobotIssueClassifier {
       AutobotIssueClassifier.pushUnique(labels, "pen-test");
     }
 
-    if (/migration|alembic/.test(text)) {
+    if (/\b(?:migration|alembic)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "migration file");
-      if (/destructive|drop column|drop table/.test(text)) {
+      if (/\b(?:destructive|drop column|drop table)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "destructive migration");
       }
-      if (/add column|add table|create table/.test(text)) {
+      if (/\b(?:add column|add table|create table)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "additive migration");
       }
     }
-    if (/json schema/.test(text)) {
+    if (/\b(?:json schema)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "json schema");
     }
-    if (/proto|protobuf/.test(text)) {
+    if (/\b(?:proto|protobuf)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "proto schema");
     }
-    if (/query|sql|database|postgres|mysql|sqlite/.test(text)) {
-      if (/select|read/.test(text)) {
+    if (/\b(?:query|sql|database|postgres|mysql|sqlite)s?\b/.test(text)) {
+      if (/\b(?:select|read)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "read query");
       }
-      if (/insert|update|delete|write|upsert/.test(text)) {
+      if (/\b(?:insert|update|delete|write|upsert)s?\b/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "write query");
       }
     }
 
-    if (/python/.test(text)) {
+    if (/\b(?:python)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "python version");
     }
-    if (/windows/.test(text)) {
+    if (/\b(?:windows)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "windows");
       if (/path separator|\\\\|ntpath|posixpath|pathlib|normpath|realpath/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "path separator");
@@ -241,19 +241,19 @@ class AutobotIssueClassifier {
         AutobotIssueClassifier.pushUnique(labels, "shell command");
       }
     }
-    if (/linux|ubuntu/.test(text)) {
+    if (/\b(?:linux|ubuntu)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "linux");
     }
-    if (/macos/.test(text)) {
+    if (/\b(?:macos)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "macos");
     }
-    if (/cuda|nvidia/.test(text)) {
+    if (/\b(?:cuda|nvidia)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "cuda");
     }
-    if (/env var|environment variable|getenv|dotenv/.test(text)) {
+    if (/\b(?:env var|environment variable|getenv|dotenv)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "env var");
     }
-    if (/filesystem|file system|path separator|filepath|pathlib|normpath|realpath/.test(text)) {
+    if (/\b(?:filesystem|file system|path separator|filepath|pathlib|normpath|realpath)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "filesystem");
       AutobotIssueClassifier.pushUnique(labels, "path normalization");
     }
@@ -261,13 +261,13 @@ class AutobotIssueClassifier {
       AutobotIssueClassifier.pushUnique(labels, "process");
       AutobotIssueClassifier.pushUnique(labels, "subprocess io");
     }
-    if (/memory|heap|buffer/.test(text)) {
+    if (/\b(?:memory|heap|buffer)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "heap usage");
     }
-    if (/cache/.test(text)) {
+    if (/\b(?:cache)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "cache hit");
     }
-    if (/latency|cold start|import time/.test(text)) {
+    if (/\b(?:latency|cold start|import time)s?\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "latency");
     }
 

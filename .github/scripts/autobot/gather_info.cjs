@@ -60,30 +60,86 @@ function normalizePatch(patch) {
   if (text.length <= MAX_PATCH_CHARS_PER_FILE) {
     return text;
   }
-  return text.substring(0, MAX_PATCH_CHARS_PER_FILE) + "\n[...patch truncated for prompt budget...]";
+  return text.substring(0, MAX_PATCH_CHARS_PER_FILE) + "\n[...patch truncated at the analysis limit...]";
+}
+
+function toCommitMessage(commit) {
+  return { message: String(commit?.commit?.message || "") };
+}
+
+async function collectBranchCommits({ github, owner, repo, pullRequest, expectedCount }) {
+  const headSha = pullRequest.head?.sha;
+  const baseSha = pullRequest.base?.sha;
+  if (!headSha || !baseSha || !github.rest.repos?.compareCommitsWithBasehead || !github.rest.repos?.listCommits) {
+    return [];
+  }
+  try {
+    const comparison = await github.rest.repos.compareCommitsWithBasehead({ owner, repo, basehead: `${baseSha}...${headSha}` });
+    const mergeBaseSha = comparison?.data?.merge_base_commit?.sha;
+    if (!mergeBaseSha) {
+      return [];
+    }
+    const commits = [];
+    for (let page = 1; commits.length < expectedCount; page += 1) {
+      const response = await github.rest.repos.listCommits({ owner, repo, sha: headSha, per_page: 100, page });
+      const batch = response?.data || [];
+      for (const commit of batch) {
+        if (commit?.sha === mergeBaseSha) {
+          return commits;
+        }
+        commits.push(toCommitMessage(commit));
+      }
+      if (batch.length < 100) {
+        break;
+      }
+    }
+    return commits;
+  } catch (error) {
+    return [];
+  }
 }
 
 async function collectPullRequestCommits({ github, owner, repo, pullRequest }) {
   if (!github.rest.pulls.listCommits) {
     return [];
   }
+  let commits = [];
   try {
-    const commits = await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: pullRequest.number, per_page: 100 });
-    return (commits || []).map((commit) => ({ message: String(commit?.commit?.message || "") }));
+    commits = (await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: pullRequest.number, per_page: 100 }) || []).map(toCommitMessage);
   } catch (error) {
-    return [];
+    commits = [];
   }
+  const expectedCount = Number(pullRequest.commits || 0);
+  if (expectedCount > commits.length) {
+    const branchCommits = await collectBranchCommits({ github, owner, repo, pullRequest, expectedCount });
+    if (branchCommits.length > commits.length) {
+      return branchCommits;
+    }
+  }
+  return commits;
 }
 
-async function readHeadFileContent({ github, owner, repo, pullRequest, filename }) {
+function decodeGitContent(data) {
+  if (typeof data?.content !== "string") {
+    return undefined;
+  }
+  return Buffer.from(data.content, data.encoding === "utf-8" ? "utf8" : "base64").toString("utf8");
+}
+
+async function readHeadFileContent({ github, owner, repo, pullRequest, file }) {
+  if (file.sha && github.rest.git?.getBlob) {
+    const content = await github.rest.git.getBlob({ owner, repo, file_sha: file.sha })
+      .then((response) => decodeGitContent(response?.data), () => undefined);
+    if (content !== undefined) {
+      return content;
+    }
+  }
   const ref = pullRequest.head?.sha;
   if (!ref || !github.rest.repos?.getContent) {
     return undefined;
   }
   try {
-    const response = await github.rest.repos.getContent({ owner, repo, path: filename, ref });
-    const content = response?.data?.content;
-    return typeof content === "string" ? Buffer.from(content, "base64").toString("utf8") : undefined;
+    return decodeGitContent((await github.rest.repos.getContent({ owner, repo, path: file.filename, ref }))?.data);
   } catch (error) {
     return undefined;
   }
@@ -95,7 +151,7 @@ async function collectPullRequestSnapshot({ github, owner, repo, pullRequest, sn
   const headContents = new Map();
   for (const file of files) {
     if (file.status !== "removed" && CHANGELOG_PATH_PATTERN.test(String(file.filename || "").toLowerCase())) {
-      const content = await readHeadFileContent({ github, owner, repo, pullRequest, filename: file.filename });
+      const content = await readHeadFileContent({ github, owner, repo, pullRequest, file });
       if (content !== undefined) {
         headContents.set(file.filename, content);
       }

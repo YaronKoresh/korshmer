@@ -307,7 +307,10 @@ function collectScenarioCaptureCandidates(input) {
 }
 
 async function evaluateRegressionRun(run, lane) {
-  const suite = await evaluateScenarioSuiteByKey(run.suiteKey, run.config);
+  const suite = await evaluateScenarioSuiteByKey(run.suiteKey, {
+    ...run.config,
+    requiredKinds: run.fixtures.map((fixture) => fixture.kind)
+  });
   const selectedEvaluations = [];
   const materializationIssues = [];
   for (const fixture of run.fixtures) {

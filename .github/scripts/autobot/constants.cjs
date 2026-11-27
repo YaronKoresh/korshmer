@@ -1,6 +1,6 @@
 const SNAPSHOT_FILE = "/tmp/autobot_pr_snapshot.json";
 const VULNERABILITY_CLASS_TEXT_PATTERN = /\b(xss|csrf|ssrf|xxe|rce|redos|sqli|(?:sql|command|code|header|template|ldap|xpath)[\s-]injection|(?:path|directory)[\s-]traversal|open[\s-]redirect|remote code execution|arbitrary code execution|prototype pollution|insecure deserialization|privilege escalation|auth(?:entication|orization)?[\s-]bypass)\b/;
-const MAX_PATCH_CHARS_PER_FILE = 700;
+const MAX_PATCH_CHARS_PER_FILE = 200000;
 const MAX_TOP_DIRECTORIES = 8;
 const MAX_TOP_FILES = 10;
 const MIN_BEHAVIORAL_ADDITION_LINES = 80;

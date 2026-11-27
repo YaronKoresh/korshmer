@@ -96,6 +96,7 @@ function resolveScenarioConfig(key, defaults = {}) {
   return {
     count,
     key: normalizedKey,
+    requiredKinds: uniqueStrings(defaults.requiredKinds),
     seed
   };
 }
@@ -357,11 +358,23 @@ function applySmartLinkScenarioRealism(scenario, profile) {
   }
 }
 
-function selectScenarioFactoryEntries(random, entries, count) {
+function selectScenarioFactoryEntries(random, entries, count, requiredKinds = []) {
   const baseline = shuffle(random, entries.slice());
   const selected = baseline.slice(0, Math.min(count, baseline.length));
   while (selected.length < count) {
     selected.push(pickWeighted(random, entries));
+  }
+  const required = new Set(requiredKinds);
+  for (const kind of required) {
+    const producesKind = (candidate) => candidate.name === kind || kind.endsWith(`-${candidate.name}`);
+    const entry = entries.find(producesKind);
+    if (!entry || selected.some(producesKind)) {
+      continue;
+    }
+    const replaceAt = selected.findLastIndex((candidate) => ![...required].some((requiredKind) => candidate.name === requiredKind || requiredKind.endsWith(`-${candidate.name}`)));
+    if (replaceAt >= 0) {
+      selected[replaceAt] = entry;
+    }
   }
   return selected;
 }
@@ -404,7 +417,7 @@ function buildScenarioCases(key, config, defaultCount, factoryEntries) {
     count: clampInteger(config.count, defaultCount, 1, MAX_SCENARIO_COUNT)
   });
   const random = createSeededRandom(resolved.seed);
-  const selectedEntries = selectScenarioFactoryEntries(random, factoryEntries, resolved.count);
+  const selectedEntries = selectScenarioFactoryEntries(random, factoryEntries, resolved.count, resolved.requiredKinds);
   const scenarios = selectedEntries.map((entry, index) => attachScenarioRealism(
     withOptimalResult(entry.factory(random, index, resolved.seed)),
     random,
@@ -3299,6 +3312,80 @@ function createUnifiedUntrustedForkScenario(random, index, seed) {
   };
 }
 
+const ISSUE_INTAKE_SCENARIO_SPECS = Object.freeze([
+  {
+    kind: "unified-issue-plain-feature-request",
+    build: (token) => ({ title: `Please add a ${token} export to the report`, body: `It would be great to export the ${token} list.` }),
+    expected: { issueLabelsInclude: ["runtime"] }
+  },
+  {
+    kind: "unified-issue-named-attack",
+    build: (token) => ({ title: `Remote code execution through a crafted ${token} file`, body: `Opening a crafted ${token} file runs arbitrary code.` }),
+    expected: { issueLabelsInclude: ["vulnerability"] }
+  },
+  {
+    kind: "unified-issue-defect-without-bug-word",
+    build: (token) => ({ title: `The ${token} export does not work after the update`, body: `The ${token} export freezes the window.` }),
+    expected: { issueLabelsInclude: ["runtime"] }
+  },
+  {
+    kind: "unified-issue-generic-words",
+    build: (token) => ({ title: `Feature request: a wider scope for the ${token} regression report`, body: `The ${token} rapid summary should list more items.` }),
+    expected: { issueLabelsExclude: ["oauth scope", "integration test", "route"], issueLabelsInclude: ["runtime"] }
+  }
+]);
+
+function createIssueIntakeScenarioFactory(spec) {
+  return function createIssueIntakeScenario(random, index, seed) {
+    const token = buildCodeIdentifier(random, 1);
+    const sourceNumber = 4650 + index;
+    const built = spec.build(token);
+    const sourceEntity = createSmartLinkEntity({
+      body: built.body,
+      kind: "issue",
+      number: sourceNumber,
+      repoFullName: "octo/repo",
+      title: built.title,
+      updatedAt: "2026-04-12T00:00:00Z"
+    });
+    const issueRecord = buildMockIssueRecordFromEntity(sourceEntity, { updated_at: "2026-04-12T00:00:00Z" });
+    return {
+      context: {
+        eventName: "issues",
+        issue: { number: sourceNumber },
+        payload: {
+          action: "opened",
+          issue: buildIssuePayloadFromRecord(issueRecord)
+        }
+      },
+      expected: {
+        autobotReady: true,
+        ...spec.expected
+      },
+      githubOptions: {
+        additionalIssues: [issueRecord],
+        issueAuthorAssociation: "CONTRIBUTOR",
+        issueBody: issueRecord.body,
+        issueNumber: sourceNumber,
+        issueState: issueRecord.state,
+        issueTitle: issueRecord.title,
+        issueUpdatedAt: "2026-04-12T00:00:00Z",
+        releases: [{ draft: false, id: 1, prerelease: false, tag_name: "v0.0.1" }]
+      },
+      issueNumber: sourceNumber,
+      kind: spec.kind,
+      name: buildScenarioName("unified", spec.kind, index, seed),
+      thresholdInput: 80
+    };
+  };
+}
+
+const ISSUE_INTAKE_SCENARIO_FACTORY_ENTRIES = ISSUE_INTAKE_SCENARIO_SPECS.map((spec) => ({
+  factory: createIssueIntakeScenarioFactory(spec),
+  name: spec.kind.replace(/^unified-/, ""),
+  weight: 1
+}));
+
 const UNIFIED_AUTOMATION_SCENARIO_FACTORY_ENTRIES = [
   { factory: createUnifiedPullRequestDirectiveScenario, name: "pr-directives", weight: 5 },
   { factory: createUnifiedIssueRelationshipScenario, name: "issue-relationships", weight: 4 },
@@ -3306,7 +3393,8 @@ const UNIFIED_AUTOMATION_SCENARIO_FACTORY_ENTRIES = [
   { factory: createUnifiedAlertScenario, name: "alert-routing", weight: 2 },
   { factory: createUnifiedSuppressedPullRequestScenario, name: "pr-suppressed", weight: 2 },
   { factory: createUnifiedReleaseFinalizeScenario, name: "release-finalize", weight: 2 },
-  { factory: createUnifiedUntrustedForkScenario, name: "pr-untrusted-fork", weight: 2 }
+  { factory: createUnifiedUntrustedForkScenario, name: "pr-untrusted-fork", weight: 2 },
+  ...ISSUE_INTAKE_SCENARIO_FACTORY_ENTRIES
 ];
 
 function buildUnifiedAutomationScenarioCases(config = {}) {

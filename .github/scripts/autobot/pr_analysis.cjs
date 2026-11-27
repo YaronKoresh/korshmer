@@ -101,6 +101,7 @@ const SYMLINK_SAFETY_TEXT_PATTERN = /\b(symlink|readlink|lstat|realpath)\b/;
 const SUBPROCESS_IO_TEXT_PATTERN = /(subprocess\.(?:popen|run|call|check_call|check_output)\s*\(|child_process\.(?:spawn|fork|exec|execfile|execsync|spawnsync)\s*\(|\bpopen\s*\()/;
 const WORKER_POOL_TEXT_PATTERN = /\b(worker pool|thread ?pool|process ?pool|executor)\b/;
 const THREAD_SAFETY_CONSTRUCT_PATTERN = /\b(threading\.(?:r?lock|condition|semaphore|boundedsemaphore|event)|asyncio\.(?:lock|semaphore|condition)|qmutex(?:locker)?|qreadwritelock|mutex|atomic\w*|with self\.\w*lock\b|\w*lock\.acquire|\w*lock\.release|run_coroutine_threadsafe|call_soon_threadsafe|queue\.queue)/;
+const CACHE_USE_CONSTRUCT_PATTERN = /\b(cache (?:hits?|miss(?:es)?|keys?|lookups?|invalidation)|lru_cache|functools\.cache|cached_property|memoiz\w*|ttl)\b|@cache\b|\bcache\w*\.(?:get|set|put|lookup|setdefault)\(|\bcache\w*\[[^\]]+\]\s*=(?!=)/;
 const LEAK_FIX_CONSTRUCT_PATTERN = /\b(weakref\.\w+|weakvaluedictionary|weakkeydictionary|weakset|tracemalloc|gc\.collect|deletelater)\b|\.clear\(\)|^\s*del\s+\S/;
 const RETRY_BUDGET_TEXT_PATTERN = /\b(retry budget|retry(?:ing)?|backoff|max[_\s-]?attempts?)\b/;
 const DAEMON_MODE_TEXT_PATTERN = /\b(daemon(?:ize|ized)?|detached process|daemon mode)\b/;
@@ -801,7 +802,7 @@ function matchesUiPath(normalizedPath) {
   return /(^|\/)(components?|ui|views?|templates|static|styles?|themes?|frontend)(\/|$)/.test(normalizedPath)
     || /(^|\/)presentation\/apps\//.test(normalizedPath)
     || /(^|\/)(gui_[^/]+|[^/]+_gui)\.py$/.test(normalizedPath)
-    || /(^|\/)(ui|application)\/(audio|train|image|video|chat|translate)\/app\.py$/.test(normalizedPath)
+    || /(^|\/)(ui|application)\/[^/]+\/app\.py$/.test(normalizedPath)
     || /\.(css|scss|sass|less|tsx|jsx|vue|svelte|html)$/.test(normalizedPath);
 }
 
@@ -1580,15 +1581,15 @@ function deriveTechnicalLabels(filesWithContext) {
     }
 
     if (ACCESSIBILITY_TEXT_PATTERN.test(text)) {
-      if (/keyboard|keybind|shortcut|tabindex/.test(text)) addTechnicalLabel(technicalLabels, "keyboard nav");
+      if (/\b(?:keyboard|keybind|shortcut|tabindex)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "keyboard nav");
       if (/screen reader|aria-/.test(text)) addTechnicalLabel(technicalLabels, "screen reader");
-      if (/focus/.test(text)) addTechnicalLabel(technicalLabels, "focus order");
+      if (/\b(?:focus)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "focus order");
     }
 
     if (sourceCodeSurface && LOCALIZATION_TEXT_PATTERN.test(text)) {
       addTechnicalLabel(technicalLabels, "localization");
-      if (/translation|translations|gettext|catalog/.test(text)) addTechnicalLabel(technicalLabels, "translation catalog");
-      if (/locale|message|string/.test(text)) addTechnicalLabel(technicalLabels, "locale string");
+      if (/\b(?:translation|translations|gettext|catalog)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "translation catalog");
+      if (/\b(?:locale|message|string)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "locale string");
       if (/\brtl\b|right-to-left/.test(text)) addTechnicalLabel(technicalLabels, "rtl layout");
     }
 
@@ -1655,7 +1656,7 @@ function deriveTechnicalLabels(filesWithContext) {
 
     if (/codeowners$/i.test(normalizedPath)) {
       addTechnicalLabel(technicalLabels, "codeowners");
-      if (/review/.test(text)) addTechnicalLabel(technicalLabels, "review rule");
+      if (/\b(?:review)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "review rule");
       if (/\*/.test(patch) || /src\//.test(patch)) addTechnicalLabel(technicalLabels, "path ownership");
     }
     if (/\.github\/(issue_template|issue-?templates?)\//.test(normalizedPath) || /issue forms?/.test(normalizedPath)) {
@@ -1701,22 +1702,22 @@ function deriveTechnicalLabels(filesWithContext) {
       addTechnicalLabel(technicalLabels, "dockerfile");
       addTechnicalLabel(technicalLabels, "image");
       if (/^from .*:/m.test(addedPatch) || /image:/.test(patch)) addTechnicalLabel(technicalLabels, "image tag");
-      if (/cache-from|cache-to|buildx/.test(patch)) addTechnicalLabel(technicalLabels, "layer cache");
+      if (/\b(?:cache-from|cache-to|buildx)s?\b/.test(patch)) addTechnicalLabel(technicalLabels, "layer cache");
     }
     if (/compose\.ya?ml$/.test(normalizedPath)) addTechnicalLabel(technicalLabels, "compose");
     if (/^docker\//.test(normalizedPath)) addTechnicalLabel(technicalLabels, "image");
     if (matchesWorkflowFilePath(normalizedPath) && /build|publish|release|package/.test(text)) {
       addTechnicalLabel(technicalLabels, "build job");
-      if (/wheel|pypi|python -m build/.test(text)) addTechnicalLabel(technicalLabels, "wheel");
-      if (/docker|image/.test(text)) addTechnicalLabel(technicalLabels, "image");
+      if (/\b(?:wheel|pypi|python -m build)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "wheel");
+      if (/\b(?:docker|image)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "image");
     }
-    if (!documentationSurface && (/deploy|staging|prod|production/.test(normalizedPath) || /\bstaging\b|\bproduction\b|\bprod\b|rollback|rollout|smoke/.test(patch))) {
+    if (!documentationSurface && (/(^|[/._-])(deploy(?:ment)?s?|staging|prod|production)([/._-]|$)/.test(normalizedPath) || /\b(?:staging|production|prod|rollbacks?|rollouts?|smoke (?:tests?|checks?))\b/.test(patch))) {
       addTechnicalLabel(technicalLabels, "deploy job");
-      if (/staging/.test(text)) addTechnicalLabel(technicalLabels, "staging deploy");
-      if (/production|prod/.test(text)) addTechnicalLabel(technicalLabels, "prod deploy");
-      if (/rollout|gate/.test(text)) addTechnicalLabel(technicalLabels, "rollout gate");
-      if (/smoke/.test(text)) addTechnicalLabel(technicalLabels, "smoke check");
-      if (/rollback/.test(text)) addTechnicalLabel(technicalLabels, "rollback hook");
+      if (/\b(?:staging)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "staging deploy");
+      if (/\b(?:production|prod)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "prod deploy");
+      if (/\b(?:rollouts?|gates?|gated)\b/.test(text)) addTechnicalLabel(technicalLabels, "rollout gate");
+      if (/\b(?:smoke)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "smoke check");
+      if (/\b(?:rollback)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "rollback hook");
     }
 
     if (apiSurface) {
@@ -1724,12 +1725,12 @@ function deriveTechnicalLabels(filesWithContext) {
       if (hasApiText) {
         if (/graphql|\.gql$|\.graphql$/.test(text)) {
           addTechnicalLabel(technicalLabels, "graphql");
-          if (/resolver/.test(text)) addTechnicalLabel(technicalLabels, "resolver");
+          if (/\b(?:resolver)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "resolver");
           if (/type\s+\w+|extend type|input\s+\w+/.test(text)) addTechnicalLabel(technicalLabels, "schema field");
-        } else if (/webhook/.test(text)) {
+        } else if (/\b(?:webhook)s?\b/.test(text)) {
           addTechnicalLabel(technicalLabels, "webhook");
-          if (/payload|event/.test(text)) addTechnicalLabel(technicalLabels, "webhook payload");
-          if (/retry/.test(text)) addTechnicalLabel(technicalLabels, "webhook retry");
+          if (/\b(?:payload|event)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "webhook payload");
+          if (/\b(?:retry)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "webhook retry");
         } else {
           addTechnicalLabel(technicalLabels, "route");
           if (hasRouteParameterEvidence(patch)) addTechnicalLabel(technicalLabels, "route param");
@@ -1759,22 +1760,22 @@ function deriveTechnicalLabels(filesWithContext) {
       if (/\bjwt\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "jwt");
         if (/expiry|expires|exp\b/.test(text)) addTechnicalLabel(technicalLabels, "jwt expiry");
-        if (/claims?/.test(text)) addTechnicalLabel(technicalLabels, "jwt claim");
+        if (/\b(?:claims?)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "jwt claim");
       }
-      if (/refresh token/.test(text)) {
+      if (/\b(?:refresh token)s?\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "refresh token");
-        if (/rotation/.test(text)) addTechnicalLabel(technicalLabels, "token rotation");
-        if (/revoke|revocation/.test(text)) addTechnicalLabel(technicalLabels, "token revocation");
+        if (/\b(?:rotation)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "token rotation");
+        if (/\b(?:revoke|revocation)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "token revocation");
       }
       if (/\brbac\b|\brole\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "rbac");
-        if (/role map/.test(text)) addTechnicalLabel(technicalLabels, "role map");
-        if (/role check|permission check|authorize/.test(text)) addTechnicalLabel(technicalLabels, "role check");
+        if (/\b(?:role map)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "role map");
+        if (/\b(?:role check|permission check|authorize)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "role check");
       }
       if (/\boauth\b|\bscope\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "oauth scope");
-        if (/scope map/.test(text)) addTechnicalLabel(technicalLabels, "scope map");
-        if (/scope check/.test(text)) addTechnicalLabel(technicalLabels, "scope check");
+        if (/\b(?:scope map)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "scope map");
+        if (/\b(?:scope check)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "scope check");
       }
       if (/\bcsrf\b/.test(text)) addTechnicalLabel(technicalLabels, "csrf");
       if (/\bauthz\b|authorization|authorize/.test(text)) addTechnicalLabel(technicalLabels, "authz");
@@ -1795,14 +1796,14 @@ function deriveTechnicalLabels(filesWithContext) {
         if (/\benum\b/.test(text)) addTechnicalLabel(technicalLabels, "enum value");
         if (/\bminimum\b|\bmaximum\b|\bpattern\b|\brequired\b/.test(text)) addTechnicalLabel(technicalLabels, "field rule");
       }
-      if (/typing|type alias|typeddict|dataclass/.test(text)) {
+      if (/\b(?:typing|type alias|typeddict|dataclass)s?\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "public type");
-        if (/alias/.test(text)) addTechnicalLabel(technicalLabels, "type alias");
-        if (/export/.test(text)) addTechnicalLabel(technicalLabels, "type export");
+        if (/\b(?:alias)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "type alias");
+        if (/\b(?:export)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "type export");
       }
-      if (/generated|codegen|sdk/.test(text)) {
+      if (/\b(?:generated|codegen|sdk)s?\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "generated type");
-        if (/generated|codegen/.test(text)) addTechnicalLabel(technicalLabels, "codegen output");
+        if (/\b(?:generated|codegen)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "codegen output");
         if (/\bsdk\b/.test(text)) addTechnicalLabel(technicalLabels, "sdk type");
       }
     }
@@ -1814,11 +1815,11 @@ function deriveTechnicalLabels(filesWithContext) {
       if (destructive || DESTRUCTIVE_SQL_STATEMENT_PATTERN.test(patch)) {
         addTechnicalLabel(technicalLabels, "destructive migration");
         if (/drop column|column .*drop/.test(text)) addTechnicalLabel(technicalLabels, "column drop");
-        if (/drop table/.test(text)) addTechnicalLabel(technicalLabels, "table drop");
+        if (/\b(?:drop table)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "table drop");
       } else {
         addTechnicalLabel(technicalLabels, "additive migration");
         if (/add column|column .*add/.test(text)) addTechnicalLabel(technicalLabels, "column add");
-        if (/create table|add table/.test(text)) addTechnicalLabel(technicalLabels, "table add");
+        if (/\b(?:create table|add table)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "table add");
       }
     }
 
@@ -1826,14 +1827,14 @@ function deriveTechnicalLabels(filesWithContext) {
       if (/\bselect\b|\bread\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "read query");
         if (/\bindex\b/.test(text)) addTechnicalLabel(technicalLabels, "index usage");
-        if (/result|shape|columns?/.test(text)) addTechnicalLabel(technicalLabels, "result shape");
+        if (/\b(?:result|shape|columns?)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "result shape");
       }
       if (/\binsert\b|\bupdate\b|\bdelete\b|\bupsert\b|\bwrite\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "write query");
         if (/\bupsert\b/.test(text)) addTechnicalLabel(technicalLabels, "upsert");
         if (/\bbulk\b/.test(text)) addTechnicalLabel(technicalLabels, "bulk write");
       }
-      if (/create index|drop index|alter index/.test(text)) addTechnicalLabel(technicalLabels, "index ddl");
+      if (/\b(?:create index|drop index|alter index)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "index ddl");
     }
 
     if (!matchesWorkflowFilePath(normalizedPath) && (runtimeContractSurface || runtimeTextSurface)) {
@@ -1858,7 +1859,7 @@ function deriveTechnicalLabels(filesWithContext) {
       if (runtimePathEvidence && (/\blinux\b|\bubuntu\b/.test(text) || /linux/.test(normalizedPath))) {
         addTechnicalLabel(technicalLabels, "os");
         addTechnicalLabel(technicalLabels, "linux");
-        if (/apt-get|dnf|pacman|yum/.test(text)) addTechnicalLabel(technicalLabels, "package install");
+        if (/\b(?:apt-get|dnf|pacman|yum)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "package install");
         if (/shared lib|ld_library_path|\.so\b/.test(text)) addTechnicalLabel(technicalLabels, "shared lib");
       }
       if (runtimePathEvidence && /\bmacos\b/.test(text)) {
@@ -1867,12 +1868,12 @@ function deriveTechnicalLabels(filesWithContext) {
       }
       if (runtimePathEvidence && /\bcuda\b|\bnvidia\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "cuda");
-        if (/gpu memory|vram/.test(text)) addTechnicalLabel(technicalLabels, "gpu memory");
-        if (/kernel launch|cuda launch/.test(text)) addTechnicalLabel(technicalLabels, "kernel launch");
+        if (/\b(?:gpu memory|vram)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "gpu memory");
+        if (/\b(?:kernel launch|cuda launch)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "kernel launch");
       }
       if (runtimePathEvidence && /env[_ -]?var|os\.environ|getenv|dotenv/.test(text)) {
         addTechnicalLabel(technicalLabels, "env var");
-        if (/dotenv|load env/.test(text)) addTechnicalLabel(technicalLabels, "env loading");
+        if (/\b(?:dotenv|load env)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "env loading");
         if (/\bdefault\b/.test(text)) addTechnicalLabel(technicalLabels, "env default");
       }
     }
@@ -1901,14 +1902,14 @@ function deriveTechnicalLabels(filesWithContext) {
 
     if (hasFeatureFlagEvidence(normalizedPath, text)) {
       addTechnicalLabel(technicalLabels, "feature toggle");
-      if (/kill switch/.test(text)) addTechnicalLabel(technicalLabels, "kill switch");
-      if (/default/.test(text)) addTechnicalLabel(technicalLabels, "default state");
-      if (/cohort|segment|bucket|target/.test(text)) addTechnicalLabel(technicalLabels, "cohort rule");
+      if (/\b(?:kill switch)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "kill switch");
+      if (/\b(?:default (?:on|off|state|value)|(?:enabled|disabled|on|off) by default|default_(?:on|off|enabled|state|value))\b/.test(text)) addTechnicalLabel(technicalLabels, "default state");
+      if (/\b(?:cohorts?|segments?|buckets?|targeting|target(?:ed)? (?:users?|groups?|percentages?))\b/.test(text)) addTechnicalLabel(technicalLabels, "cohort rule");
     }
 
     if (sourceCodeSurface && hasObservabilityEvidence(normalizedPath, patch)) {
       addTechnicalLabel(technicalLabels, "observability");
-      if (/telemetry|otel|opentelemetry/.test(text)) addTechnicalLabel(technicalLabels, "telemetry");
+      if (/\b(?:telemetry|otel|opentelemetry)s?\b/.test(text)) addTechnicalLabel(technicalLabels, "telemetry");
       if (/\b(prometheus|monitoring|statsd|histogram|metrics?[_ ](?:registry|exporter|client|endpoint))\b|\b(?:counter|gauge)\(/.test(text)) addTechnicalLabel(technicalLabels, "monitoring");
       if (/\b(tracing|tracer|trace[_ ]id|span[_ ]id|start_span|opentelemetry|otel)\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "request tracing");
@@ -1927,23 +1928,23 @@ function deriveTechnicalLabels(filesWithContext) {
     if (performanceEligibleSurface && (hasPerformancePatchEvidence(patch) || hasAddedLineMatch(rawPatch, LEAK_FIX_CONSTRUCT_PATTERN))) {
       if (hasHeapUsageEvidence(patch)) {
         addTechnicalLabel(technicalLabels, "heap usage");
-        if (/peak memory/.test(patch)) addTechnicalLabel(technicalLabels, "peak memory");
-        if (/buffer copy|buffer copies/.test(patch)) addTechnicalLabel(technicalLabels, "buffer copy");
+        if (/\b(?:peak memory)s?\b/.test(patch)) addTechnicalLabel(technicalLabels, "peak memory");
+        if (/\b(?:buffer copy|buffer copies)s?\b/.test(patch)) addTechnicalLabel(technicalLabels, "buffer copy");
       }
       if (/\bleak\b|\bretain(?:ed|ing)?\b|\bretention\b/.test(patch) || hasAddedLineMatch(rawPatch, LEAK_FIX_CONSTRUCT_PATTERN)) {
         addTechnicalLabel(technicalLabels, "leak risk");
         if (/\bretain(?:ed|ing)?\b|\bretention\b/.test(patch)) addTechnicalLabel(technicalLabels, "object retention");
-        if (/cache leak/.test(patch)) addTechnicalLabel(technicalLabels, "cache leak");
+        if (/\b(?:cache leak)s?\b/.test(patch)) addTechnicalLabel(technicalLabels, "cache leak");
       }
-      if (/latency|cold start|init time/.test(patch) || hasImportTimeEvidence(patch)) {
+      if (/\b(?:latency|cold start|init time)s?\b/.test(patch) || hasImportTimeEvidence(patch)) {
         addTechnicalLabel(technicalLabels, "latency");
-        if (/cold start/.test(patch)) addTechnicalLabel(technicalLabels, "cold start");
-        if (/init time/.test(patch)) addTechnicalLabel(technicalLabels, "init time");
+        if (/\b(?:cold start)s?\b/.test(patch)) addTechnicalLabel(technicalLabels, "cold start");
+        if (/\b(?:init time)s?\b/.test(patch)) addTechnicalLabel(technicalLabels, "init time");
         if (hasImportTimeEvidence(patch)) addTechnicalLabel(technicalLabels, "import time");
       }
-      if (/cache/.test(patch)) {
+      if (hasAddedLineMatch(rawPatch, CACHE_USE_CONSTRUCT_PATTERN)) {
         addTechnicalLabel(technicalLabels, "cache hit");
-        if (/cache key/.test(patch)) addTechnicalLabel(technicalLabels, "cache keys");
+        if (/\b(?:cache key)s?\b/.test(patch)) addTechnicalLabel(technicalLabels, "cache keys");
         if (/invalidat/.test(patch)) addTechnicalLabel(technicalLabels, "cache invalidation");
       }
     }
@@ -1976,6 +1977,17 @@ function isDestructiveFileChange(file) {
 }
 
 const PUBLIC_DEFINITION_LINE_PATTERN = /^(?:async\s+def|def|class)\s+([a-z][a-z0-9_]*)\b|^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([a-z_$][\w$]*)/;
+
+const DEFINITION_LINE_PATTERN = /^\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:def|class|function)\s+([a-z_$][\w$]*)/;
+
+function addsDefinitions(rawPatch) {
+  const namesIn = (prefix) => new Set(patchLinesWithPrefix(rawPatch, prefix)
+    .map((line) => stripDiffLinePrefix(line).match(DEFINITION_LINE_PATTERN))
+    .filter(Boolean)
+    .map((match) => match[1]));
+  const removed = namesIn("-");
+  return [...namesIn("+")].some((name) => !removed.has(name));
+}
 
 function publicNamesInLines(lines) {
   return new Set(lines
@@ -3661,6 +3673,15 @@ function analyzePullRequestSnapshotData(snapshot) {
     files: filesWithContext,
     titleSignals,
     changesTests: Boolean(categoryCounts.get("test")),
+    uiCapabilityFiles: filesWithContext
+      .filter((file) => {
+        const normalizedPath = String(file.filename || "").toLowerCase();
+        return matchesUiPath(normalizedPath)
+          && !isTestPath(normalizedPath)
+          && !isDocumentationPath(normalizedPath)
+          && addsDefinitions(String(file.patch || "").toLowerCase());
+      })
+      .map((file) => file.filename),
     shipsBehavior: hasBehavioralSurfaceChange && !maintenanceOnlyEligible && !autobotInfrastructureOnly,
     structuralReleaseRelevant: AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels),
     structuralSemver: scoring.semver

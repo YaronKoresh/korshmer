@@ -1058,6 +1058,170 @@ test("issue classifier does not read api inside other words or a feature request
   assert.ok(!result.labels.includes("route"));
 });
 
+test("pull request snapshot reads every commit when the pull request has more than the commits API returns", async () => {
+  const snapshotFile = path.join(os.tmpdir(), `autobot-commit-cap-${process.pid}.json`);
+  const branchCommits = Array.from({ length: 260 }, (_, index) => ({ sha: `c${index}`, commit: { message: `fix(app): change ${index}` } }));
+  const listFiles = async () => [];
+  const listCommits = async () => [];
+  const github = {
+    paginate: async (method) => (method === listFiles ? [] : branchCommits.slice(0, 250)),
+    rest: {
+      pulls: { listFiles, listCommits },
+      repos: {
+        compareCommitsWithBasehead: async () => ({ data: { merge_base_commit: { sha: "base" } } }),
+        listCommits: async ({ page }) => ({
+          data: [...branchCommits, { sha: "base", commit: { message: "chore: base" } }].slice((page - 1) * 100, page * 100)
+        })
+      }
+    }
+  };
+
+  try {
+    const snapshot = await collectPullRequestSnapshot({
+      github,
+      owner: "octo",
+      repo: "repo",
+      pullRequest: { number: 4, title: "Many commits", body: "", commits: 260, base: { sha: "b1" }, head: { ref: "work/many", sha: "h1" } },
+      snapshotFile
+    });
+
+    assert.equal(snapshot.commits.length, 260);
+    assert.equal(snapshot.commits[259].message, "fix(app): change 259");
+  } finally {
+    fs.rmSync(snapshotFile, { force: true });
+  }
+});
+
+test("pull request snapshot reads a large changelog through the blob API", async () => {
+  const snapshotFile = path.join(os.tmpdir(), `autobot-blob-${process.pid}.json`);
+  const listFiles = async () => [];
+  const github = {
+    paginate: async (method) => (method === listFiles
+      ? [{ filename: "CHANGELOG.md", status: "modified", additions: 1, deletions: 0, sha: "blob1", patch: "@@ -1 +1,2 @@\n+- New entry." }]
+      : []),
+    rest: {
+      git: { getBlob: async ({ file_sha }) => ({ data: { content: Buffer.from(`blob ${file_sha}`).toString("base64"), encoding: "base64" } }) },
+      pulls: { listFiles, listCommits: async () => [] },
+      repos: { getContent: async () => { throw new Error("This API returns blobs up to 1 MB in size"); } }
+    }
+  };
+
+  try {
+    const snapshot = await collectPullRequestSnapshot({
+      github,
+      owner: "octo",
+      repo: "repo",
+      pullRequest: { number: 5, title: "Large changelog", body: "", head: { ref: "work/large", sha: "h2" } },
+      snapshotFile
+    });
+
+    assert.equal(snapshot.files[0].headContent, "blob blob1");
+  } finally {
+    fs.rmSync(snapshotFile, { force: true });
+  }
+});
+
+test("PR analyzer still finds evidence far into a long file diff", async () => {
+  const snapshotFile = path.join(os.tmpdir(), `autobot-long-diff-${process.pid}.json`);
+  const filler = Array.from({ length: 80 }, (_, index) => `+    value_${index} = compute(${index})`);
+  const patch = ["@@ -1,2 +1,83 @@", ...filler, "+    return hmac.compare_digest(token, expected)"].join("\n");
+  const listFiles = async () => [];
+  const github = {
+    paginate: async (method) => (method === listFiles
+      ? [{ filename: "src/example/session.py", status: "modified", additions: 81, deletions: 0, patch }]
+      : []),
+    rest: { pulls: { listFiles, listCommits: async () => [] } }
+  };
+
+  try {
+    const snapshot = await collectPullRequestSnapshot({
+      github,
+      owner: "octo",
+      repo: "repo",
+      pullRequest: { number: 6, title: "fix(session): compare tokens in constant time", body: "", head: { ref: "work/session", sha: "h3" } },
+      snapshotFile
+    });
+
+    assert.ok(labelsOf(snapshot).includes("security"));
+  } finally {
+    fs.rmSync(snapshotFile, { force: true });
+  }
+});
+
+test("local preview uses the pending commit message for uncommitted changes", () => {
+  const preview = analyzeCurrentGitDiff({
+    commitMessage: "fix(app): keep empty values in the result",
+    cwd: "C:/repo",
+    includeUntracked: false,
+    execFileSync: (_command, args) => {
+      const key = args.join(" ");
+      if (key === "rev-parse --show-toplevel") {
+        return "C:/repo\n";
+      }
+      if (key === "diff --find-renames --no-ext-diff --no-color --unified=3 HEAD") {
+        return [
+          "diff --git a/src/example/result.py b/src/example/result.py",
+          "--- a/src/example/result.py",
+          "+++ b/src/example/result.py",
+          "@@ -1 +1,2 @@",
+          "-    values = [value for value in values if value]",
+          "+    values = list(values)"
+        ].join("\n");
+      }
+      if (key === "rev-parse --abbrev-ref HEAD") {
+        return "work/result\n";
+      }
+      throw new Error(`Unexpected git command: ${key}`);
+    },
+    env: {},
+    readFileSync: () => ""
+  });
+
+  assert.deepEqual(preview.snapshot.commits, [{ message: "fix(app): keep empty values in the result" }]);
+  assert.equal(JSON.parse(preview.outputs.deterministic_semver_json).decision, "patch");
+});
+
+test("PR analyzer does not label cache hit when a fix only drops cache entries", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(worker): release buffers after each job",
+    "src/example/worker.py",
+    ["+        self._buffers.clear()", "+        del self._cache[key]"]
+  ));
+
+  assert.ok(labels.includes("leak risk"));
+  assert.ok(!labels.includes("cache hit"));
+});
+
+test("PR analyzer treats new interface functions as a feature when nothing else describes the change", () => {
+  const outputs = analyzePullRequestSnapshotData(createPatchSnapshot(
+    "Select and change many rows together",
+    "src/example/ui/table_panel.py",
+    ["+    def select_rows(self, rows):", "+        self._selected = set(rows)"]
+  ));
+
+  assert.equal(JSON.parse(outputs.deterministic_semver_json).decision, "minor");
+  assert.ok(outputs.deterministic_summary.includes("src/example/ui/table_panel.py adds new interface functions or classes"));
+});
+
+test("PR analyzer does not read label words inside other words", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(app): open the page before the checks",
+    "src/example/browser.py",
+    ["+    run_smoke_suite()", "+    navigate(page)"]
+  ));
+
+  for (const label of ["deploy job", "smoke check", "rollout gate"]) {
+    assert.ok(!labels.includes(label), label);
+  }
+});
+
+test("issue classifier does not read scope or regression as auth or test labels", () => {
+  const result = analyzeIssueIntake({ title: "The scope of the regression report is too narrow", body: "" });
+
+  assert.ok(!result.labels.includes("oauth scope"));
+  assert.ok(!result.labels.includes("integration test"));
+});
+
 function createWorkflowSnapshot(number, filename, patch) {
   return {
     pullRequest: {
@@ -2811,6 +2975,7 @@ test("pipeline scenario suite recovers from transient label provisioning races",
   const suite = await evaluateAutobotPipelineScenarioSuite({
     config: {
       count: 13,
+      requiredKinds: ["label-race-recovery"],
       seed: 20260413
     }
   });
