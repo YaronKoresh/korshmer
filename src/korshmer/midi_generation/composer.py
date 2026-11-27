@@ -1,6 +1,6 @@
 import math
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import pretty_midi
 
@@ -66,6 +66,9 @@ ACT_PAD_OCTAVES = (3, 4)
 ACT_ARP_SHAPES = ("updown", "up", "down")
 ARC_CLIMAX_AT = 0.7
 ARC_SWAP_CHANCE = 0.7
+COLOUR_ROLES = ("chords", "pad", "arp", "pluck", "counter")
+COLOUR_CHANCE = 0.5
+SONG_PALETTE = 3
 ARC_MIN_SWAPS = 3
 ARC_ENERGY = {
     "Statement": 1.0,
@@ -147,11 +150,11 @@ AUTO_BLEND_PARTNERS = 2
 AUTO_MOOD_SLOW = 90.0
 AUTO_MOOD_FAST = 124.0
 AUTO_MOODS = {
-    (True, "slow"): ("Melancholic", "Dreamy"),
-    (True, "mid"): ("Melancholic", "Dreamy", "Energetic"),
-    (True, "fast"): ("Melancholic", "Dreamy", "Energetic"),
-    (False, "slow"): ("Dreamy", "Uplifting"),
-    (False, "mid"): ("Uplifting", "Energetic", "Dreamy"),
+    (True, "slow"): ("Melancholic", "Melancholic", "Dreamy"),
+    (True, "mid"): ("Melancholic", "Melancholic", "Dreamy"),
+    (True, "fast"): ("Melancholic", "Melancholic", "Dreamy", "Energetic"),
+    (False, "slow"): ("Uplifting", "Uplifting", "Dreamy"),
+    (False, "mid"): ("Uplifting", "Energetic", "Uplifting", "Dreamy"),
     (False, "fast"): ("Uplifting", "Energetic"),
 }
 SYNTH_PROGRAMS = frozenset({38, 39, *range(80, 104)})
@@ -855,6 +858,21 @@ def vary_programs(rng, profile, previous):
     }
 
 
+def section_colours(seed, act, name, programs, profile):
+    colours = {}
+    for role in COLOUR_ROLES:
+        base = programs.get(role)
+        others = [p for p in profile.programs.get(role, ()) if p != base]
+        if base is None or not others:
+            continue
+        pick = random.Random(f"colour:{seed}:{act}:{role}").choice(others)
+        if random.Random(f"colour:{seed}:{act}:{name}:{role}").random() < (
+            COLOUR_CHANCE
+        ):
+            colours[role] = pick
+    return colours
+
+
 def home_mode(scale, modes):
     if not modes or scale in modes or _is_minor_like(scale):
         return 0, scale
@@ -865,7 +883,10 @@ def home_mode(scale, modes):
     return 0, scale
 
 
-def plan_acts(rng, count, scale, base_programs, profile, modes=()):
+def plan_acts(
+    rng, count, scale, base_programs, profile, modes=(), palette=None
+):
+    palette = palette or rng
     options = mode_options(scale)
     if modes:
         options = [o for o in options if o[1] in modes]
@@ -879,7 +900,7 @@ def plan_acts(rng, count, scale, base_programs, profile, modes=()):
         before = acts[-1]
         fresh = [o for o in options if o[0] != before.shift]
         shift, name = rng.choice(fresh) if fresh else (0, scale)
-        programs = vary_programs(rng, profile, before.programs)
+        programs = vary_programs(palette, profile, before.programs)
         kits = [k for k in (profile.kit, *profile.kits) if k != before.kit]
         kit = rng.choice(kits) if kits else before.kit
         acts.append(Act(index, kind, index, shift, name, programs, kit))
@@ -1412,12 +1433,25 @@ def compose(options, existing=None):
         minor_like = _is_minor_like(harm_scale)
     home_root = (root_idx + home_shift) % 12
     profile = genres.profile_for(style)
+    palette = random.Random(f"palette:{seed}")
+    profile = replace(
+        profile,
+        programs={
+            role: tuple(
+                palette.sample(
+                    list(dict.fromkeys(pool)),
+                    min(SONG_PALETTE, len(set(pool))),
+                )
+            )
+            for role, pool in profile.programs.items()
+        },
+    )
     role_programs = {
-        role: rng.choice(profile.programs[role])
+        role: palette.choice(profile.programs[role])
         for role in genres.PITCHED_ROLES
     }
     if layering:
-        role_programs = match_palette(rng, profile.programs, existing)
+        role_programs = match_palette(palette, profile.programs, existing)
     role_programs["drums"] = profile.kit
     act_count = (total_bars - 1) // ACT_BARS + 1
     arc = plan_acts(
@@ -1427,6 +1461,7 @@ def compose(options, existing=None):
         {role: role_programs[role] for role in genres.PITCHED_ROLES},
         profile,
         feel.home_modes,
+        palette=palette,
     )
     if options.mode == "Layer over editor":
         for chapter in arc:
@@ -1523,6 +1558,13 @@ def compose(options, existing=None):
                 random.Random(f"hook:{seed}:{act}"), hook, style
             )
         act_hook = act_hooks[act]
+        colours = (
+            {}
+            if layering or texture_on
+            else section_colours(
+                seed, act, section.name, chapter.programs, profile
+            )
+        )
         mood_feel = moods.mood_for(state["mood"])
         if (kind, act) not in progressions:
             drawn = mood_progression(
@@ -1864,7 +1906,9 @@ def compose(options, existing=None):
                 program = (
                     chapter.kit
                     if role == "drums"
-                    else chapter.programs.get(role, role_programs[role])
+                    else colours.get(
+                        role, chapter.programs.get(role, role_programs[role])
+                    )
                 )
                 _voice(out, role, program).notes.extend(inst.notes)
             phrase_count += 1
@@ -1880,7 +1924,8 @@ def compose(options, existing=None):
             patterns = list(feel.chops)
             random.Random(f"chops:{seed}:{kind}:{act}").shuffle(patterns)
             voice = random.Random(f"chop voice:{seed}:{act}").choice(
-                feel.chop_programs or (chapter.programs["counter"],)
+                feel.chop_programs
+                or (colours.get("counter", chapter.programs["counter"]),)
             )
             _voice(out, "counter", voice).notes.extend(
                 vocal_chops(
@@ -1907,15 +1952,19 @@ def compose(options, existing=None):
                 if lo <= n.start < hi
             ]
             counter = engine.generate_countermelody(ctx, seg, seed=sect_seed)
-            _voice(out, "counter", chapter.programs["counter"]).notes.extend(
-                counter.notes
-            )
+            _voice(
+                out,
+                "counter",
+                colours.get("counter", chapter.programs["counter"]),
+            ).notes.extend(counter.notes)
         elif "counter" in section.roles and "melody" not in user_roles:
             guide = engine.generate_melody(ctx, **lead_kw)
             counter = engine.generate_countermelody(ctx, guide, seed=sect_seed)
-            _voice(out, "counter", chapter.programs["counter"]).notes.extend(
-                counter.notes
-            )
+            _voice(
+                out,
+                "counter",
+                colours.get("counter", chapter.programs["counter"]),
+            ).notes.extend(counter.notes)
 
     if lead_existing and "melody" in user_roles:
         lo = start_bar * bar

@@ -545,7 +545,7 @@ def test_a_full_texture_collapses_into_a_handful_of_tracks():
 
 def test_tracks_keep_every_generated_note_within_the_same_start_window():
     absorbed = 0
-    for seed in range(1, 25):
+    for seed in range(1, 61):
         c = compose(_opts(texture_batches=2, minutes=2, seed=seed))
         kept = {}
         for track in c.tracks:

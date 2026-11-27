@@ -921,6 +921,7 @@ _PLAN_STRETCH = 8
 _SNAP_REACH = (0, 1, -1, 2, -2, 3, -3)
 _PLACE_SHIFTS = (0, -2, 2)
 _SHIFT_COST = 0.5
+_STANDSTILL_COST = 100.0
 _LEAD_FLOOR = 60
 _LEAD_ROOF = 77
 
@@ -965,13 +966,11 @@ class _Lead:
         n = len(self.ctx.intervals)
         home = round((self.mid - chord) / n)
         best, best_cost, best_base = None, None, None
+        moved = self.last and self.last[0] != chord
         for octave, shift in itertools.product(
             (home - 1, home, home + 1), _PLACE_SHIFTS
         ):
             base = chord + octave * n + shift
-            if shift and self.last and self.last[0] != chord:
-                if (base - self.last[1]) % n == 0:
-                    continue
             degrees = [base + s for s in steps]
             while max(degrees) > self.high and min(degrees) - n >= self.low:
                 degrees = [d - n for d in degrees]
@@ -983,10 +982,15 @@ class _Lead:
                 + _CENTER_PULL * abs(average - self.mid)
                 + _SHIFT_COST * (shift != 0)
             )
+            if moved and shift and (base - self.last[1]) % n == 0:
+                cost += _STANDSTILL_COST
+            if moved and [self.clamp(d) for d in degrees] == self.last[2]:
+                cost += _STANDSTILL_COST
             if best_cost is None or cost < best_cost:
                 best, best_cost, best_base = degrees, cost, base
-        self.last = (chord, best_base)
-        return [self.clamp(d) for d in best]
+        placed = [self.clamp(d) for d in best]
+        self.last = (chord, best_base, placed)
+        return placed
 
     def cadence(self, chord, role, previous):
         n = len(self.ctx.intervals)

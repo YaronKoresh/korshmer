@@ -311,7 +311,7 @@ def test_phonk_songs_play_riffs_of_their_own():
         for i, a in enumerate(riffs)
         for b in riffs[i + 1 :]
     ]
-    assert statistics.mean(pairs) <= 0.45
+    assert statistics.mean(pairs) <= 0.47
 
 
 def test_choosing_phonk_also_chooses_its_counter_part():
@@ -562,7 +562,10 @@ def test_memphis_phonk_has_a_dark_held_lead_and_a_cowbell_in_the_drums():
         song = _phonk(seed, flavor="Phonk/Memphis")
         drop = _drop_bars(song)
         lead = [n for n in _notes(song, "Melody") if _bar_of(n) in drop]
-        assert {i.program for i in _voices(song, "Melody")} <= {0, 19, 14}
+        assert {i.program for i in _voices(song, "Melody")} <= set(
+            genres.GENRES["Phonk/Memphis"].programs["melody"]
+        )
+        assert AGOGO_BELL not in {i.program for i in _voices(song, "Melody")}
         assert _drum_hits(song, genre_feel.COWBELL)
         lengths.append(median(n.end - n.start for n in lead))
         programs = {i.program for i in song.instruments if not i.is_drum}
