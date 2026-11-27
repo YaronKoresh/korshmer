@@ -39,6 +39,9 @@ EARLIER_TAGS = re.compile(
     rf"|{TEMPO_TAG}[0-9.]*|{VOCALS}|{MUSIC})"
     rf"(_[0-9a-f]{{8}})?)+$"
 )
+CLEANED_TAG = re.compile(
+    rf"_{NOISE_TAG}(?:{VOCALS}|{MUSIC})?_[0-9a-f]{{8}}(?:_|$)"
+)
 NOISE_STAGE = "Removing background noise"
 QUALITY_STAGE = "Measuring and improving the level"
 NOTES_STAGE = "Listening to the notes of the song"
@@ -249,8 +252,12 @@ def remove_noise_file(path, folder=None, kind=VOCALS):
     )
 
 
+def was_cleaned(path):
+    return bool(CLEANED_TAG.search(os.path.splitext(os.path.basename(path))[0]))
+
+
 def improve_quality_file(
-    path, folder=None, notes=None, origin=0.0, kind=VOCALS
+    path, folder=None, notes=None, origin=0.0, kind=VOCALS, cleaned=None
 ):
     from korshmer.audio_processing.clip_notes import beside_clip
 
@@ -261,7 +268,13 @@ def improve_quality_file(
         if heard is None
         else beside_clip(heard, sample_rate, origin, data.shape[0])
     )
-    improved, readings = clip_level.improve(data, sample_rate, music, kind)
+    improved, readings = clip_level.improve(
+        data,
+        sample_rate,
+        music,
+        kind,
+        was_cleaned(path) if cleaned is None else cleaned,
+    )
     if not readings or clip_level.unchanged(readings):
         return path, readings
     target = fixed_clip_path(path, QUALITY_TAG, folder)
@@ -366,6 +379,7 @@ def fix_clip(
                         notes if role == "path" else None,
                         clip.start - clip.offset,
                         kind,
+                        True if NOISE in steps else None,
                     )
                     if role == "path":
                         result["readings"] = readings
