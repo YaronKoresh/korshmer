@@ -434,6 +434,16 @@ class AutobotLabelRegistry {
     return Math.max(parsedLimit, 1);
   }
 
+  static RELEASE_KIND_LABELS = Object.freeze(["breaking-change", "enhancement", "bug", "security", "performance"]);
+
+  static pullRequestLabelsOnly(labels, options = {}) {
+    const technical = AutobotLabelRegistry.technicalLabelsOnly(labels, options);
+    const kinds = AutobotLabelRegistry.RELEASE_KIND_LABELS.filter((kind) => (labels || [])
+      .some((label) => AutobotLabelRegistry.normalizeLabelName(typeof label === "string" ? label : label?.name) === kind)
+      && !technical.includes(kind));
+    return [...kinds, ...technical];
+  }
+
   static technicalLabelsOnly(labels, options = {}) {
     const limit = AutobotLabelRegistry.resolveLabelLimit(options.limit);
     const collapsed = collapseTechnicalLabels(AutobotLabelRegistry.sortTechnicalLabels(labels));
@@ -563,6 +573,10 @@ function technicalLabelsOnly(labels, options) {
   return AutobotLabelRegistry.technicalLabelsOnly(labels, options);
 }
 
+function pullRequestLabelsOnly(labels, options) {
+  return AutobotLabelRegistry.pullRequestLabelsOnly(labels, options);
+}
+
 function getNormalizationEntries(sourceLabel, targetLabel) {
   const normalized = String(sourceLabel || "").trim().toLowerCase().replace(/\s+/g, " ");
   const hyphenVariant = normalized.replace(/[\s_]+/g, "-");
@@ -604,6 +618,7 @@ module.exports = {
   parseAutobotLabels,
   sortLabels,
   sortTechnicalLabels,
+  pullRequestLabelsOnly,
   technicalLabelsOnly,
   trimLowSignalLabels,
   uniqueValidLabels

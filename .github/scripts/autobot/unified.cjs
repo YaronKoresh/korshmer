@@ -5,7 +5,7 @@ const {
   AutobotLabelRegistry,
   parseAutobotLabels,
   sortLabels,
-  technicalLabelsOnly,
+  pullRequestLabelsOnly,
   trimLowSignalLabels,
   uniqueValidLabels
 } = require("./labels/registry.cjs");
@@ -247,7 +247,7 @@ async function analyzeUnifiedAutomationState({
 
   const rawCombinedAutobotLabels = buildCombinedAutobotLabels(autobotArtifacts.deterministicLabels, linkedAutobotLabels);
   const combinedAutobotLabels = context?.eventName === "pull_request"
-    ? technicalLabelsOnly(rawCombinedAutobotLabels)
+    ? pullRequestLabelsOnly(rawCombinedAutobotLabels)
     : rawCombinedAutobotLabels;
   const issueNumber = context.issue && context.issue.number ? context.issue.number : null;
 

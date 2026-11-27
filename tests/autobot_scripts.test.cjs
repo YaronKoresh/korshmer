@@ -1245,6 +1245,14 @@ test("release impact names repeated evidence once", () => {
   assert.equal(summary.split("CHANGELOG.md gains").length - 1, 1);
 });
 
+test("pull request labels keep the change kind labels that decide the release", () => {
+  const labels = AutobotLabelRegistry.pullRequestLabelsOnly(["bug", "view", "unit test", "changelog", "readme"]);
+
+  assert.ok(labels.includes("bug"));
+  assert.ok(labels.includes("view"));
+  assert.ok(AutobotLabelRegistry.hasReleaseRelevantLabel(labels));
+});
+
 function createWorkflowSnapshot(number, filename, patch) {
   return {
     pullRequest: {

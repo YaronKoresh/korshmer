@@ -3386,6 +3386,56 @@ const ISSUE_INTAKE_SCENARIO_FACTORY_ENTRIES = ISSUE_INTAKE_SCENARIO_SPECS.map((s
   weight: 1
 }));
 
+function createUnifiedReleaseImpactScenarioFactory(spec) {
+  const createSnapshot = createReleaseImpactScenarioFactory(spec);
+  return function createUnifiedReleaseImpactScenario(random, index, seed) {
+    const autobotScenario = withOptimalResult(createSnapshot(random, 600 + index, seed));
+    const input = autobotScenario.input;
+    const sourceNumber = input.pullRequest.number;
+    const sourceEntity = createSmartLinkEntity({
+      body: input.pullRequest.body,
+      branch: input.pullRequest.headRef,
+      changedFiles: input.files.map((file) => ({ filename: file.filename, status: file.status })),
+      kind: "pull_request",
+      number: sourceNumber,
+      repoFullName: "octo/repo",
+      title: input.pullRequest.title,
+      updatedAt: "2026-04-13T00:00:00Z"
+    });
+    const pullRequest = buildMockPullRequestRecordFromEntity(sourceEntity, {
+      body: input.pullRequest.body,
+      headRef: input.pullRequest.headRef,
+      title: input.pullRequest.title
+    });
+    return {
+      autobotScenario,
+      context: buildAutobotPipelineContext(pullRequest),
+      expected: {
+        autobotReady: true,
+        milestoneTitle: deriveExpectedPipelineMilestoneTitle(autobotScenario)
+      },
+      githubOptions: {
+        issueNumber: sourceNumber,
+        issueTitle: input.pullRequest.title,
+        pullCommits: input.commits || [],
+        pullFiles: input.files,
+        pullRequest,
+        releases: [{ draft: false, id: 1, prerelease: false, tag_name: "v0.0.1" }]
+      },
+      issueNumber: sourceNumber,
+      kind: `unified-pr-${spec.kind}`,
+      name: buildScenarioName("unified", `pr-${spec.kind}`, index, seed),
+      thresholdInput: 80
+    };
+  };
+}
+
+const UNIFIED_RELEASE_IMPACT_SCENARIO_FACTORY_ENTRIES = RELEASE_IMPACT_SCENARIO_SPECS.map((spec) => ({
+  factory: createUnifiedReleaseImpactScenarioFactory(spec),
+  name: `pr-${spec.kind}`,
+  weight: 1
+}));
+
 const UNIFIED_AUTOMATION_SCENARIO_FACTORY_ENTRIES = [
   { factory: createUnifiedPullRequestDirectiveScenario, name: "pr-directives", weight: 5 },
   { factory: createUnifiedIssueRelationshipScenario, name: "issue-relationships", weight: 4 },
@@ -3394,7 +3444,8 @@ const UNIFIED_AUTOMATION_SCENARIO_FACTORY_ENTRIES = [
   { factory: createUnifiedSuppressedPullRequestScenario, name: "pr-suppressed", weight: 2 },
   { factory: createUnifiedReleaseFinalizeScenario, name: "release-finalize", weight: 2 },
   { factory: createUnifiedUntrustedForkScenario, name: "pr-untrusted-fork", weight: 2 },
-  ...ISSUE_INTAKE_SCENARIO_FACTORY_ENTRIES
+  ...ISSUE_INTAKE_SCENARIO_FACTORY_ENTRIES,
+  ...UNIFIED_RELEASE_IMPACT_SCENARIO_FACTORY_ENTRIES
 ];
 
 function buildUnifiedAutomationScenarioCases(config = {}) {
