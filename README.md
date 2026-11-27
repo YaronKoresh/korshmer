@@ -1,6 +1,6 @@
 # KORSHMER
 
-![Version](https://img.shields.io/badge/Version-1.1.0-red?style=flat-square)
+![Version](https://img.shields.io/badge/Version-1.1.1-red?style=flat-square)
 
 KORSHMER is an audio workstation (DAW) that combines a multi-lane MIDI editor, audio clips, AI audio-to-MIDI conversion, stem separation and a song generator in one window.
 

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-27
+
 ### Changed
 
 - The README test that checks the script names it mentions accepts Windows paths such as `scripts\install.bat` as well as `scripts/install.bat`.
