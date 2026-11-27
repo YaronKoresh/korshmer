@@ -26,6 +26,8 @@ LEAK_TREND_S = 2.0
 LEAK_MIN_FRAMES = 16
 LEAK_MIN_MOVE_DB = 1.0
 LEAK_MIN_CORRELATION = 0.6
+RESIDUAL_UNDER_VOCALS_DB = 20.0
+RESIDUAL_PAUSE_DROP_DB = 20.0
 
 
 class ClipSeparationUnavailable(RuntimeError):
@@ -133,6 +135,31 @@ def _follows_vocals(music, vocals, sample_rate):
     return bool(correlation >= LEAK_MIN_CORRELATION)
 
 
+def _frame_loudness_db(part, sample_rate):
+    bands = _band_levels_db(_mono(part), sample_rate)
+    return 10.0 * np.log10(np.sum(10.0 ** (bands / 10.0), axis=1))
+
+
+def _only_while_singing(music, vocals, sample_rate):
+    if _mono(vocals).shape[0] < NOISE_FRAME:
+        return False
+    sung = _frame_loudness_db(vocals, sample_rate)
+    left = _frame_loudness_db(music, sample_rate)
+    singing = sung > sung.max() - LEAK_ACTIVE_DB
+    pauses = ~singing
+    if int(pauses.sum()) < LEAK_MIN_FRAMES or int(singing.sum()) < 1:
+        return False
+    under_singing = 10.0 * np.log10(np.mean(10.0 ** (left[singing] / 10.0)))
+    in_pauses = 10.0 * np.log10(np.mean(10.0 ** (left[pauses] / 10.0)))
+    return bool(in_pauses < under_singing - RESIDUAL_PAUSE_DROP_DB)
+
+
+def _residual_of_vocals(music, vocals, levels, sample_rate):
+    return levels[MUSIC] < levels[VOCALS] - RESIDUAL_UNDER_VOCALS_DB and (
+        _only_while_singing(music, vocals, sample_rate)
+    )
+
+
 def _fitted(vocals, frames):
     vocals = np.asarray(vocals, dtype=np.float32)[:, :frames]
     if vocals.shape[1] < frames:
@@ -167,6 +194,7 @@ def separate_clip_file(path, folder=None, progress=None, should_stop=None):
         if kind == MUSIC and (
             _sounds_like_noise(data)
             or _follows_vocals(data, vocals, SAMPLE_RATE)
+            or _residual_of_vocals(data, vocals, levels, SAMPLE_RATE)
         ):
             continue
         target = fixed_clip_path(path, kind, folder)

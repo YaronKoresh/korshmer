@@ -1339,19 +1339,26 @@ class ArrangerTimeline(QWidget):
             clip_id, CLIP_ALL_LABEL, ("noise", "quality", "align")
         )
 
-    def _shifted_clip_start(self, clip, beats):
+    def _moved_by_beats(self, seconds, beats):
+        if not beats:
+            return seconds
         tempo_map = self.model.tempo_map
         if tempo_map is not None:
-            return tempo_map.seconds_at(tempo_map.beats_at(clip.start) + beats)
-        return clip.start + beats * 60.0 / float(self.model.tempo)
+            return tempo_map.seconds_at(tempo_map.beats_at(seconds) + beats)
+        return seconds + beats * 60.0 / float(self.model.tempo)
+
+    def _shifted_clip_start(self, clip, beats):
+        return self._moved_by_beats(clip.start, beats)
+
+    def _beat_shift(self, clip, result):
+        beats = result.get("shift") or 0.0
+        if beats and self._shifted_clip_start(clip, beats) < 0.0:
+            return beats + 1.0
+        return beats
 
     def _fixed_clip_start(self, clip, result):
-        start = clip.start
-        if result.get("shift"):
-            start = self._shifted_clip_start(clip, result["shift"])
-            if start < 0.0:
-                start = self._shifted_clip_start(clip, result["shift"] + 1.0)
-        return start
+        beats = self._beat_shift(clip, result)
+        return self._shifted_clip_start(clip, beats) if beats else clip.start
 
     def _clip_fix_notes(self, result, seconds, moved):
         from korshmer.audio_processing import clip_level
@@ -1379,8 +1386,7 @@ class ArrangerTimeline(QWidget):
 
     def _apply_split(self, clip, result):
         self.model.snapshot()
-        start = self._fixed_clip_start(clip, result)
-        moved_by = start - clip.start
+        beats = self._beat_shift(clip, result)
         self.model.remove_clip(clip.id)
         added = []
         for kind, _path, fixed in result["split"]:
@@ -1391,7 +1397,7 @@ class ArrangerTimeline(QWidget):
                     part = self._split_part(
                         clip, piece, piece["start"], f"{name} {number}", kind
                     )
-                    part.start += moved_by
+                    part.start = self._moved_by_beats(part.start, beats)
                     added.append(part)
                 continue
             part = self._split_part(clip, fixed, clip.start, name, kind)
@@ -1399,7 +1405,7 @@ class ArrangerTimeline(QWidget):
             part.duration = clip.duration
             if "trim" in fixed:
                 part.trim(*fixed["trim"])
-            part.start += moved_by
+            part.start = self._moved_by_beats(part.start, beats)
             added.append(part)
         for part in added:
             self._queue_waveform(part)
