@@ -1,4 +1,7 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import cache
+
+from korshmer.midi_generation.genres import blended, parts
 
 KICK, SIDE_STICK, SNARE, CLAP = 36, 37, 38, 39
 HAT, PEDAL_HAT, OPEN_HAT = 42, 44, 46
@@ -870,8 +873,42 @@ HOOK_KIND = "chorus"
 HOOK_BARS = 3
 
 
+@cache
+def _blend_feel(names):
+    lead, *others = (FEELS[name] for name in names)
+    rhythms = [
+        rhythm
+        for other in others
+        for rhythm in other.hook.rhythms
+        if lead.hook.min_notes <= len(rhythm) <= lead.hook.max_notes
+    ]
+    return replace(
+        lead,
+        grooves=blended(lead.grooves, (o.grooves for o in others)),
+        progressions=blended(
+            lead.progressions, (o.progressions for o in others)
+        ),
+        minor_progressions=blended(
+            lead.minor_progressions or lead.progressions,
+            (o.minor_progressions or o.progressions for o in others),
+        ),
+        bass=blended(lead.bass, (o.bass for o in others)),
+        chord_hits=blended(lead.chord_hits, (o.chord_hits for o in others)),
+        fills=blended(lead.fills, (o.fills for o in others)),
+        hat_rolls=blended(lead.hat_rolls, (o.hat_rolls for o in others)),
+        hook=replace(lead.hook, rhythms=blended(lead.hook.rhythms, (rhythms,))),
+    )
+
+
 def feel_for(style):
-    return FEELS.get(style, FEELS[DEFAULT_FEEL])
+    if style in FEELS:
+        return FEELS[style]
+    names = tuple(name for name in parts(style) if name in FEELS)
+    if not names:
+        return FEELS[DEFAULT_FEEL]
+    if len(names) == 1:
+        return FEELS[names[0]]
+    return _blend_feel(names)
 
 
 def groove_for(rng, style):

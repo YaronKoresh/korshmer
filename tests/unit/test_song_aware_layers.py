@@ -6,7 +6,7 @@ import pytest
 
 from korshmer.audio_processing import vocal_melody
 from korshmer.audio_processing.vocal_melody import VocalMelodyOptions
-from korshmer.midi_generation import composer
+from korshmer.midi_generation import composer, genres
 from korshmer.midi_generation.composer import (
     ANSWER_NAME,
     ComposeOptions,
@@ -65,9 +65,20 @@ def _layer(song, seed=3, style=composer.AUTO_STYLE):
 
 
 def test_an_acoustic_song_does_not_get_a_phonk_layer():
-    assert resolve_style(composer.AUTO_STYLE, BPM, "Minor") == "Phonk"
+    assert genres.primary(resolve_style(composer.AUTO_STYLE, BPM, "Minor")) == (
+        "Phonk"
+    )
     assert song_style(_song(), BPM, "Minor") == "Pop"
-    assert _layer(_song()).style == "Pop"
+    layered = genres.parts(_layer(_song()).style)
+    assert layered[0] == "Pop"
+    assert not set(layered) & composer.AUTO_SYNTH_STYLES
+
+
+def test_a_synth_song_may_mix_in_synth_styles():
+    song = _song((81, 89, 38), vocals=False)
+    blend = resolve_style(composer.AUTO_STYLE, BPM, "Minor", song)
+    assert genres.parts(blend)[0] == "Phonk"
+    assert "EDM" in genres.parts(blend)
 
 
 @pytest.mark.parametrize(

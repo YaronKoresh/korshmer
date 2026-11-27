@@ -127,6 +127,32 @@ AUTO_STYLE_TEMPOS = (
     (138.0, "EDM", "EDM"),
 )
 AUTO_STYLE_FAST = ("Phonk", "Rock")
+AUTO_STYLE_CENTRES = {
+    "Lo-Fi": 76.0,
+    "Jazz": 92.0,
+    "Hip-Hop": 92.0,
+    "Pop": 114.0,
+    "Rock": 128.0,
+    "EDM": 128.0,
+    "Phonk": 146.0,
+}
+AUTO_MINOR_STYLES = frozenset({"Lo-Fi", "Hip-Hop", "Phonk"})
+AUTO_MAJOR_STYLES = frozenset({"Jazz", "Pop", "Rock"})
+AUTO_SYNTH_STYLES = frozenset({"EDM", "Phonk"})
+AUTO_TEMPO_WIDTH = 24.0
+AUTO_MODE_MISMATCH = 0.5
+AUTO_BLEND_KEEP = 0.45
+AUTO_BLEND_PARTNERS = 2
+AUTO_MOOD_SLOW = 90.0
+AUTO_MOOD_FAST = 124.0
+AUTO_MOODS = {
+    (True, "slow"): ("Melancholic", "Dreamy"),
+    (True, "mid"): ("Melancholic", "Dreamy", "Energetic"),
+    (True, "fast"): ("Melancholic", "Dreamy", "Energetic"),
+    (False, "slow"): ("Dreamy", "Uplifting"),
+    (False, "mid"): ("Uplifting", "Energetic", "Dreamy"),
+    (False, "fast"): ("Uplifting", "Energetic"),
+}
 SYNTH_PROGRAMS = frozenset({38, 39, *range(80, 104)})
 DRIVEN_PROGRAMS = frozenset({29, 30})
 SYNTH_SONG_SHARE = 0.35
@@ -411,7 +437,7 @@ def song_style(existing, bpm, scale):
     shares = _program_shares(existing)
     synth = sum(v for p, v in shares.items() if p in SYNTH_PROGRAMS)
     if not shares or synth >= SYNTH_SONG_SHARE:
-        return resolve_style(AUTO_STYLE, bpm, scale)
+        return _tempo_style(bpm, scale)
     driven = sum(v for p, v in shares.items() if p in DRIVEN_PROGRAMS)
     if driven >= DRIVEN_SONG_SHARE:
         return "Rock"
@@ -429,16 +455,60 @@ def match_palette(rng, programs, existing):
     return matched
 
 
-def resolve_style(style, bpm, scale, existing=None):
-    if style != AUTO_STYLE:
-        return style
-    if existing is not None:
-        return song_style(existing, bpm, scale)
+def _tempo_style(bpm, scale):
     minor = _is_minor_like(scale)
     for limit, minor_style, major_style in AUTO_STYLE_TEMPOS:
         if bpm < limit:
             return minor_style if minor else major_style
     return AUTO_STYLE_FAST[0] if minor else AUTO_STYLE_FAST[1]
+
+
+def style_fit(style, bpm, scale):
+    distance = (bpm - AUTO_STYLE_CENTRES[style]) / AUTO_TEMPO_WIDTH
+    fit = math.exp(-distance * distance)
+    minor = _is_minor_like(scale)
+    if (minor and style in AUTO_MAJOR_STYLES) or (
+        not minor and style in AUTO_MINOR_STYLES
+    ):
+        fit *= AUTO_MODE_MISMATCH
+    return fit
+
+
+def blend_partners(lead, bpm, scale, existing=None):
+    candidates = [s for s in AUTO_STYLE_CENTRES if s != lead]
+    if existing is not None:
+        shares = _program_shares(existing)
+        synth = sum(v for p, v in shares.items() if p in SYNTH_PROGRAMS)
+        if shares and synth < SYNTH_SONG_SHARE:
+            candidates = [s for s in candidates if s not in AUTO_SYNTH_STYLES]
+    fits = {s: style_fit(s, bpm, scale) for s in candidates}
+    best = max([style_fit(lead, bpm, scale), *fits.values()])
+    ranked = sorted(candidates, key=lambda s: (-fits[s], s))
+    return tuple(s for s in ranked if fits[s] >= AUTO_BLEND_KEEP * best)[
+        :AUTO_BLEND_PARTNERS
+    ]
+
+
+def resolve_style(style, bpm, scale, existing=None):
+    if style != AUTO_STYLE:
+        return style
+    if existing is not None:
+        lead = song_style(existing, bpm, scale)
+    else:
+        lead = _tempo_style(bpm, scale)
+    return genres.blend_name(
+        (lead, *blend_partners(lead, bpm, scale, existing))
+    )
+
+
+def auto_moods(bpm, minor):
+    if bpm < AUTO_MOOD_SLOW:
+        pace = "slow"
+    elif bpm < AUTO_MOOD_FAST:
+        pace = "mid"
+    else:
+        pace = "fast"
+    return AUTO_MOODS[(minor, pace)]
 
 
 def _mean_velocity(notes):
@@ -590,11 +660,13 @@ def _split_loop(total_bars):
 
 
 def structure_for(style):
-    return STYLE_STRUCTURES.get(style, DEFAULT_STRUCTURE)
+    return STYLE_STRUCTURES.get(genres.primary(style), DEFAULT_STRUCTURE)
 
 
 def structures_for(style):
-    return STYLE_STRUCTURE_POOLS.get(style, (structure_for(style),))
+    return STYLE_STRUCTURE_POOLS.get(
+        genres.primary(style), (structure_for(style),)
+    )
 
 
 def plan_song_bars(rng, total_bars, structure):
@@ -832,7 +904,7 @@ def make_progression(rng, kind):
 
 def make_drum_pattern(rng, style):
     pattern = genre_feel.groove_for(rng, style)
-    if style in _FIXED_GROOVES:
+    if genres.primary(style) in _FIXED_GROOVES:
         return pattern
     kick = pattern[engine._KICK]
     if rng.random() < 0.6:
@@ -1297,9 +1369,7 @@ def compose(options, existing=None):
             chapter.kind = "Statement"
             chapter.shift = 0
             chapter.scale = harm_scale
-    mood_pool = (
-        ("Melancholic", "Dreamy") if minor_like else ("Uplifting", "Energetic")
-    )
+    mood_pool = auto_moods(bpm, minor_like)
     base_mood = (
         rng.choice(mood_pool) if options.mood == "Auto" else options.mood
     )
@@ -1480,7 +1550,9 @@ def compose(options, existing=None):
         section_hi = section_lo + section.bars * bar
         groove = state["pattern"]
         if section.name in LIGHT_SECTIONS and not occurrence and not layering:
-            groove = light_pattern(groove, style in _FIXED_GROOVES)
+            groove = light_pattern(
+                groove, genres.primary(style) in _FIXED_GROOVES
+            )
         melody_seed.setdefault((kind, act), rng.randrange(1 << 30))
         retold = told.get((kind, act), 0)
         told[(kind, act)] = retold + 1
@@ -1546,7 +1618,7 @@ def compose(options, existing=None):
                         )
                         if section.name in LIGHT_SECTIONS and not occurrence:
                             pattern = light_pattern(
-                                pattern, style in _FIXED_GROOVES
+                                pattern, genres.primary(style) in _FIXED_GROOVES
                             )
                         played = (index + 1) * PHRASE_BARS
                         fill_bars = 0 if played % state["fill"] else length
@@ -1555,7 +1627,7 @@ def compose(options, existing=None):
                         ]
                     inst = engine.generate_drums(
                         ctx,
-                        engine._STYLES[style][1],
+                        engine._STYLES[genres.primary(style)][1],
                         bars=length,
                         seed=sect_seed + index,
                         energy=section.energy,

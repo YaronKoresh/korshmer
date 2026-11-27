@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 import pretty_midi
 
 from korshmer.constants import GRID_RESOLUTIONS, NOTE_NAMES, SCALES
-from korshmer.midi_generation import genre_feel, hooks, moods
+from korshmer.midi_generation import genre_feel, genres, hooks, moods
 from korshmer.utils.tempo import validate_bpm
 
 PROGRESSION_PRESETS = {
@@ -670,11 +670,11 @@ def generate_bass(
 ):
     rng = _rng(seed)
     if rhythm is None:
-        rhythm = _STYLES.get(style, _STYLES["Pop"])[2]
+        rhythm = _STYLES.get(genres.primary(style), _STYLES["Pop"])[2]
     if rhythm == "riff" and not riff:
         rhythm = "driving"
     pattern = _BASS_BARS.get(rhythm, _bass_eighths)
-    program = _STYLES.get(style, _STYLES["Pop"])[3][1]
+    program = _STYLES.get(genres.primary(style), _STYLES["Pop"])[3][1]
     feel = genre_feel.feel_for(style)
     gate = feel.bass_gate
     inst = _new_inst("Bass", program)
@@ -795,7 +795,7 @@ def generate_chords(
     octave=4,
 ):
     rng = _rng(seed)
-    program = _STYLES.get(style, _STYLES["Pop"])[3][0]
+    program = _STYLES.get(genres.primary(style), _STYLES["Pop"])[3][0]
     feel = genre_feel.feel_for(style)
     inst = _new_inst("Chords", program)
     bar = ctx.bar
@@ -1135,7 +1135,7 @@ def build_song(
     bpm = validate_bpm(bpm)
     parts = parts or ["drums", "bass", "chords", "melody", "pad"]
     root_idx = NOTE_NAMES.index(root) if root in NOTE_NAMES else 0
-    style_cfg = _STYLES.get(style, _STYLES["Pop"])
+    style_cfg = _STYLES.get(genres.primary(style), _STYLES["Pop"])
     prog_name = progression or style_cfg[0]
     prog = PROGRESSION_PRESETS.get(prog_name, PROGRESSION_PRESETS[style_cfg[0]])
     sections = SONG_STRUCTURES.get(structure, SONG_STRUCTURES["Loop (8 bars)"])

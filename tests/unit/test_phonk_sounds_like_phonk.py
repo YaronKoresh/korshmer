@@ -196,6 +196,18 @@ def test_phonk_chords_are_bare_fifths_without_bright_keyboards(seed):
         assert {(pitch - low) % 12 for pitch in pitches} <= {0, 7}
 
 
+def test_phonk_band_sounds_change_between_songs_but_stay_dark():
+    sounds = {"Chords": set(), "Pad": set()}
+    for seed in range(1, 13):
+        song = _phonk(seed)
+        for word, found in sounds.items():
+            found |= {inst.program for inst in _voices(song, word)}
+        programs = {i.program for i in song.instruments if not i.is_drum}
+        assert not programs & BRIGHT_TOY_PROGRAMS, seed
+    assert len(sounds["Chords"]) >= 3
+    assert len(sounds["Pad"]) >= 3
+
+
 def test_phonk_in_a_major_key_is_centred_on_the_relative_minor():
     shares = []
     centred = 0
