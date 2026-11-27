@@ -586,6 +586,84 @@ test("local preview semver rendering follows online label-driven release relevan
   assert.ok(!report.includes("Semver: patch."));
 });
 
+function createSourceSnapshot(title, body = "", filename = "src/korshmer/audio_processing/clip_level.py") {
+  return {
+    pullRequest: {
+      number: 41,
+      title,
+      body,
+      headRef: "change/source-update"
+    },
+    totals: {
+      filesChanged: 1,
+      additions: 2,
+      deletions: 0,
+      totalChanges: 2
+    },
+    files: [
+      {
+        filename,
+        status: "modified",
+        additions: 2,
+        deletions: 0,
+        patch: [
+          "+def measure(data):",
+          "+    return compute_levels(data)"
+        ].join("\n"),
+        rawPatchAvailable: true
+      }
+    ]
+  };
+}
+
+test("PR analyzer treats a breaking marker in the title as a major release", () => {
+  const outputs = analyzePullRequestSnapshotData(createSourceSnapshot("feat(api)!: rename the export entry point"));
+
+  assert.equal(JSON.parse(outputs.deterministic_semver_json).decision, "major");
+  assert.equal(outputs.release_relevant, "true");
+  assert.ok(JSON.parse(outputs.deterministic_labels_json).includes("breaking-change"));
+});
+
+test("PR analyzer treats a BREAKING CHANGE footer in the body as a major release", () => {
+  const outputs = analyzePullRequestSnapshotData(createSourceSnapshot(
+    "fix(audio): rename the level option",
+    "Rename the option.\n\nBREAKING CHANGE: callers must pass target_db."
+  ));
+
+  assert.equal(JSON.parse(outputs.deterministic_semver_json).decision, "major");
+  assert.equal(outputs.release_relevant, "true");
+  assert.ok(JSON.parse(outputs.deterministic_labels_json).includes("breaking-change"));
+});
+
+test("PR analyzer ignores breaking markers on documentation-only changes", () => {
+  const outputs = analyzePullRequestSnapshotData(createSourceSnapshot(
+    "docs!: rewrite the readme",
+    "BREAKING CHANGE: none",
+    "README.md"
+  ));
+
+  assert.equal(JSON.parse(outputs.deterministic_semver_json).decision, "none");
+  assert.ok(!JSON.parse(outputs.deterministic_labels_json).includes("breaking-change"));
+});
+
+test("PR analyzer ignores breaking change wording inside body comments", () => {
+  const outputs = analyzePullRequestSnapshotData(createSourceSnapshot(
+    "fix(audio): keep room tone",
+    "<!--\nBREAKING CHANGE: describe the migration here\n-->"
+  ));
+
+  assert.equal(JSON.parse(outputs.deterministic_semver_json).decision, "patch");
+  assert.ok(!JSON.parse(outputs.deterministic_labels_json).includes("breaking-change"));
+});
+
+test("PR analyzer labels perf PRs that change source files and releases them as patches", () => {
+  const outputs = analyzePullRequestSnapshotData(createSourceSnapshot("perf(audio): reuse the level measurement"));
+
+  assert.equal(JSON.parse(outputs.deterministic_semver_json).decision, "patch");
+  assert.equal(outputs.release_relevant, "true");
+  assert.ok(JSON.parse(outputs.deterministic_labels_json).includes("performance"));
+});
+
 function createWorkflowSnapshot(number, filename, patch) {
   return {
     pullRequest: {

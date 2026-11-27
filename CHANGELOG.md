@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The README test that checks the script names it mentions accepts Windows paths such as `scripts\install.bat` as well as `scripts/install.bat`.
 
+### Fixed
+
+- The pull request bot asks for a major release when the title marks a breaking change with `!` (for example `feat(api)!:`) or the description has a `BREAKING CHANGE:` line, and labels the pull request `breaking-change`; before, such a pull request got a minor release or none.
+- The pull request bot labels a `perf` pull request that changes source files `performance` and includes it in the next release as a patch; before, it got no labels and was left out of the release.
+
 ## [1.1.0] - 2026-11-21
 
 ### Added

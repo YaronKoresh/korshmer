@@ -113,6 +113,9 @@ const BUG_TITLE_TEXT_PATTERN = /\b(bugs?|bugfix(?:es)?|fix(?:es|ed|ing)?|hotfix(
 const CONVENTIONAL_COMMIT_TYPE_PATTERN = /^\s*([a-z][a-z0-9-]*)(?:\([^)]*\))?!?:/;
 const CONVENTIONAL_BUG_TYPES = new Set(["bugfix", "fix", "hotfix"]);
 const CONVENTIONAL_ENHANCEMENT_TYPES = new Set(["enhancement", "feat", "feature"]);
+const CONVENTIONAL_PERFORMANCE_TYPES = new Set(["perf", "performance"]);
+const CONVENTIONAL_BREAKING_MARKER_PATTERN = /^\s*[a-z][a-z0-9-]*(?:\([^)]*\))?!:/;
+const BREAKING_CHANGE_FOOTER_PATTERN = /^\s*breaking[\s-]change\s*:/m;
 const BUG_FIX_ISSUE_REFERENCE_PATTERN = /\b(?:fix|fixes|fixed)\s*:?\s+(?:(?:[\w.-]+\/[\w.-]+)?#\d+\b|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)/;
 const SECURITY_ADVISORY_ID_PATTERN = /\b(?:cve-\d{4}-\d{4,}|ghsa-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})\b/;
 const VULNERABILITY_CLASS_TEXT_PATTERN = /\b(xss|csrf|ssrf|xxe|rce|redos|sqli|(?:sql|command|code|header|template|ldap|xpath)[\s-]injection|(?:path|directory)[\s-]traversal|open[\s-]redirect|remote code execution|prototype pollution|insecure deserialization|privilege escalation|auth(?:entication|orization)?[\s-]bypass)\b/;
@@ -1046,14 +1049,19 @@ function deriveTitleSignals(prSignalText, prBodyText = "") {
     : BUG_TITLE_TEXT_PATTERN.test(prSignalText) || (!titleEnhancement && hasBugFixIssueReference(prBodyText));
   const enhancement = !bug && titleEnhancement;
   const conventionalFeature = !bug && CONVENTIONAL_ENHANCEMENT_TYPES.has(conventionalType);
+  const performance = CONVENTIONAL_PERFORMANCE_TYPES.has(conventionalType);
+  const breaking = CONVENTIONAL_BREAKING_MARKER_PATTERN.test(prSignalText)
+    || BREAKING_CHANGE_FOOTER_PATTERN.test(String(prBodyText || "").replace(/<!--[\s\S]*?-->/g, ""));
   const documentation = /\b(doc|docs|documentation|readme)\b/.test(prSignalText);
   const security = hasSecurityIntentText(prSignalText);
   const ui = /\b(ui|ux|frontend)\b/.test(prSignalText);
   return {
+    breaking,
     bug,
     conventionalFeature,
     enhancement,
     documentation,
+    performance,
     security,
     ui
   };
@@ -2806,6 +2814,12 @@ function buildDeterministicEvidence(filesWithContext, context) {
     confidence: "title",
     sampleFiles: behavioralAdditionFiles
   });
+  addEvidenceItem(evidenceMap, "conventional-breaking-change", {
+    occurrenceCount: context.hasBehavioralSurfaceChange && context.titleSignals?.breaking ? 1 : 0,
+    scope: "public",
+    confidence: "title",
+    sampleFiles: behavioralAdditionFiles
+  });
 
   return finalizeEvidenceItems(evidenceMap);
 }
@@ -3640,16 +3654,33 @@ function analyzePullRequestSnapshotData(snapshot) {
   }
 
   if (
-    (titleSignals.bug || titleSignals.enhancement)
+    titleSignals.breaking
+    && hasBehavioralSurfaceChange
+    && !autobotInfrastructureOnly
+    && !deterministicLabels.includes("breaking-change")
+  ) {
+    deterministicLabels = sortLabels([...deterministicLabels, "breaking-change"]);
+    rationaleContext.fallbackReasons = {
+      ...rationaleContext.fallbackReasons,
+      "breaking-change": "the title or body marks a breaking change that changes source files"
+    };
+  }
+
+  if (
+    (titleSignals.bug || titleSignals.enhancement || titleSignals.performance)
     && hasBehavioralSurfaceChange
     && !maintenanceOnlyEligible
     && !autobotInfrastructureOnly
     && !AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels)
   ) {
-    deterministicLabels = sortLabels([...deterministicLabels, BEHAVIOR_CHANGE_FALLBACK_LABEL]);
-    const changeKind = titleSignals.bug ? "bug fix" : "feature";
+    const fallbackLabel = titleSignals.performance ? "performance" : BEHAVIOR_CHANGE_FALLBACK_LABEL;
+    deterministicLabels = sortLabels([...deterministicLabels, fallbackLabel]);
+    const changeKind = titleSignals.bug
+      ? "bug fix"
+      : titleSignals.performance ? "performance change" : "feature";
     rationaleContext.fallbackReasons = {
-      [BEHAVIOR_CHANGE_FALLBACK_LABEL]: `the title marks a ${changeKind} that changes source files, and no more specific release label matched them`
+      ...rationaleContext.fallbackReasons,
+      [fallbackLabel]: `the title marks a ${changeKind} that changes source files, and no more specific release label matched them`
     };
   }
 
