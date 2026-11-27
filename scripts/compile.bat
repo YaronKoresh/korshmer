@@ -8,12 +8,9 @@ if not exist ".venv\Scripts\activate.bat" (
 )
 call ".venv\Scripts\activate.bat"
 
-python -m nuitka --version >nul 2>nul
-if errorlevel 1 (
-    echo Installing the compiler...
-    python -m pip install -e ".[build]"
-    if errorlevel 1 goto failed
-)
+echo Installing the compiler...
+python -m pip install -e ".[build]"
+if errorlevel 1 goto failed
 
 set "APP_VERSION="
 for /f "usebackq delims=" %%v in (`python -c "import korshmer; print(korshmer.__version__)"`) do set "APP_VERSION=%%v"
@@ -47,26 +44,30 @@ python -m nuitka ^
 --include-package-data=numba ^
 --include-package-data=basic_pitch ^
 --include-package-data=demucs ^
---include-package-data=librosa ^
 --include-package=basic_pitch ^
 --include-package=demucs ^
 --include-package=librosa ^
 --include-package=onnxruntime ^
---include-package=sklearn ^
+--include-package=sklearn.cluster ^
 --include-package=soundfile ^
 --jobs=%NUMBER_OF_PROCESSORS% ^
 --lto=yes ^
+--matplotlib-backend=agg ^
 --module-parameter=numba-disable-jit=yes ^
 --module-parameter=torch-disable-jit=yes ^
+--nofollow-import-to=*.conftest ^
+--nofollow-import-to=_pytest ^
 --nofollow-import-to=absl ^
 --nofollow-import-to=astunparse ^
 --nofollow-import-to=azure ^
 --nofollow-import-to=basic_pitch.command_line_interface ^
+--nofollow-import-to=basic_pitch.data ^
 --nofollow-import-to=basic_pitch.train ^
 --nofollow-import-to=boto ^
 --nofollow-import-to=boto3 ^
 --nofollow-import-to=botocore ^
 --nofollow-import-to=celery ^
+--nofollow-import-to=chardet ^
 --nofollow-import-to=cv2 ^
 --nofollow-import-to=cython ^
 --nofollow-import-to=dask ^
@@ -91,7 +92,12 @@ python -m nuitka ^
 --nofollow-import-to=keras ^
 --nofollow-import-to=kombu ^
 --nofollow-import-to=librosa.display ^
+--nofollow-import-to=llvmlite.tests ^
+--nofollow-import-to=matplotlib.tests ^
+--nofollow-import-to=numba.cuda ^
+--nofollow-import-to=numba.tests ^
 --nofollow-import-to=onnxruntime.quantization ^
+--nofollow-import-to=onnxruntime.tools ^
 --nofollow-import-to=onnxruntime.transformers ^
 --nofollow-import-to=pandas ^
 --nofollow-import-to=pygments ^
@@ -127,10 +133,12 @@ python -m nuitka ^
 --nofollow-import-to=PySide6.QtWebEngineWidgets ^
 --nofollow-import-to=PySide6.QtWebSockets ^
 --nofollow-import-to=PySide6.QtXml ^
+--nofollow-import-to=pytest ^
 --nofollow-import-to=regex ^
 --nofollow-import-to=rsa ^
 --nofollow-import-to=s3transfer ^
 --nofollow-import-to=safetensors ^
+--nofollow-import-to=sklearn.cluster.tests ^
 --nofollow-import-to=tensorboard ^
 --nofollow-import-to=tensorboard_plugin_wit ^
 --nofollow-import-to=tensorflow ^
@@ -139,6 +147,12 @@ python -m nuitka ^
 --nofollow-import-to=tensorflow_probability ^
 --nofollow-import-to=tkinter ^
 --nofollow-import-to=tokenizers ^
+--nofollow-import-to=torch._dynamo ^
+--nofollow-import-to=torch._inductor ^
+--nofollow-import-to=torch._lazy ^
+--nofollow-import-to=torch._numpy ^
+--nofollow-import-to=torch.onnx ^
+--nofollow-import-to=torch.utils.benchmark ^
 --nofollow-import-to=torch.utils.tensorboard ^
 --nofollow-import-to=tornado ^
 --nofollow-import-to=transformers ^
@@ -151,6 +165,7 @@ python -m nuitka ^
 --python-flag=no_asserts ^
 --python-flag=no_docstrings ^
 --python-flag=no_warnings ^
+--user-package-configuration-file=scripts\nuitka-package.config.yml ^
 --windows-console-mode=disable ^
 %EXTRA_DATA% ^
 src\korshmer

@@ -109,7 +109,16 @@ def test_nothing_the_program_needs_is_left_out_of_the_build():
         for m in left_out
         if m.split(".")[0] in ("torch", "scipy", "sklearn", "numpy")
     ]
-    assert inner == ["torch.utils.tensorboard"]
+    assert inner == [
+        "sklearn.cluster.tests",
+        "torch._dynamo",
+        "torch._inductor",
+        "torch._lazy",
+        "torch._numpy",
+        "torch.onnx",
+        "torch.utils.benchmark",
+        "torch.utils.tensorboard",
+    ]
 
 
 def test_a_compiled_program_looks_for_its_data_beside_itself():
@@ -226,3 +235,65 @@ def test_opening_another_song_asks_about_unsaved_notes_first(tmp_path):
     ):
         studio.load_project_action()
     dialog.assert_called_once()
+
+
+def test_the_build_leaves_out_only_parts_the_program_never_loads():
+    left_out = set(_options("nofollow-import-to"))
+    for name in (
+        "torch._dynamo",
+        "torch._inductor",
+        "torch.onnx",
+        "numba.cuda",
+        "numba.tests",
+        "onnxruntime.tools",
+        "basic_pitch.data",
+        "pytest",
+        "_pytest",
+    ):
+        assert name in left_out
+    assert "*.tests" not in left_out
+    assert "sklearn" not in _options("include-package")
+    assert "sklearn.cluster" in _options("include-package")
+    assert "librosa" not in _options("include-package-data")
+    assert _options("matplotlib-backend") == ["agg"]
+    spectrum = REPOSITORY / "src" / "korshmer" / "visualization" / "spectrum.py"
+    assert 'matplotlib.use("Agg")' in spectrum.read_text(encoding="utf-8")
+
+
+def test_the_build_stops_torch_from_rewriting_compiled_functions():
+    yaml = pytest.importorskip("yaml")
+    config = REPOSITORY / "scripts" / "nuitka-package.config.yml"
+    assert (
+        "--user-package-configuration-file=scripts\\nuitka-package.config.yml"
+        in _build_script()
+    )
+    entries = yaml.safe_load(config.read_text(encoding="utf-8"))
+    rule = next(
+        entry
+        for entry in entries
+        if entry["module-name"] == "torch.utils._contextlib"
+    )
+    replacements = rule["anti-bloat"][0]["replacements_plain"]
+    spec = importlib.util.find_spec("torch")
+    if spec is None:
+        pytest.skip("torch is not installed")
+    source = (Path(spec.origin).parent / "utils" / "_contextlib.py").read_text(
+        encoding="utf-8"
+    )
+    assert replacements
+    for old, new in replacements.items():
+        assert old in source
+        assert "__code__ =" in old
+        assert "__code__" not in new
+
+
+def test_the_build_installs_the_nuitka_version_it_needs():
+    script = _build_script()
+    assert "python -m nuitka --version" not in script
+    install = 'python -m pip install -e ".[build]"'
+    assert install in script
+    assert script.index(install) < script.index("python -m nuitka ^")
+    pyproject = (REPOSITORY / "pyproject.toml").read_text(encoding="utf-8")
+    pinned = re.search(r'"nuitka==(\d+)\.(\d+)\.(\d+)"', pyproject)
+    assert pinned is not None
+    assert tuple(int(part) for part in pinned.groups()) >= (4, 3, 5)

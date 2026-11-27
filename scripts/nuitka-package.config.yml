@@ -1,0 +1,6 @@
+---
+- module-name: 'torch.utils._contextlib'
+  anti-bloat:
+    - description: 'Nuitka compiled functions cannot take a new __code__'
+      replacements_plain:
+        'func.__code__ = code.replace(**code_attrs)': 'pass'

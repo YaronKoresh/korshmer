@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The Auto style of the MIDI Generator mixes the styles that fit the tempo and the scale instead of choosing one: the closest style leads the form and the feel of the song, and up to two more styles that fit add their grooves, chord progressions, bass and melody rhythms and instruments. When the generator layers over the editor, the leading style still follows the instruments in the song, and an acoustic song gets no EDM or Phonk in its mix. The song reports the mix it used, for example `Hip-Hop + Lo-Fi + Jazz`. The Auto mood follows the tempo as well: a song in a minor key at 90 BPM or faster can also be energetic, a song in a major key under 90 BPM is dreamy or uplifting instead of energetic, and one between 90 and 124 BPM can also be dreamy.
 - Every style offers more instruments for each part, so songs in the same style no longer sound alike. Phonk chords are played on church or reed organ, piano, strings or choir, its pads on voice, glass, sweep or choir sounds, its arpeggios on cowbell, woodblock, toms or timpani and its counter-melodies on voices and choir, while the lead stays the cowbell sound and the bass the driven sub-bass.
 
+### Fixed
+
+- `korshmer.exe` built with `scripts\compile.bat` starts again: the build tells Nuitka to leave out the step in which PyTorch renames its functions, which stopped the program at start with `RuntimeError: __code__ is not writable in Nuitka`, and it always installs Nuitka 4.3.5, so an older Nuitka no longer leaves Python 3.14 builds printing `'import warnings' failed` at start.
+
 ## [1.1.1] - 2026-11-27
 
 ### Changed
