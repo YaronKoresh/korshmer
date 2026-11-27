@@ -1,3 +1,4 @@
+import random
 import statistics
 from collections import Counter
 from statistics import mean, median
@@ -28,10 +29,26 @@ BRIGHT_TOY_PROGRAMS = {4, 5, 9, 80, 81, 84, 112, 114}
 SAMPLE_RATE = 44100
 
 
-def _phonk(seed, root="A", scale="Minor"):
+def _flavor_of(seed):
+    return genres.flavored("Phonk", random.Random(f"flavor:{seed}"))
+
+
+def _seed_of(seed, flavor):
+    while _flavor_of(seed) != flavor:
+        seed += 1000
+    return seed
+
+
+def _phonk(seed, root="A", scale="Minor", flavor="Phonk", **kw):
     return compose(
         ComposeOptions(
-            root, scale, bpm=BPM, minutes=1.5, style="Phonk", seed=seed
+            root,
+            scale,
+            bpm=BPM,
+            minutes=1.5,
+            style="Phonk",
+            seed=_seed_of(seed, flavor),
+            **kw,
         )
     )
 
@@ -205,6 +222,8 @@ def test_phonk_chords_are_bare_fifths_without_bright_keyboards(seed):
 
 
 def _with_counter(seed, style="Phonk"):
+    if style == "Phonk":
+        return _phonk(seed, roles=ROLE_KEYS)
     return compose(
         ComposeOptions(
             "A",
@@ -525,3 +544,95 @@ def test_a_late_note_is_rendered_on_time_after_thousands_of_earlier_notes(
         at for pitch, at in synths[0].note_positions if pitch == KICK
     )
     assert abs(kick_at - late * SAMPLE_RATE) <= 0.002 * SAMPLE_RATE
+
+
+def test_phonk_songs_come_in_several_flavours_of_one_style():
+    found = Counter(_flavor_of(seed) for seed in range(1, 41))
+    assert set(found) == set(genres.FLAVORS["Phonk"])
+    assert found["Phonk"] >= 12
+    for flavor in found:
+        assert genres.primary(flavor) == "Phonk"
+        assert flavor in genre_feel.FEELS and flavor in genres.GENRES
+    assert _phonk(1, flavor="Phonk/House").style == "Phonk/House"
+
+
+def test_memphis_phonk_has_a_dark_held_lead_and_a_cowbell_in_the_drums():
+    lengths = []
+    for seed in SEEDS:
+        song = _phonk(seed, flavor="Phonk/Memphis")
+        drop = _drop_bars(song)
+        lead = [n for n in _notes(song, "Melody") if _bar_of(n) in drop]
+        assert {i.program for i in _voices(song, "Melody")} <= {0, 19, 14}
+        assert _drum_hits(song, genre_feel.COWBELL)
+        lengths.append(median(n.end - n.start for n in lead))
+        programs = {i.program for i in song.instruments if not i.is_drum}
+        assert not programs & BRIGHT_TOY_PROGRAMS
+    drift = [
+        median(
+            n.end - n.start
+            for n in _notes(_phonk(seed), "Melody")
+            if _bar_of(n) in _drop_bars(_phonk(seed))
+        )
+        for seed in SEEDS[:3]
+    ]
+    assert mean(lengths) >= 1.5 * mean(drift)
+
+
+def test_house_phonk_kicks_every_beat_and_claps_on_two_and_four():
+    for seed in SEEDS:
+        song = _phonk(seed, flavor="Phonk/House")
+        drop = _drop_bars(song)
+        kicks = Counter(
+            round(_step_of(n))
+            for n in _drum_hits(song, KICK)
+            if _bar_of(n) in drop
+        )
+        bars = len(
+            {_bar_of(n) for n in _drum_hits(song, KICK) if _bar_of(n) in drop}
+        )
+        assert all(kicks[step] >= 0.8 * bars for step in (0, 4, 8, 12))
+        backbeat = {
+            round(_step_of(n))
+            for n in _drum_hits(song, CLAP, SNARE)
+            if _bar_of(n) in drop
+        }
+        assert {4, 12} <= backbeat
+        assert {i.program for i in _voices(song, "Melody")} == {AGOGO_BELL}
+        assert {i.program for i in _voices(song, "Bass")} == {87}
+
+
+def test_drift_phonk_songs_do_not_share_one_beat():
+    beats = set()
+    for seed in range(1, 13):
+        song = _phonk(seed)
+        drop = _drop_bars(song)
+        bar = min(drop)
+        beats.add(
+            tuple(
+                sorted(
+                    (n.pitch, round(_step_of(n)))
+                    for n in _drum_hits(song, KICK, 42, 44, 46)
+                    if _bar_of(n) == bar
+                )
+            )
+        )
+    assert len(beats) >= 9
+
+
+def test_an_auto_song_led_by_phonk_brings_its_voice_chops():
+    song = compose(ComposeOptions("A", "Minor", bpm=148.0, minutes=1.0, seed=3))
+    assert genres.primary(song.style) == "Phonk"
+    assert _voices(song, "Counter-melody")
+    chosen = compose(
+        ComposeOptions(
+            "A",
+            "Minor",
+            bpm=148.0,
+            minutes=1.0,
+            seed=3,
+            roles=("drums", "bass", "melody"),
+        )
+    )
+    assert not _voices(chosen, "Counter-melody")
+    pop = compose(ComposeOptions("A", "Major", bpm=110.0, minutes=1.0, seed=3))
+    assert not _voices(pop, "Counter-melody")

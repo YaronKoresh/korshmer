@@ -1334,6 +1334,7 @@ def compose(options, existing=None):
         seed = seeds.fresh_seed()
     rng = random.Random(seed)
     song = random.Random(rng.getrandbits(64))
+    style = genres.flavored(style, random.Random(f"flavor:{seed}"))
     bar = 240.0 / bpm
     total_bars = (
         bars_for_minutes(options.minutes, bpm)
@@ -1341,6 +1342,15 @@ def compose(options, existing=None):
         else validate_bars(options.bars)
     )
     user_roles = tuple(r for r in _PRIORITY if r in options.roles)
+    if (
+        options.style == AUTO_STYLE
+        and not layering
+        and set(options.roles) == set(DEFAULT_ROLES)
+    ):
+        extra = STYLE_ROLES.get(genres.primary(style), ())
+        user_roles = tuple(
+            r for r in _PRIORITY if r in options.roles or r in extra
+        )
     texture_on = options.texture_batches > 0
 
     start_bar = 0

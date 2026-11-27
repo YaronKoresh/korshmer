@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Phonk songs come in three flavours, chosen by the seed: Drift, with the cowbell riffs; Memphis, with a dark lead on piano, church organ or tubular bells playing held riffs, chord progressions of its own, the cowbell of the drum kit and fewer hi-hat rolls; and House, with a kick on every beat, claps on two and four, an off-beat bass and off-beat cowbell riffs. Drift Phonk also has six more drum grooves and six more riffs, so two Phonk songs no longer share one beat and one riff.
 - In Phonk songs with the Counter-melody part chosen, the counter part of each Drop and Break plays short repeated voice chops in the style of Memphis rap instead of a counter-melody: two to five sixteenth or eighth notes in every second bar, on the root or the fifth of the chord, in the gaps of the cowbell lead, played loud on the Voice Lead or Synth Voice sound, which speak at once. Choosing Phonk in the MIDI Generator also ticks the Counter-melody part, so the chops are heard without changing the parts. Without a melody the counter part still plays its own tune.
 
 ### Changed
@@ -17,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The melody moves on from one bar into the next instead of starting each bar again from the root of its chord: a bar may be placed a third higher or lower so that it begins near where the bar before it ended, without undoing the chord change. Between bars, leaps of a fourth or more fall from about half of the moves to a fifth to two fifths, depending on the style.
 - Jazz melodies leap wider and repeat notes less, and Jazz and Hip-Hop hooks can take new rhythms with anticipations and off-beat flows.
 - Phonk has six more cowbell riffs, several of them on steps the others leave out, and a riff can have seven notes, so two Phonk songs share far fewer riff steps than before. A Phonk song is planned as Build & Drop or as Verse, Build & Drop equally often.
+- An Auto song that Phonk leads, made with the default parts, also plays the Counter-melody part, so its voice chops are heard.
+- Dreamy melodies move by step more and leap less: about a quarter of their moves are steps instead of an eighth, and about a quarter are leaps of a fourth or more instead of nearly two fifths. Long, high notes still give the mood its sound.
 - Every style offers more instruments for each part, so songs in the same style no longer sound alike. Phonk chords are played on church or reed organ, piano, strings or choir, its pads on voice, glass, sweep or choir sounds, its arpeggios on cowbell, woodblock, toms or timpani and its counter-melodies on voices and choir, while the lead stays the cowbell sound and the bass the driven sub-bass.
 
 ### Fixed

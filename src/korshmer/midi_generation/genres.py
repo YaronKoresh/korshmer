@@ -3,6 +3,7 @@ from functools import cache
 
 DEFAULT_GENRE = "Pop"
 BLEND_JOIN = " + "
+FLAVOR_JOIN = "/"
 
 PITCHED_ROLES = (
     "melody",
@@ -290,12 +291,49 @@ GENRES = {
 }
 
 
+GENRES["Phonk/Memphis"] = _p(
+    "Phonk/Memphis",
+    {
+        **GENRES["Phonk"].programs,
+        "melody": (0, 19, 14),
+        "chords": (48, 49, 52, 19),
+        "arp": (113, 115, 117),
+        "pluck": (113, 117, 45),
+    },
+    KIT_808,
+    GENRES["Phonk"].texture_long,
+    GENRES["Phonk"].texture_short,
+    kits=GENRES["Phonk"].kits,
+)
+GENRES["Phonk/House"] = _p(
+    "Phonk/House",
+    {
+        **GENRES["Phonk"].programs,
+        "chords": (90, 89, 50, 19),
+        "pad": (89, 91, 95, 50),
+    },
+    KIT_808,
+    GENRES["Phonk"].texture_long,
+    GENRES["Phonk"].texture_short,
+    kits=(KIT_DANCE, KIT_ELECTRONIC),
+)
+FLAVORS = {"Phonk": ("Phonk", "Phonk", "Phonk/Memphis", "Phonk/House")}
+
+
 def parts(style):
     return tuple(style.split(BLEND_JOIN)) if style else (style,)
 
 
 def primary(style):
-    return parts(style)[0]
+    return parts(style)[0].split(FLAVOR_JOIN)[0]
+
+
+def flavored(style, rng):
+    lead, *others = parts(style)
+    choices = FLAVORS.get(lead)
+    if not choices:
+        return style
+    return blend_name((rng.choice(choices), *others))
 
 
 def blend_name(styles):
