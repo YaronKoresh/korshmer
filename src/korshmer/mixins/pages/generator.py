@@ -122,6 +122,12 @@ class GeneratorPageMixin:
         self.gen_length.setEnabled(not layering)
         self.chk_gen_replace.setEnabled(mode == "New song")
 
+    def _add_style_roles(self, style):
+        for key in composer.STYLE_ROLES.get(style, ()):
+            box = self.gen_role_boxes.get(key)
+            if box is not None:
+                box.setChecked(True)
+
     def _ui_card_generator_roles(self):
         card = MaterialCard()
         grid = QGridLayout(card)
@@ -140,6 +146,9 @@ class GeneratorPageMixin:
             self.gen_role_boxes[key] = box
             roles_row.addWidget(box)
         grid.addLayout(roles_row, 0, 0, 1, 2)
+        style_box = getattr(self, "combo_gen_style", None)
+        if style_box is not None:
+            style_box.currentTextChanged.connect(self._add_style_roles)
 
         btn_generate = MaterialButton("Generate → Editor", role="primary")
         btn_generate.setFixedHeight(38)

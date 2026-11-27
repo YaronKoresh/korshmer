@@ -1,3 +1,4 @@
+import itertools
 import random
 from dataclasses import dataclass, field
 
@@ -918,6 +919,8 @@ _DIATONIC = 7
 _DEGREE_REACH = 3
 _PLAN_STRETCH = 8
 _SNAP_REACH = (0, 1, -1, 2, -2, 3, -3)
+_PLACE_SHIFTS = (0, -2, 2)
+_SHIFT_COST = 0.5
 _LEAD_FLOOR = 60
 _LEAD_ROOF = 77
 
@@ -927,6 +930,7 @@ class _Lead:
     ctx: HarmonicContext
     mid: int
     snap_inside: bool = False
+    last: tuple = ()
 
     @property
     def low(self):
@@ -960,19 +964,28 @@ class _Lead:
     def place(self, chord, steps, previous):
         n = len(self.ctx.intervals)
         home = round((self.mid - chord) / n)
-        best, best_cost = None, None
-        for octave in (home - 1, home, home + 1):
-            degrees = [chord + octave * n + s for s in steps]
+        best, best_cost, best_base = None, None, None
+        for octave, shift in itertools.product(
+            (home - 1, home, home + 1), _PLACE_SHIFTS
+        ):
+            base = chord + octave * n + shift
+            if shift and self.last and self.last[0] != chord:
+                if (base - self.last[1]) % n == 0:
+                    continue
+            degrees = [base + s for s in steps]
             while max(degrees) > self.high and min(degrees) - n >= self.low:
                 degrees = [d - n for d in degrees]
             while min(degrees) < self.low and max(degrees) + n <= self.high:
                 degrees = [d + n for d in degrees]
             average = sum(degrees) / len(degrees)
-            cost = abs(degrees[0] - previous) + _CENTER_PULL * abs(
-                average - self.mid
+            cost = (
+                abs(degrees[0] - previous)
+                + _CENTER_PULL * abs(average - self.mid)
+                + _SHIFT_COST * (shift != 0)
             )
             if best_cost is None or cost < best_cost:
-                best, best_cost = degrees, cost
+                best, best_cost, best_base = degrees, cost, base
+        self.last = (chord, best_base)
         return [self.clamp(d) for d in best]
 
     def cadence(self, chord, role, previous):

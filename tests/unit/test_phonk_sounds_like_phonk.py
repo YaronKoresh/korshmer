@@ -1,3 +1,4 @@
+import statistics
 from collections import Counter
 from statistics import mean, median
 
@@ -240,8 +241,16 @@ def test_phonk_counter_part_is_short_repeated_voice_chops_in_drops_and_breaks(
     song = _with_counter(seed)
     chops = _chops(song)
     assert chops
-    programs = {inst.program for inst in _voices(song, "Counter-melody")}
+    loud = _loud_bars(song)
+    programs = {
+        inst.program
+        for inst in _voices(song, "Counter-melody")
+        if any(_bar_of(note) in loud for note in inst.notes)
+    }
+    assert programs <= set(genre_feel.feel_for("Phonk").chop_programs)
     assert programs <= set(genres.profile_for("Phonk").programs["counter"])
+    assert min(note.end - note.start for note in chops) >= 0.85 * SIXTEENTH
+    assert min(note.velocity for note in chops) >= 95
     for note in chops:
         section = next(
             s
@@ -259,6 +268,52 @@ def test_phonk_counter_part_is_short_repeated_voice_chops_in_drops_and_breaks(
             tuple(sorted(_step_of(n) for n in chops if _bar_of(n) == bar))
         ] += 1
     assert figures.most_common(1)[0][1] / sum(figures.values()) >= 0.4
+
+
+def test_phonk_songs_play_riffs_of_their_own():
+    riffs = []
+    for seed in range(1, 9):
+        song = _phonk(seed)
+        drop = _drop_bars(song)
+        bars = Counter(
+            tuple(
+                sorted(
+                    round(_step_of(n))
+                    for n in _notes(song, "Melody")
+                    if _bar_of(n) == bar
+                )
+            )
+            for bar in drop
+        )
+        riffs.append(set(bars.most_common(1)[0][0]))
+    assert len({tuple(sorted(riff)) for riff in riffs}) >= 7
+    pairs = [
+        len(a & b) / len(a | b)
+        for i, a in enumerate(riffs)
+        for b in riffs[i + 1 :]
+    ]
+    assert statistics.mean(pairs) <= 0.45
+
+
+def test_choosing_phonk_also_chooses_its_counter_part():
+    from korshmer.midi_generation.composer import STYLE_ROLES
+    from korshmer.mixins.pages.generator import GeneratorPageMixin
+
+    class _Box:
+        def __init__(self):
+            self.checked = False
+
+        def setChecked(self, value):
+            self.checked = value
+
+    page = GeneratorPageMixin()
+    page.gen_role_boxes = {"counter": _Box(), "melody": _Box()}
+    page._add_style_roles("Pop")
+    assert not page.gen_role_boxes["counter"].checked
+    page._add_style_roles("Phonk")
+    assert page.gen_role_boxes["counter"].checked
+    assert not page.gen_role_boxes["melody"].checked
+    assert STYLE_ROLES["Phonk"] == ("counter",)
 
 
 def test_voice_chops_need_the_counter_part_and_belong_to_phonk():

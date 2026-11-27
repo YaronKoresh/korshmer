@@ -51,6 +51,7 @@ ROLE_LABELS = {
     "counter": "Counter-melody",
 }
 DEFAULT_ROLES = ("drums", "bass", "chords", "pad", "melody")
+STYLE_ROLES = {"Phonk": ("counter",)}
 
 MODES = ("New song", "Continue editor", "Layer over editor")
 MAX_TEXTURE_BATCHES = MAX_TRACKS // TRACKS_PER_ACTIVATION
@@ -197,7 +198,7 @@ STYLE_STRUCTURE_POOLS = {
     "Rock": ("Verse / Chorus", "Verse / Chorus", "Chorus First"),
     "Hip-Hop": ("Verse / Chorus", "Chorus First", "Verse / Chorus"),
     "EDM": ("Build & Drop", "Verse, Build & Drop", "Build & Drop"),
-    "Phonk": ("Build & Drop", "Verse, Build & Drop", "Build & Drop"),
+    "Phonk": ("Build & Drop", "Verse, Build & Drop"),
     "Lo-Fi": ("Journey (A-B-A)", "Two Parts (A-A-B)", "Journey (A-B-A)"),
     "Jazz": ("Journey (A-B-A)", "Two Parts (A-A-B)", "Journey (A-B-A)"),
 }
@@ -207,8 +208,8 @@ RISING_SECTIONS = ("Build",)
 CHOP_SECTIONS = ("Drop", "Break")
 CHOP_EVERY = 2
 CHOP_MIN = 2
-CHOP_VELOCITY = 88
-CHOP_GATE = 0.7
+CHOP_VELOCITY = 100
+CHOP_GATE = 0.9
 CHOP_RANGE = (57, 74)
 RISE_FROM = 0.78
 LIGHT_SECTIONS = ("Verse", "A")
@@ -1868,7 +1869,10 @@ def compose(options, existing=None):
         if chopping:
             patterns = list(feel.chops)
             random.Random(f"chops:{seed}:{kind}:{act}").shuffle(patterns)
-            _voice(out, "counter", chapter.programs["counter"]).notes.extend(
+            voice = random.Random(f"chop voice:{seed}:{act}").choice(
+                feel.chop_programs or (chapter.programs["counter"],)
+            )
+            _voice(out, "counter", voice).notes.extend(
                 vocal_chops(
                     ctx,
                     patterns,
