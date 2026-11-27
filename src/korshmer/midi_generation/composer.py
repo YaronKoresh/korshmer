@@ -204,6 +204,12 @@ STYLE_STRUCTURE_POOLS = {
 REGISTER_TURNS = (-2, 0, 0, 2)
 BAND_ROLES = ("bass", "chords", "pad", "arp", "pluck")
 RISING_SECTIONS = ("Build",)
+CHOP_SECTIONS = ("Drop", "Break")
+CHOP_EVERY = 2
+CHOP_MIN = 2
+CHOP_VELOCITY = 88
+CHOP_GATE = 0.7
+CHOP_RANGE = (57, 74)
 RISE_FROM = 0.78
 LIGHT_SECTIONS = ("Verse", "A")
 LIGHT_HAT_STEPS = 10
@@ -915,6 +921,53 @@ def make_drum_pattern(rng, style):
     return pattern
 
 
+def _chop_pitch(pitch):
+    low, high = CHOP_RANGE
+    while pitch > high:
+        pitch -= 12
+    while pitch < low:
+        pitch += 12
+    return pitch
+
+
+def vocal_chops(ctx, patterns, first_bar, bars, bar, lead_notes):
+    step = bar / 16
+    notes = []
+    for count, b in enumerate(range(1, bars, CHOP_EVERY)):
+        index = first_bar + b
+        start = index * bar
+        taken = {
+            round((n.start - start) / step)
+            for n in lead_notes
+            if start <= n.start < start + bar
+        }
+        free = next(
+            (
+                found
+                for found in (
+                    [(o, length) for o, length in pattern if o not in taken]
+                    for pattern in patterns
+                )
+                if len(found) >= CHOP_MIN
+            ),
+            None,
+        )
+        if free is None:
+            continue
+        triad = ctx.triad(ctx.chord_at(index), 4)
+        pitch = _chop_pitch(triad[0] if count % 2 == 0 else triad[2])
+        notes.extend(
+            pretty_midi.Note(
+                CHOP_VELOCITY,
+                pitch,
+                start + onset * step,
+                start + (onset + length * CHOP_GATE) * step,
+            )
+            for onset, length in free
+        )
+    return notes
+
+
 def _new_instrument(role, program=0):
     return pretty_midi.Instrument(
         program=program,
@@ -1378,6 +1431,7 @@ def compose(options, existing=None):
     hook = hooks.make_hook(
         random.Random(rng.randrange(1 << 30)), style, base_mood
     )
+    act_hooks = {0: hook}
     bass_rhythm = {}
     used_bass = []
     used_hits = []
@@ -1453,6 +1507,11 @@ def compose(options, existing=None):
                 else options.mood,
             )
         state = acts[act]
+        if act not in act_hooks:
+            act_hooks[act] = hooks.vary_hook(
+                random.Random(f"hook:{seed}:{act}"), hook, style
+            )
+        act_hook = act_hooks[act]
         mood_feel = moods.mood_for(state["mood"])
         if (kind, act) not in progressions:
             drawn = mood_progression(
@@ -1505,7 +1564,7 @@ def compose(options, existing=None):
             bar_chords[section.start_bar + b] = {
                 p % 12 for p in ctx.triad(chord, 4)
             }
-        riff = hook.notes if feel.riff and kind == "chorus" else None
+        riff = act_hook.notes if feel.riff and kind == "chorus" else None
         stab = feel.stab and kind == "chorus"
         hits_pool = (
             feel.chord_hits
@@ -1563,7 +1622,7 @@ def compose(options, existing=None):
             "turn": register_turn,
             "register_mood": base_mood,
             "phrases": phrases,
-            "hook": hook,
+            "hook": act_hook,
             "kind": "chorus" if section.name == "Loop" else kind,
             "final": closing,
             "style": style,
@@ -1672,7 +1731,7 @@ def compose(options, existing=None):
                         ctx,
                         style,
                         hits=(
-                            hooks.stab_hits(hook)
+                            hooks.stab_hits(act_hook)
                             if stab
                             else chord_hits[hits_key]
                         ),
@@ -1752,7 +1811,7 @@ def compose(options, existing=None):
                         tune = engine.generate_melody(
                             ctx,
                             mood=state["mood"],
-                            hook=hook,
+                            hook=act_hook,
                             kind=kind,
                             seed=melody_seed[(kind, act)] + retold,
                             bars=section.bars,
@@ -1798,7 +1857,32 @@ def compose(options, existing=None):
                 )
                 _voice(out, role, program).notes.extend(inst.notes)
             phrase_count += 1
-        if "counter" in section.roles and "melody" in out:
+        chopping = (
+            bool(feel.chops)
+            and not layering
+            and section.name in CHOP_SECTIONS
+            and "counter" in section.roles
+            and "melody" in section.roles
+            and "melody" in user_roles
+        )
+        if chopping:
+            patterns = list(feel.chops)
+            random.Random(f"chops:{seed}:{kind}:{act}").shuffle(patterns)
+            _voice(out, "counter", chapter.programs["counter"]).notes.extend(
+                vocal_chops(
+                    ctx,
+                    patterns,
+                    start_bar + section.start_bar,
+                    section.bars,
+                    bar,
+                    [
+                        n
+                        for voice in out.get("melody", {}).values()
+                        for n in voice.notes
+                    ],
+                )
+            )
+        elif "counter" in section.roles and "melody" in out:
             seg = pretty_midi.Instrument(program=0)
             lo = (start_bar + section.start_bar) * bar
             hi = lo + section.bars * bar

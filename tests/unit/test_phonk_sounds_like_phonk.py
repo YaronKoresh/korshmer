@@ -7,7 +7,14 @@ import pytest
 
 from korshmer import audio_processors
 from korshmer.audio_processing import guitar_amp
-from korshmer.midi_generation.composer import ComposeOptions, compose
+from korshmer.midi_generation import genre_feel, genres
+from korshmer.midi_generation.composer import (
+    CHOP_SECTIONS,
+    ROLE_KEYS,
+    ComposeOptions,
+    compose,
+)
+from korshmer.midi_generation.engine import SONG_STYLES
 
 BPM = 140.0
 BAR = 240.0 / BPM
@@ -194,6 +201,72 @@ def test_phonk_chords_are_bare_fifths_without_bright_keyboards(seed):
     for pitches in stacks.values():
         low = min(pitches)
         assert {(pitch - low) % 12 for pitch in pitches} <= {0, 7}
+
+
+def _with_counter(seed, style="Phonk"):
+    return compose(
+        ComposeOptions(
+            "A",
+            "Minor",
+            bpm=BPM,
+            minutes=1.5,
+            style=style,
+            seed=seed,
+            roles=ROLE_KEYS,
+        )
+    )
+
+
+def _loud_bars(song):
+    return {
+        bar
+        for section in song.sections
+        if section.name in CHOP_SECTIONS
+        for bar in range(section.start_bar, section.start_bar + section.bars)
+    }
+
+
+def _chops(song):
+    loud = _loud_bars(song)
+    return [
+        note for note in _notes(song, "Counter-melody") if _bar_of(note) in loud
+    ]
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_phonk_counter_part_is_short_repeated_voice_chops_in_drops_and_breaks(
+    seed,
+):
+    song = _with_counter(seed)
+    chops = _chops(song)
+    assert chops
+    programs = {inst.program for inst in _voices(song, "Counter-melody")}
+    assert programs <= set(genres.profile_for("Phonk").programs["counter"])
+    for note in chops:
+        section = next(
+            s
+            for s in song.sections
+            if s.start_bar <= _bar_of(note) < s.start_bar + s.bars
+        )
+        assert (_bar_of(note) - section.start_bar) % 2 == 1
+    assert max(note.end - note.start for note in chops) <= SIXTEENTH * 2
+    assert all(55 <= note.pitch <= 76 for note in chops)
+    lead = {round(note.start, 4) for note in _notes(song, "Melody")}
+    assert not {round(note.start, 4) for note in chops} & lead
+    figures = Counter()
+    for bar in {_bar_of(note) for note in chops}:
+        figures[
+            tuple(sorted(_step_of(n) for n in chops if _bar_of(n) == bar))
+        ] += 1
+    assert figures.most_common(1)[0][1] / sum(figures.values()) >= 0.4
+
+
+def test_voice_chops_need_the_counter_part_and_belong_to_phonk():
+    assert not _voices(_phonk(1), "Counter-melody")
+    assert genre_feel.feel_for("Phonk").chops
+    for style in SONG_STYLES:
+        if style != "Phonk":
+            assert not genre_feel.feel_for(style).chops
 
 
 def test_phonk_band_sounds_change_between_songs_but_stay_dark():

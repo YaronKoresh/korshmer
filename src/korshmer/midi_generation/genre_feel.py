@@ -62,6 +62,7 @@ class GenreFeel:
     lead_snaps_inside: bool = False
     chord_spans: tuple = (1,)
     hook_holds: bool = False
+    chops: tuple = ()
 
 
 FEELS = {
@@ -844,6 +845,13 @@ FEELS = {
         home_modes=("Minor", "Phrygian"),
         lead_snaps_inside=True,
         hook_holds=True,
+        chops=(
+            ((12, 1), (13, 1), (14, 2)),
+            ((10, 1), (11, 1), (12, 1), (14, 2)),
+            ((8, 1), (9, 1), (12, 1), (13, 1)),
+            ((6, 1), (7, 1), (14, 1), (15, 1)),
+            ((4, 1), (5, 1), (6, 2), (12, 1), (13, 1)),
+        ),
         phrases={
             "chorus": (
                 ("hook", "hook", "hook", "vary"),

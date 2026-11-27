@@ -265,3 +265,33 @@ def test_stab_hits_follow_the_longest_hook_notes():
 def test_stab_hits_never_come_back_empty():
     short = hooks.Hook(((0, 1, 0), (2, 1, 1), (4, 1, 2)), 0.9, 74)
     assert hooks.stab_hits(short) == [0.0]
+
+
+@pytest.mark.parametrize("style", SONG_STYLES)
+def test_an_act_hook_keeps_the_rhythm_and_head_and_turns_the_tail(style):
+    changed = 0
+    for seed in SEEDS:
+        hook = _hook(style, seed)
+        varied = hooks.vary_hook(random.Random(seed), hook, style)
+        assert [n[:2] for n in varied.notes] == [n[:2] for n in hook.notes]
+        assert (varied.gate, varied.register) == (hook.gate, hook.register)
+        start = hooks._tail_start([list(n) for n in hook.notes])
+        assert varied.notes[:start] == hook.notes[:start]
+        for onset, length, step in varied.notes:
+            assert hooks.LOW_STEP <= step <= hooks.HIGH_STEP
+            if hooks.strong(onset, length):
+                assert step in hooks.CHORD_STEPS
+        changed += varied.notes != hook.notes
+    assert changed >= 0.8 * len(SEEDS)
+
+
+def test_an_act_hook_is_the_same_for_the_same_seed():
+    hook = _hook("Pop", 3)
+    first = hooks.vary_hook(random.Random(9), hook, "Pop")
+    second = hooks.vary_hook(random.Random(9), hook, "Pop")
+    assert first == second
+
+
+def test_a_one_note_hook_is_not_turned():
+    hook = hooks.Hook(((0, 16, 0),), 0.9, 70)
+    assert hooks.vary_hook(random.Random(1), hook) is hook
