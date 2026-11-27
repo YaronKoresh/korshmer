@@ -1948,6 +1948,195 @@ function createAdversarialMaxBoundarySnapshot(random, index, seed) {
   };
 }
 
+function buildSourceFile(filename, lines, status = "modified") {
+  return {
+    filename,
+    status,
+    additions: lines.filter((line) => line.startsWith("+")).length,
+    deletions: lines.filter((line) => line.startsWith("-")).length,
+    patch: ["@@ -10,4 +10,6 @@", ...lines].join("\n"),
+    rawPatchAvailable: true
+  };
+}
+
+function buildChangelogFile(section, entry) {
+  const headContent = [
+    "# Changelog",
+    "",
+    "## [Unreleased]",
+    "",
+    `### ${section}`,
+    "",
+    "- Earlier entry.",
+    `- ${entry}`,
+    "",
+    "## [1.0.0] - 2026-01-01"
+  ].join("\n");
+  return {
+    filename: "CHANGELOG.md",
+    status: "modified",
+    additions: 1,
+    deletions: 0,
+    patch: ["@@ -5,4 +5,5 @@", " ", " - Earlier entry.", `+- ${entry}`, " ", " ## [1.0.0] - 2026-01-01"].join("\n"),
+    rawPatchAvailable: true,
+    headContent
+  };
+}
+
+const RELEASE_IMPACT_SCENARIO_SPECS = Object.freeze([
+  {
+    kind: "breaking-title-marker",
+    build: (token) => ({
+      title: `feat(${token})!: rename the ${token} entry point`,
+      files: [buildSourceFile(`src/repo/${token}/service.py`, [`+def open_${token}(path):`, "+    return load(path)"])]
+    }),
+    expected: { requiredLabels: ["breaking-change"], semverDecision: "major" }
+  },
+  {
+    kind: "breaking-commit-footer",
+    build: (token) => ({
+      title: `Rename the ${token} option`,
+      commits: [`fix(${token}): rename the option\n\nBREAKING CHANGE: callers must pass ${token}_level.`],
+      files: [buildSourceFile(`src/repo/${token}/options.py`, [`+def level_${token}(value):`, "+    return value"])]
+    }),
+    expected: { requiredLabels: ["breaking-change"], semverDecision: "major" }
+  },
+  {
+    kind: "perf-title",
+    build: (token) => ({
+      title: `perf(${token}): reuse the measured levels`,
+      files: [buildSourceFile(`src/repo/${token}/levels.py`, [`+def measure_${token}(data):`, "+    return compute(data)"])]
+    }),
+    expected: { requiredLabels: ["performance"], semverDecision: "patch" }
+  },
+  {
+    kind: "untyped-fix-recorded-in-commits-and-changelog",
+    build: (token) => ({
+      title: `Keep the room sound around a single ${token}`,
+      commits: [`fix(${token}): keep room tone on trimmed clips`],
+      files: [
+        buildSourceFile(`src/repo/${token}/trim.py`, ["-    begin, end = span", "+    begin = max(start, span[0] - room)"]),
+        buildChangelogFile("Fixed", `A single ${token} keeps its room sound when it is trimmed.`)
+      ]
+    }),
+    expected: { requiredAnyLabels: [["bug"]], semverDecision: "patch" }
+  },
+  {
+    kind: "untyped-feature-recorded-in-changelog",
+    build: (token) => ({
+      title: `Select and change many ${token} rows together`,
+      files: [
+        buildSourceFile(`src/repo/ui/${token}_panel.py`, ["+    def select_rows(self, rows):", "+        self._selected = set(rows)"]),
+        buildChangelogFile("Added", `Several ${token} rows can be selected together.`)
+      ]
+    }),
+    expected: { requiredAnyLabels: [["enhancement"]], semverDecision: "minor" }
+  },
+  {
+    kind: "protective-security-without-wording",
+    build: (token) => ({
+      title: `fix(${token}): compare tokens in constant time`,
+      files: [buildSourceFile(`src/repo/${token}/session.py`, ["-    return token == expected", "+    return hmac.compare_digest(token, expected)"])]
+    }),
+    expected: { requiredAnyLabels: [["security", "hardening", "vulnerability", "auth"], ["bug"]], semverDecision: "patch" }
+  },
+  {
+    kind: "integrity-check-security",
+    build: (token) => ({
+      title: `fix(security): validate ${token} checksums`,
+      files: [buildSourceFile(`src/repo/plugins/${token}.py`, [
+        "+    digest = hashlib.sha256(data).hexdigest()",
+        "+    if digest != expected:",
+        `+        raise PluginError("checksum mismatch for ${token}")`
+      ])]
+    }),
+    expected: { requiredAnyLabels: [["security", "hardening", "vulnerability"], ["bug"]], semverDecision: "patch" }
+  },
+  {
+    kind: "memory-leak-fix",
+    build: (token) => ({
+      title: `fix(${token}): release decoded buffers after playback`,
+      files: [buildSourceFile(`src/repo/${token}/engine.py`, ["+        self._buffers.clear()", "+        weakref.finalize(self, self._release)"])]
+    }),
+    expected: { requiredLabels: ["leak risk", "bug"], semverDecision: "patch" }
+  },
+  {
+    kind: "thread-race-fix",
+    build: (token) => ({
+      title: `fix(${token}): guard the job queue between threads`,
+      files: [buildSourceFile(`src/repo/${token}/jobs.py`, ["+        with self._lock:", "+            self._jobs.append(job)"])]
+    }),
+    expected: { requiredLabels: ["thread safety", "bug"], semverDecision: "patch" }
+  },
+  {
+    kind: "revert-without-public-removal",
+    build: (token) => ({
+      title: `Revert "fix(${token}): keep room tone"`,
+      files: [buildSourceFile(`src/repo/${token}.py`, [
+        "-    begin = max(clip.offset, span[0] - room)",
+        "-    end = min(kept_end, span[1] + room)",
+        "-    # remove the trimmed edges",
+        "+    begin, end = span"
+      ])]
+    }),
+    expected: { forbiddenLabels: ["import path", "breaking-change"], requiredAnyLabels: [["runtime"]], semverDecision: "patch" }
+  },
+  {
+    kind: "generic-span-counter-words",
+    build: (token) => ({
+      title: `fix(${token}): keep the span of each part`,
+      files: [buildSourceFile(`src/repo/${token}/parts.py`, ["+    begin, end = span", "+    counter = 0", "+    for span in spans:"])]
+    }),
+    expected: { forbiddenLabels: ["request tracing", "observability", "monitoring"], requiredAnyLabels: [["bug"]], semverDecision: "patch" }
+  },
+  {
+    kind: "readme-production-wording",
+    build: (token) => ({
+      title: `docs: describe the ${token} install`,
+      files: [buildSourceFile("README.md", ["+## Install", `+Deploy ${token} to production with the installer.`])]
+    }),
+    expected: { forbiddenLabels: ["prod deploy", "deploy job"], semverDecision: "none" }
+  }
+]);
+
+function createReleaseImpactScenarioFactory(spec) {
+  return function createReleaseImpactSnapshot(random, index, seed) {
+    const token = pickNeutralWord(random);
+    const built = spec.build(token);
+    const files = built.files;
+    const additions = files.reduce((total, file) => total + file.additions, 0);
+    const deletions = files.reduce((total, file) => total + file.deletions, 0);
+    return {
+      expected: spec.expected,
+      input: {
+        pullRequest: {
+          number: 2600 + index,
+          title: built.title,
+          body: "",
+          headRef: `work/${token}-${index}`
+        },
+        ...(built.commits ? { commits: built.commits.map((message) => ({ message })) } : {}),
+        totals: {
+          filesChanged: files.length,
+          additions,
+          deletions,
+          totalChanges: additions + deletions
+        },
+        files
+      },
+      kind: spec.kind,
+      name: buildScenarioName("autobot", spec.kind, index, seed),
+      pipelineReleaseRelevant: spec.expected.semverDecision !== "none"
+    };
+  };
+}
+
+const RELEASE_IMPACT_SCENARIO_FACTORY_ENTRIES = RELEASE_IMPACT_SCENARIO_SPECS.map((spec) => ({
+  factory: createReleaseImpactScenarioFactory(spec),
+  name: spec.kind,
+  weight: 1
+}));
+
 const AUTOBOT_SCENARIO_FACTORY_ENTRIES = [
   { factory: createMaintenanceSnapshot, name: "maintenance", weight: 7 },
   { factory: createRuntimeDropSnapshot, name: "runtime-drop", weight: 2 },
@@ -1965,7 +2154,8 @@ const AUTOBOT_SCENARIO_FACTORY_ENTRIES = [
   { factory: createAdversarialEmptyPayloadSnapshot, name: "adversarial-empty-payload", weight: 2 },
   { factory: createAdversarialCrossDomainFalsePositiveSnapshot, name: "adversarial-cross-domain-fp", weight: 3 },
   { factory: createAdversarialConflictingEvidenceSnapshot, name: "adversarial-conflicting-evidence", weight: 2 },
-  { factory: createAdversarialMaxBoundarySnapshot, name: "adversarial-max-boundary", weight: 1 }
+  { factory: createAdversarialMaxBoundarySnapshot, name: "adversarial-max-boundary", weight: 1 },
+  ...RELEASE_IMPACT_SCENARIO_FACTORY_ENTRIES
 ];
 
 function buildAutobotScenarioCases(config = {}) {
@@ -2067,6 +2257,7 @@ async function executeAutobotPipelineScenario(scenario) {
     issueLabels: [],
     issueNumber,
     issueTitle: pullRequest.title,
+    pullCommits: scenario.input.commits || [],
     pullFiles: scenario.input.files,
     pullRequest,
     releases: [{ draft: false, id: 1, prerelease: false, tag_name: "v0.0.1" }],

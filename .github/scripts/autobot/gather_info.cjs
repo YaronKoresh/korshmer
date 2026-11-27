@@ -3,6 +3,7 @@ const {
   SNAPSHOT_FILE
 } = require("./constants.cjs");
 const { readJson, writeJson } = require("./utils.cjs");
+const { CHANGELOG_PATH_PATTERN } = require("./release_impact.cjs");
 const {
   DEFAULT_THRESHOLD,
   MAX_TOTAL_CANDIDATES,
@@ -62,8 +63,44 @@ function normalizePatch(patch) {
   return text.substring(0, MAX_PATCH_CHARS_PER_FILE) + "\n[...patch truncated for prompt budget...]";
 }
 
+async function collectPullRequestCommits({ github, owner, repo, pullRequest }) {
+  if (!github.rest.pulls.listCommits) {
+    return [];
+  }
+  try {
+    const commits = await github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: pullRequest.number, per_page: 100 });
+    return (commits || []).map((commit) => ({ message: String(commit?.commit?.message || "") }));
+  } catch (error) {
+    return [];
+  }
+}
+
+async function readHeadFileContent({ github, owner, repo, pullRequest, filename }) {
+  const ref = pullRequest.head?.sha;
+  if (!ref || !github.rest.repos?.getContent) {
+    return undefined;
+  }
+  try {
+    const response = await github.rest.repos.getContent({ owner, repo, path: filename, ref });
+    const content = response?.data?.content;
+    return typeof content === "string" ? Buffer.from(content, "base64").toString("utf8") : undefined;
+  } catch (error) {
+    return undefined;
+  }
+}
+
 async function collectPullRequestSnapshot({ github, owner, repo, pullRequest, snapshotFile }) {
   const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pullRequest.number, per_page: 100 });
+  const commits = await collectPullRequestCommits({ github, owner, repo, pullRequest });
+  const headContents = new Map();
+  for (const file of files) {
+    if (file.status !== "removed" && CHANGELOG_PATH_PATTERN.test(String(file.filename || "").toLowerCase())) {
+      const content = await readHeadFileContent({ github, owner, repo, pullRequest, filename: file.filename });
+      if (content !== undefined) {
+        headContents.set(file.filename, content);
+      }
+    }
+  }
   const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0);
   const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
   const snapshot = {
@@ -73,6 +110,7 @@ async function collectPullRequestSnapshot({ github, owner, repo, pullRequest, sn
       body: String(pullRequest.body || ""),
       headRef: String(pullRequest.head?.ref || "")
     },
+    commits,
     totals: {
       filesChanged: files.length,
       additions: totalAdditions,
@@ -85,7 +123,8 @@ async function collectPullRequestSnapshot({ github, owner, repo, pullRequest, sn
       additions: file.additions,
       deletions: file.deletions,
       patch: normalizePatch(file.patch),
-      rawPatchAvailable: Boolean(file.patch)
+      rawPatchAvailable: Boolean(file.patch),
+      ...(headContents.has(file.filename) ? { headContent: headContents.get(file.filename) } : {})
     }))
   };
   writeJson(resolveSnapshotFile({ snapshotFile }), snapshot);

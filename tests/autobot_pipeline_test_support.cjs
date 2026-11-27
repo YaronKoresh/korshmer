@@ -221,6 +221,7 @@ function createAutobotPipelineGithubMock(options = {}) {
     issueUpdates: [],
     issuesByNumber: new Map([[issueNumber, issue], ...additionalIssues.map((entry) => [entry.number, entry]), ...mirroredPullIssues.map((entry) => [entry.number, entry])]),
     milestones,
+    pullCommitsByNumber: new Map([[pullRequest.number, (options.pullCommits || []).map((commit) => ({ commit: { message: String(commit.message || "") } }))]]),
     pullFilesByNumber: new Map([[pullRequest.number, (options.pullFiles || []).map((file) => ({ ...file }))]]),
     pullRequestsByNumber: new Map([[pullRequest.number, clonePullRequest(pullRequest)], ...additionalPullRequests.map((entry) => [entry.number, entry])]),
     releases
@@ -259,6 +260,10 @@ function createAutobotPipelineGithubMock(options = {}) {
       if (method === github.rest.pulls.listFiles) {
         maybeFail("paginate.pulls.listFiles");
         return (state.pullFilesByNumber.get(params.pull_number) || []).map((file) => ({ ...file }));
+      }
+      if (method === github.rest.pulls.listCommits) {
+        maybeFail("paginate.pulls.listCommits");
+        return (state.pullCommitsByNumber.get(params.pull_number) || []).map((commit) => ({ commit: { ...commit.commit } }));
       }
       if (method === github.rest.repos.listReleases) {
         maybeFail("paginate.repos.listReleases");
@@ -405,6 +410,10 @@ function createAutobotPipelineGithubMock(options = {}) {
           maybeFail("pulls.get");
           return { data: clonePullRequest(state.pullRequestsByNumber.get(pull_number)) };
         },
+        listCommits: async ({ pull_number }) => {
+          maybeFail("pulls.listCommits");
+          return { data: (state.pullCommitsByNumber.get(pull_number) || []).map((commit) => ({ commit: { ...commit.commit } })) };
+        },
         listFiles: async ({ pull_number }) => {
           maybeFail("pulls.listFiles");
           return { data: (state.pullFilesByNumber.get(pull_number) || []).map((file) => ({ ...file })) };
@@ -417,6 +426,14 @@ function createAutobotPipelineGithubMock(options = {}) {
         }
       },
       repos: {
+        getContent: async ({ path: requestedPath }) => {
+          maybeFail("repos.getContent");
+          const file = [...state.pullFilesByNumber.values()].flat().find((entry) => entry.filename === requestedPath && typeof entry.headContent === "string");
+          if (!file) {
+            throw buildMockFailure({ message: "Not Found", status: 404 }, "repos.getContent");
+          }
+          return { data: { content: Buffer.from(file.headContent, "utf8").toString("base64"), encoding: "base64" } };
+        },
         createRelease: async ({ tag_name, ...release }) => {
           maybeFail("repos.createRelease");
           const createdRelease = { id: nextReleaseId += 1, tag_name, ...release };

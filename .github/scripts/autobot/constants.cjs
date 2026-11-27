@@ -1,4 +1,5 @@
 const SNAPSHOT_FILE = "/tmp/autobot_pr_snapshot.json";
+const VULNERABILITY_CLASS_TEXT_PATTERN = /\b(xss|csrf|ssrf|xxe|rce|redos|sqli|(?:sql|command|code|header|template|ldap|xpath)[\s-]injection|(?:path|directory)[\s-]traversal|open[\s-]redirect|remote code execution|arbitrary code execution|prototype pollution|insecure deserialization|privilege escalation|auth(?:entication|orization)?[\s-]bypass)\b/;
 const MAX_PATCH_CHARS_PER_FILE = 700;
 const MAX_TOP_DIRECTORIES = 8;
 const MAX_TOP_FILES = 10;
@@ -184,6 +185,7 @@ module.exports = {
   SMALL_PR_GENERIC_LABEL_LIMIT,
   SMALL_PR_TOTAL_CHANGE_LIMIT,
   SNAPSHOT_FILE,
+  VULNERABILITY_CLASS_TEXT_PATTERN,
   WORKFLOW_ACTION_REFERENCE_PATTERN,
   WORKFLOW_TEST_EXECUTION_PATTERN
 };

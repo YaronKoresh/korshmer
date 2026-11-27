@@ -16,6 +16,7 @@ const {
   formatRegressionFixtureEntry,
   normalizeScenarioRegressionFixture
 } = require("../tests/deterministic_scenario_regression_fixtures.cjs");
+const { CHANGELOG_PATH_PATTERN } = require("../.github/scripts/autobot/release_impact.cjs");
 
 function readCaptureInputText(input = {}) {
   const env = input.env || process.env;
@@ -229,7 +230,13 @@ function buildUntrackedFileEntry(filename, content) {
 function buildLocalGitDiffSnapshot(input = {}) {
   const trackedFiles = splitTrackedDiffSections(input.diffText).map((section) => buildTrackedFileEntry(section));
   const untrackedFiles = (input.untrackedFiles || []).map((filename) => buildUntrackedFileEntry(filename, input.readFileText(filename)));
-  const files = [...trackedFiles, ...untrackedFiles];
+  const files = [...trackedFiles, ...untrackedFiles].map((file) => {
+    if (!input.readHeadFileText || file.status === "removed" || !CHANGELOG_PATH_PATTERN.test(String(file.filename || "").toLowerCase())) {
+      return file;
+    }
+    const headContent = input.readHeadFileText(file.filename);
+    return typeof headContent === "string" ? { ...file, headContent } : file;
+  });
   const totals = files.reduce((summary, file) => {
     summary.additions += Number(file.additions || 0);
     summary.deletions += Number(file.deletions || 0);
@@ -240,6 +247,7 @@ function buildLocalGitDiffSnapshot(input = {}) {
   });
   const parsedNumber = Number.parseInt(String(input.number || 0), 10);
   return {
+    ...(Array.isArray(input.commits) ? { commits: input.commits } : {}),
     files,
     pullRequest: {
       body: String(input.body || ""),
@@ -663,14 +671,35 @@ const resolvedHeadRef = input.headRef
   || (pullRequestContext ? pullRequestContext.headRef : "")
   || runGitCommand(["rev-parse", "--abbrev-ref", "HEAD"], repoExecInput);
 
+  const commitRange = previewMode === "pull-request" && diffSpec.includes("..") ? diffSpec : "";
+  const commitLog = commitRange
+    ? runGitCommandOptional(["log", "--format=%B%x1e", commitRange], repoExecInput)
+    : "";
+  const commits = String(commitLog || "")
+    .split("\x1e")
+    .map((message) => message.trim())
+    .filter(Boolean)
+    .map((message) => ({ message }));
+
   const snapshot = buildLocalGitDiffSnapshot({
     baseRef,
     body: resolvedBody,
+    commits,
     diffText,
     headRef: resolvedHeadRef,
     number: Number.isFinite(resolvedNumber) ? resolvedNumber : 0,
     readFileText: function (filename) {
       return readFileSync(path.join(repoRoot, filename), "utf8");
+    },
+    readHeadFileText: function (filename) {
+      if (previewMode === "pull-request") {
+        return runGitCommandOptional(["show", `HEAD:${filename}`], repoExecInput) || undefined;
+      }
+      try {
+        return readFileSync(path.join(repoRoot, filename), "utf8");
+      } catch (error) {
+        return undefined;
+      }
     },
     title: resolvedTitle,
     untrackedFiles

@@ -1,12 +1,17 @@
 const { scoreDeterministicEvidence } = require("./measurement/scorer.cjs");
 const { applyLabelWordBudget } = require("./measurement/label_selection.cjs");
 const { AutobotLabelRegistry } = require("./labels/registry.cjs");
+const { VULNERABILITY_CLASS_TEXT_PATTERN } = require("./constants.cjs");
 
 const MAX_LABEL_WORDS = 2;
-const BUG_TITLE_PATTERN = /\b(bugs?|crash(?:es|ed|ing)?|errors?|fail(?:s|ed|ing|ures?)|broken|regressions?)\b/;
+const BUG_TITLE_PATTERN = /\b(bugs?|crash(?:es|ed|ing)?|errors?|fail(?:s|ed|ing|ures?)|broken|regressions?|freez(?:e|es|ing)|froze|hang(?:s|ing)?|stuck|unresponsive|(?:does ?n[o']?t|doesn't|not) work(?:ing)?|incorrect(?:ly)?|wrong)\b/;
 const NEGATED_BUG_PATTERN = /\b(?:not|isn'?t|is not|no|never)\s+(?:an?\s+)?(?:bugs?|regressions?|defects?)\b/;
 const TRACEBACK_PATTERN = /\btraceback \(most recent call last\)/;
 const CRASH_PATTERN = /\bcrash(?:es|ed|ing)?\b/;
+const VULNERABILITY_KEYWORD_PATTERN = /\b(vulnerab\w*|advisory|cve-\d{4}-\d+|ghsa-[a-z0-9-]+|exploit(?:able|s|ed)?|security advisory)\b/;
+const FEATURE_REQUEST_PATTERN = /\b(feature request|enhancement|please (?:add|support|allow|make|let|include|provide|implement|consider)|it would be (?:great|nice|useful|helpful|good|awesome)|(?:would|i'?d) (?:love|like) (?:to (?:have|see|be able)|a|an|the|support)|i wish|could you (?:add|support|make|allow)|can you (?:add|support|make|allow)|add support for|should be able to|is there a way to|it would help)\b/;
+const BEHAVIOR_REQUEST_FALLBACK_LABEL = "runtime";
+const SECURITY_REPORT_FALLBACK_LABEL = "vulnerability";
 
 class AutobotIssueClassifier {
   static ISSUE_RELEASE_RELEVANT_LABELS = new Set([...AutobotLabelRegistry.RELEASE_CRITICAL_LABELS]);
@@ -135,7 +140,7 @@ class AutobotIssueClassifier {
       AutobotIssueClassifier.pushUnique(labels, "integration test");
     }
 
-    if (/api|endpoint|route|router|handler/.test(text)) {
+    if (/\b(apis?|endpoints?|routes?|router|handlers?)\b/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "route");
       if (/path param|route param/.test(text)) {
         AutobotIssueClassifier.pushUnique(labels, "route param");
@@ -184,7 +189,7 @@ class AutobotIssueClassifier {
     if (/authz|authorization/.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "authz");
     }
-    if (/\b(vulnerab\w*|advisory|cve-\d{4}-\d+|ghsa-[a-z0-9-]+|exploit(?:able)?|security advisory)\b/.test(text)) {
+    if (VULNERABILITY_KEYWORD_PATTERN.test(text) || VULNERABILITY_CLASS_TEXT_PATTERN.test(text)) {
       AutobotIssueClassifier.pushUnique(labels, "vulnerability");
     }
     if (/\b(compliance|soc ?2|pci(?:-dss)?|gdpr|hipaa|iso ?27001|nist|fedramp)\b/.test(text)
@@ -288,13 +293,14 @@ class AutobotIssueClassifier {
     const documentationSignal = documentationTemplate || /\b(docs?|documentation|readme)\b/.test(normalized.normalizedTitle);
     const bugMention = BUG_TITLE_PATTERN.test(normalized.normalizedTitle) || TRACEBACK_PATTERN.test(normalized.normalizedBody);
     const bugSignal = bugTemplate || (bugMention && !NEGATED_BUG_PATTERN.test(normalized.normalizedTitle));
-    const enhancementSignal = featureTemplate || /\b(feature request|enhancement)\b/.test(normalized.normalizedTitle);
+    const enhancementSignal = featureTemplate || FEATURE_REQUEST_PATTERN.test(normalized.text);
+    const securityReportSignal = VULNERABILITY_KEYWORD_PATTERN.test(normalized.text) || VULNERABILITY_CLASS_TEXT_PATTERN.test(normalized.text);
     const proposalSignal = /\b(proposal|rfc|request for comments|design proposal|roadmap|future work)\b/.test(normalized.normalizedTitle)
       || /\brequest for comments\b/.test(normalized.text);
     const improvementSignal = /\b(improvement|improve|streamline|simplify|quality of life|qol)\b/.test(normalized.normalizedTitle)
       || /\b(pain point|gap closure|quality of life)\b/.test(normalized.text);
     const runtimeSignal = /\b(runtime|windows|linux|macos|cuda|python)\b/.test(normalized.text);
-    const apiSignal = /\b(api|endpoint|webhook|request|response)\b/.test(normalized.text);
+    const apiSignal = /\b(apis?|endpoints?|webhooks?|http (?:request|response)s?|rest api)\b/.test(normalized.text);
 
     if (documentationTemplate) {
       AutobotIssueClassifier.pushUnique(evidenceSignals, "Structured documentation issue template fields are present.");
@@ -334,6 +340,17 @@ class AutobotIssueClassifier {
     }
     if (apiSignal && !AutobotIssueClassifier.hasLabelOrAncestor(technicalLabels, "api")) {
       AutobotIssueClassifier.pushUnique(fallbackTechnicalLabels, "route");
+    }
+    if (securityReportSignal && !AutobotIssueClassifier.hasLabelOrAncestor(technicalLabels, "security posture")) {
+      AutobotIssueClassifier.pushUnique(fallbackTechnicalLabels, SECURITY_REPORT_FALLBACK_LABEL);
+    }
+    if (
+      (enhancementSignal || proposalSignal || improvementSignal || bugSignal)
+      && !documentationSignal
+      && technicalLabels.length === 0
+      && fallbackTechnicalLabels.length === 0
+    ) {
+      AutobotIssueClassifier.pushUnique(fallbackTechnicalLabels, BEHAVIOR_REQUEST_FALLBACK_LABEL);
     }
     const crashSignal = CRASH_PATTERN.test(normalized.normalizedTitle) || TRACEBACK_PATTERN.test(normalized.normalizedBody);
     if (bugSignal && crashSignal && !AutobotIssueClassifier.hasLabelOrAncestor(technicalLabels, "process")) {

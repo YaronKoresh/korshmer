@@ -1,4 +1,7 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { test } = require("./javascript_test_harness.cjs");
 const {
   evaluateAutobotPipelineScenarioSuite,
@@ -37,7 +40,10 @@ const {
   AutobotProjectManager,
   resolvePrLabelDelta
 } = require("../.github/scripts/autobot/project_manager.cjs");
-const { collectSmartLinkSource } = require("../.github/scripts/autobot/gather_info.cjs");
+const {
+  collectPullRequestSnapshot,
+  collectSmartLinkSource
+} = require("../.github/scripts/autobot/gather_info.cjs");
 const {
   analyzeCurrentGitDiff,
   buildLocalGitDiffSnapshot,
@@ -271,7 +277,7 @@ test("local diff preview analyzes the current git diff and renders a human-reada
   assert.ok(!report.includes("Held back context labels:"));
   assert.ok(report.includes("### Decision"));
   assert.ok(report.includes("### Label Rationale"));
-  assert.ok(report.includes("Confidence"));
+  assert.ok(!report.includes("Confidence"));
   assert.ok(report.includes("### Key Evidence"));
   assert.ok(report.includes("## Autobot Summary"));
   assert.ok(report.includes("<!-- autobot-local-preview -->"));
@@ -662,6 +668,394 @@ test("PR analyzer labels perf PRs that change source files and releases them as 
   assert.equal(JSON.parse(outputs.deterministic_semver_json).decision, "patch");
   assert.equal(outputs.release_relevant, "true");
   assert.ok(JSON.parse(outputs.deterministic_labels_json).includes("performance"));
+});
+
+const UNRELEASED_CHANGELOG = [
+  "# Changelog",
+  "",
+  "## [Unreleased]",
+  "",
+  "### Added",
+  "",
+  "- Existing addition.",
+  "",
+  "### Removed",
+  "",
+  "- Existing removal.",
+  "",
+  "### Fixed",
+  "",
+  "- Existing fix.",
+  "- New entry.",
+  "",
+  "## [1.0.0] - 2026-01-01"
+].join("\n");
+
+function changelogFile(newLine, headContent) {
+  const file = {
+    filename: "CHANGELOG.md",
+    status: "modified",
+    additions: 1,
+    deletions: 0,
+    patch: [
+      `@@ -${newLine - 3},5 +${newLine - 3},6 @@`,
+      " ",
+      " - Existing context.",
+      " - Existing context.",
+      "+- New entry.",
+      " ",
+      " ## [1.0.0] - 2026-01-01"
+    ].join("\n"),
+    rawPatchAvailable: true
+  };
+  return headContent === undefined ? file : { ...file, headContent };
+}
+
+function changelogUnder(section) {
+  const lines = UNRELEASED_CHANGELOG.split("\n");
+  const sectionLine = lines.indexOf(`### ${section}`);
+  const entryLine = lines.indexOf("", sectionLine + 2);
+  const content = [...lines.slice(0, entryLine), "- New entry.", ...lines.slice(entryLine)].join("\n");
+  return changelogFile(entryLine + 1, content);
+}
+
+const CHANGED_IMPACT_TEST_FILE = {
+  filename: "tests/unit/test_clip_level.py",
+  status: "modified",
+  additions: 2,
+  deletions: 0,
+  patch: [
+    "+def test_the_level_is_measured_once():",
+    "+    assert measure([0.0]) == 0.0"
+  ].join("\n"),
+  rawPatchAvailable: true
+};
+
+function createImpactSnapshot({ title = "Keep the room sound around a single clip", body = "", commits, files = [] } = {}) {
+  const snapshot = createSourceSnapshot(title, body);
+  snapshot.pullRequest.headRef = "work/room-tone";
+  if (commits) {
+    snapshot.commits = commits.map((message) => ({ message }));
+  }
+  snapshot.files.push(...files);
+  snapshot.totals.filesChanged = snapshot.files.length;
+  return snapshot;
+}
+
+function impactOf(snapshot) {
+  const outputs = analyzePullRequestSnapshotData(snapshot);
+  return {
+    labels: JSON.parse(outputs.deterministic_labels_json),
+    outputs,
+    semver: JSON.parse(outputs.deterministic_semver_json)
+  };
+}
+
+test("release impact takes the change type from the commits when the title has none", () => {
+  const { labels, outputs, semver } = impactOf(createImpactSnapshot({
+    commits: ["fix(audio_processing): keep room tone on trimmed clips\n\nTrim to the sound and its room."]
+  }));
+
+  assert.equal(semver.decision, "patch");
+  assert.equal(outputs.release_relevant, "true");
+  assert.ok(labels.includes("bug"));
+  assert.ok(outputs.deterministic_summary.includes("Change kind: fix (commit 1 (fix(audio_processing): keep room tone on trimmed clips) has type fix)."));
+});
+
+test("release impact treats a changelog entry under Added as a minor release", () => {
+  const { semver } = impactOf(createImpactSnapshot({ files: [changelogUnder("Added")] }));
+
+  assert.equal(semver.decision, "minor");
+  assert.ok(semver.hardSignals.includes("changelog-added-entry"));
+});
+
+test("release impact treats a changelog entry under Removed as a major release", () => {
+  const { labels, semver } = impactOf(createImpactSnapshot({ files: [changelogUnder("Removed")] }));
+
+  assert.equal(semver.decision, "major");
+  assert.ok(labels.includes("breaking-change"));
+});
+
+test("release impact treats a changelog entry under Fixed as a patch release", () => {
+  const { outputs, semver } = impactOf(createImpactSnapshot({ files: [changelogUnder("Fixed")] }));
+
+  assert.equal(semver.decision, "patch");
+  assert.ok(outputs.deterministic_summary.includes("CHANGELOG.md adds an entry under Fixed"));
+});
+
+test("release impact reads the changelog section from the patch when the file content is missing", () => {
+  const file = changelogFile(16);
+  file.patch = file.patch.replace(" - Existing context.\n - Existing context.", " ### Added\n ");
+  const { semver } = impactOf(createImpactSnapshot({ files: [file] }));
+
+  assert.equal(semver.decision, "minor");
+});
+
+test("release impact treats a BREAKING CHANGE footer in a commit as a major release", () => {
+  const { labels, semver } = impactOf(createImpactSnapshot({
+    commits: ["fix(audio): rename the level option\n\nBREAKING CHANGE: callers must pass target_db."]
+  }));
+
+  assert.equal(semver.decision, "major");
+  assert.ok(labels.includes("breaking-change"));
+});
+
+test("release impact keeps a declared refactor out of the release when nothing records a change", () => {
+  const { outputs, semver } = impactOf(createImpactSnapshot({
+    title: "refactor(audio): split the level helpers",
+    files: [CHANGED_IMPACT_TEST_FILE]
+  }));
+
+  assert.equal(semver.decision, "none");
+  assert.equal(outputs.release_relevant, "false");
+});
+
+test("release impact lets a changelog entry overrule a declared refactor and reports the conflict", () => {
+  const { outputs, semver } = impactOf(createImpactSnapshot({
+    title: "refactor(audio): split the level helpers",
+    files: [changelogUnder("Fixed")]
+  }));
+
+  assert.equal(semver.decision, "patch");
+  assert.ok(outputs.deterministic_summary.includes("Conflict: a declared internal type is overruled by CHANGELOG.md adds an entry under Fixed."));
+});
+
+test("release impact releases an untyped source change whose tests change", () => {
+  const { semver } = impactOf(createImpactSnapshot({ files: [CHANGED_IMPACT_TEST_FILE] }));
+
+  assert.equal(semver.decision, "patch");
+});
+
+test("release impact still leaves out an untyped source change with no evidence of a behavior change", () => {
+  const { outputs, semver } = impactOf(createImpactSnapshot());
+
+  assert.equal(semver.decision, "none");
+  assert.equal(outputs.release_relevant, "false");
+});
+
+test("pull request snapshot carries the commit messages and the changelog content", async () => {
+  const snapshotFile = path.join(os.tmpdir(), `autobot-impact-snapshot-${process.pid}.json`);
+  const listFiles = async () => [];
+  const listCommits = async () => [];
+  const github = {
+    paginate: async (method) => (method === listFiles
+      ? [
+          { filename: "CHANGELOG.md", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n+- New entry." },
+          { filename: "src/app.py", status: "modified", additions: 1, deletions: 0, patch: "@@ -1 +1,2 @@\n+x = 1" }
+        ]
+      : [{ commit: { message: "fix(app): keep x" } }]),
+    rest: {
+      pulls: { listFiles, listCommits },
+      repos: {
+        getContent: async ({ path: requested, ref }) => ({
+          data: { content: Buffer.from(`${requested}@${ref}`).toString("base64") }
+        })
+      }
+    }
+  };
+
+  try {
+    const snapshot = await collectPullRequestSnapshot({
+      github,
+      owner: "octo",
+      repo: "repo",
+      pullRequest: { number: 3, title: "Keep x", body: "", head: { ref: "work/x", sha: "abc123" } },
+      snapshotFile
+    });
+
+    assert.deepEqual(snapshot.commits, [{ message: "fix(app): keep x" }]);
+    assert.equal(snapshot.files[0].headContent, "CHANGELOG.md@abc123");
+    assert.equal(snapshot.files[1].headContent, undefined);
+  } finally {
+    fs.rmSync(snapshotFile, { force: true });
+  }
+});
+
+test("local preview snapshot carries the commit messages and the changelog content", () => {
+  const snapshot = buildLocalGitDiffSnapshot({
+    commits: [{ message: "fix(app): keep x" }],
+    diffText: [
+      "diff --git a/CHANGELOG.md b/CHANGELOG.md",
+      "--- a/CHANGELOG.md",
+      "+++ b/CHANGELOG.md",
+      "@@ -1 +1,2 @@",
+      " # Changelog",
+      "+- New entry."
+    ].join("\n"),
+    readHeadFileText: (filename) => `${filename} at HEAD`,
+    untrackedFiles: []
+  });
+
+  assert.deepEqual(snapshot.commits, [{ message: "fix(app): keep x" }]);
+  assert.equal(snapshot.files[0].headContent, "CHANGELOG.md at HEAD");
+});
+
+function createPatchSnapshot(title, filename, lines, extra = {}) {
+  return {
+    pullRequest: { number: 52, title, body: "", headRef: "work/change" },
+    totals: { filesChanged: 1, additions: lines.length, deletions: 0, totalChanges: lines.length },
+    files: [
+      {
+        filename,
+        status: extra.status || "modified",
+        additions: lines.filter((line) => line.startsWith("+")).length,
+        deletions: lines.filter((line) => line.startsWith("-")).length,
+        patch: ["@@ -10,4 +10,6 @@", ...lines].join("\n"),
+        rawPatchAvailable: true
+      }
+    ]
+  };
+}
+
+function labelsOf(snapshot) {
+  return JSON.parse(analyzePullRequestSnapshotData(snapshot).deterministic_labels_json);
+}
+
+test("PR analyzer labels an added constant-time comparison as security without security wording", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(collaboration): compare tokens in constant time",
+    "src/korshmer/collaboration/server.py",
+    ["-    return token == expected", "+    return hmac.compare_digest(token, expected)"]
+  ));
+
+  assert.ok(labels.includes("security"));
+  assert.ok(!labels.includes("auth"));
+});
+
+test("PR analyzer labels an added checksum verification as security", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(security): validate plugin checksums",
+    "src/korshmer/plugins/registry.py",
+    [
+      "+    digest = hashlib.sha256(data).hexdigest()",
+      "+    if digest != expected:",
+      "+        raise PluginError(\"checksum mismatch\")"
+    ]
+  ));
+
+  assert.ok(labels.includes("security"));
+});
+
+test("PR analyzer labels a leak fix from the code it adds", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(audio): release decoded buffers after playback",
+    "src/korshmer/core/audio_engine.py",
+    ["+        self._buffers.clear()", "+        weakref.finalize(self, self._release)"]
+  ));
+
+  assert.ok(labels.includes("leak risk"));
+});
+
+test("PR analyzer labels a lock between threads as thread safety", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(processing): guard the job queue",
+    "src/korshmer/processing/queue.py",
+    ["+        with self._lock:", "+            self._jobs.append(job)"]
+  ));
+
+  assert.ok(labels.includes("thread safety"));
+});
+
+test("PR analyzer does not read generic span and counter names as tracing", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(audio): keep the span of each part",
+    "src/korshmer/audio_processing/clip_polish.py",
+    ["+    begin, end = span", "+    counter = 0", "+    for span in spans:"]
+  ));
+
+  assert.ok(!labels.includes("request tracing"));
+  assert.ok(!labels.includes("observability"));
+});
+
+test("PR analyzer does not treat a revert that removes more lines than it adds as an import path change", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "Revert \"fix(audio_processing): keep room tone on trimmed clips\"",
+    "src/korshmer/audio_processing/clip_polish.py",
+    [
+      "-    begin = max(clip.offset, span[0] - PART_ROOM_S)",
+      "-    end = min(kept_end, span[1] + PART_ROOM_S)",
+      "-    # remove the room margin",
+      "-KEPT_ROOM_S = PART_ROOM_S + MIN_TRIM_S",
+      "+    begin, end = span"
+    ]
+  ));
+
+  assert.ok(!labels.includes("import path"));
+  assert.ok(!labels.includes("breaking-change"));
+});
+
+test("PR analyzer still treats a removed module-level function as an import path change", () => {
+  const labels = labelsOf(createPatchSnapshot(
+    "fix(audio_processing): drop the old trim helper",
+    "src/korshmer/audio_processing/clip_polish.py",
+    ["-def trim_to_sound(clip):", "-    return clip"]
+  ));
+
+  assert.ok(labels.includes("import path"));
+});
+
+test("PR analyzer does not offer a deploy label for production wording in the README", () => {
+  const outputs = analyzePullRequestSnapshotData(createPatchSnapshot(
+    "docs: describe the install steps",
+    "README.md",
+    ["+## Install", "+Deploy to production with the installer."]
+  ));
+
+  assert.ok(!JSON.parse(outputs.candidate_labels_json).includes("prod deploy"));
+  assert.ok(!JSON.parse(outputs.deterministic_labels_json).includes("prod deploy"));
+});
+
+test("PR analyzer names the change kind in the label instead of a generic runtime fallback", () => {
+  const featureLabels = labelsOf(createSourceSnapshot("feat(audio): add a level meter"));
+  const fixLabels = labelsOf(createSourceSnapshot("fix(audio): keep the level meter steady"));
+
+  assert.ok(featureLabels.includes("enhancement"));
+  assert.ok(fixLabels.includes("bug"));
+  assert.ok(!featureLabels.includes("runtime"));
+  assert.ok(!fixLabels.includes("runtime"));
+});
+
+test("PR label rationale no longer prints a confidence level", () => {
+  const outputs = analyzePullRequestSnapshotData(createSourceSnapshot("fix(audio): keep the level meter steady"));
+
+  assert.ok(!/Confidence (low|medium|high)/.test(outputs.deterministic_summary));
+  assert.ok(outputs.deterministic_summary.includes("the release impact is fix: the title has type fix."));
+});
+
+test("issue classifier labels free-form feature requests", () => {
+  for (const issue of [
+    { title: "Please add MIDI export to the editor", body: "" },
+    { title: "Dark theme", body: "It would be great to have a dark theme." },
+    { title: "Loop markers", body: "I'd like to be able to set loop markers." }
+  ]) {
+    const result = analyzeIssueIntake(issue);
+
+    assert.ok(result.labels.length > 0, issue.title);
+    assert.ok(result.evidenceItems.some((item) => item.ruleId === "issue-enhancement-request"), issue.title);
+  }
+});
+
+test("issue classifier labels a security report that names an attack", () => {
+  const result = analyzeIssueIntake({
+    title: "Remote code execution through a crafted project file",
+    body: "Opening a crafted .kproj runs arbitrary code."
+  });
+
+  assert.ok(result.labels.includes("vulnerability"));
+  assert.equal(result.releaseRelevant, true);
+});
+
+test("issue classifier labels a defect described without the word bug", () => {
+  const result = analyzeIssueIntake({ title: "Export does not work after the update", body: "" });
+
+  assert.ok(result.evidenceItems.some((item) => item.ruleId === "issue-bug-report"));
+  assert.ok(result.labels.length > 0);
+});
+
+test("issue classifier does not read api inside other words or a feature request as a route", () => {
+  const result = analyzeIssueIntake({ title: "Feature request: rapid capital letters in track names", body: "" });
+
+  assert.ok(!result.labels.includes("route"));
 });
 
 function createWorkflowSnapshot(number, filename, patch) {

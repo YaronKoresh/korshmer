@@ -17,7 +17,8 @@ const {
   collectDirectEvidenceForLabel,
   collectSupportFilesForLabel,
   describeEvidenceItem,
-  formatBulletLines
+  formatBulletLines,
+  isWeaklySupportedLabel
 } = require("./phrasing/pr_summary.cjs");
 const {
   collectPullRequestSnapshot: collectPullRequestSnapshotFromGatherInfo,
@@ -25,6 +26,8 @@ const {
   resolveSnapshotFile: resolveSnapshotFileFromGatherInfo
 } = require("./gather_info.cjs");
 const { AutobotLabelRegistry, sortLabels } = require("./labels/registry.cjs");
+const { describeReleaseImpact, resolveReleaseImpact } = require("./release_impact.cjs");
+const { VULNERABILITY_CLASS_TEXT_PATTERN } = require("./constants.cjs");
 const {
   ACCESSIBILITY_TEXT_PATTERN,
   AUTOMATION_TEXT_PATTERN,
@@ -78,7 +81,6 @@ const GENERAL_LABEL_REPLACEMENT_COUNTS = Object.freeze({
   verySpecific: 15
 });
 const GENERAL_LABEL_MIN_DESCENDANTS = GENERAL_LABEL_REPLACEMENT_COUNTS.moderatelySpecific + GENERAL_LABEL_REPLACEMENT_COUNTS.verySpecific;
-const LOW_CONFIDENCE_LABEL = "low";
 const MAX_LABEL_WORDS = 2;
 const LOW_SPECIFICITY_TECHNICAL_LABELS = new Set([
   "filesystem",
@@ -98,9 +100,11 @@ const ATOMIC_WRITE_TEXT_PATTERN = /\b(atomic(?:\s+write)?|os\.replace|fsync|writ
 const SYMLINK_SAFETY_TEXT_PATTERN = /\b(symlink|readlink|lstat|realpath)\b/;
 const SUBPROCESS_IO_TEXT_PATTERN = /(subprocess\.(?:popen|run|call|check_call|check_output)\s*\(|child_process\.(?:spawn|fork|exec|execfile|execsync|spawnsync)\s*\(|\bpopen\s*\()/;
 const WORKER_POOL_TEXT_PATTERN = /\b(worker pool|thread ?pool|process ?pool|executor)\b/;
+const THREAD_SAFETY_CONSTRUCT_PATTERN = /\b(threading\.(?:r?lock|condition|semaphore|boundedsemaphore|event)|asyncio\.(?:lock|semaphore|condition)|qmutex(?:locker)?|qreadwritelock|mutex|atomic\w*|with self\.\w*lock\b|\w*lock\.acquire|\w*lock\.release|run_coroutine_threadsafe|call_soon_threadsafe|queue\.queue)/;
+const LEAK_FIX_CONSTRUCT_PATTERN = /\b(weakref\.\w+|weakvaluedictionary|weakkeydictionary|weakset|tracemalloc|gc\.collect|deletelater)\b|\.clear\(\)|^\s*del\s+\S/;
 const RETRY_BUDGET_TEXT_PATTERN = /\b(retry budget|retry(?:ing)?|backoff|max[_\s-]?attempts?)\b/;
 const DAEMON_MODE_TEXT_PATTERN = /\b(daemon(?:ize|ized)?|detached process|daemon mode)\b/;
-const OBSERVABILITY_TEXT_PATTERN = /\b(observability|telemetry|prometheus|opentelemetry|otel|metrics?|histogram|counter|gauge|tracing?|trace id|span(?: id)?|monitoring|datadog|newrelic)\b/;
+const OBSERVABILITY_TEXT_PATTERN = /\b(observability|telemetry|prometheus|opentelemetry|otel|statsd|histogram|(?:metrics?|prometheus)[_ ](?:registry|exporter|client|endpoint)|(?:counter|gauge|histogram)\(|tracing|tracer|trace[_ ]id|span[_ ]id|start_span|monitoring|datadog|newrelic)\b/;
 const OBSERVABILITY_PATH_PATTERN = /(^|\/)(observability|telemetry|monitoring|metrics?|prometheus|tracing)(\/|$)/;
 const VISUAL_STYLE_TEXT_PATTERN = /\b(class(name)?=|style=|styles?\.|theme|color|font|spacing|margin|padding|border(?:-radius)?|box-shadow|background|tailwind|var\(--|display\s*:\s*(flex|grid))\b/;
 const VISUAL_LOGIC_GUARD_PATTERN = /\b(fetch|axios|router|route|endpoint|sql|query|mutation|auth|token|database|subprocess|spawn|fork|exec\(|if\s*\(|while\s*\(|for\s*\()\b/;
@@ -113,13 +117,12 @@ const BUG_TITLE_TEXT_PATTERN = /\b(bugs?|bugfix(?:es)?|fix(?:es|ed|ing)?|hotfix(
 const CONVENTIONAL_COMMIT_TYPE_PATTERN = /^\s*([a-z][a-z0-9-]*)(?:\([^)]*\))?!?:/;
 const CONVENTIONAL_BUG_TYPES = new Set(["bugfix", "fix", "hotfix"]);
 const CONVENTIONAL_ENHANCEMENT_TYPES = new Set(["enhancement", "feat", "feature"]);
-const CONVENTIONAL_PERFORMANCE_TYPES = new Set(["perf", "performance"]);
-const CONVENTIONAL_BREAKING_MARKER_PATTERN = /^\s*[a-z][a-z0-9-]*(?:\([^)]*\))?!:/;
-const BREAKING_CHANGE_FOOTER_PATTERN = /^\s*breaking[\s-]change\s*:/m;
 const BUG_FIX_ISSUE_REFERENCE_PATTERN = /\b(?:fix|fixes|fixed)\s*:?\s+(?:(?:[\w.-]+\/[\w.-]+)?#\d+\b|https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+)/;
 const SECURITY_ADVISORY_ID_PATTERN = /\b(?:cve-\d{4}-\d{4,}|ghsa-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})\b/;
-const VULNERABILITY_CLASS_TEXT_PATTERN = /\b(xss|csrf|ssrf|xxe|rce|redos|sqli|(?:sql|command|code|header|template|ldap|xpath)[\s-]injection|(?:path|directory)[\s-]traversal|open[\s-]redirect|remote code execution|prototype pollution|insecure deserialization|privilege escalation|auth(?:entication|orization)?[\s-]bypass)\b/;
 const VULNERABILITY_FIX_PATCH_PATTERN = /\b(sanitiz\w*|escape_?html|html\.escape|markupsafe|bleach\.clean|dompurify|shlex\.quote|secure_filename|safe_load|defusedxml|parameteriz\w*|prepared statement|timingsafeequal|compare_digest)\b|dangerouslysetinnerhtml|\.innerhtml\b|shell\s*=\s*true|\beval\s*\(|\bpickle\.loads?\s*\(|\byaml\.load\s*\(|\bos\.path\.(?:realpath|commonpath)\s*\(/;
+const PROTECTIVE_SECURITY_CONSTRUCT_PATTERN = /\b(compare_digest|timingsafeequal|secure_filename|shlex\.quote|defusedxml|safe_load|html\.escape|escape_html|markupsafe|bleach\.clean|dompurify|os\.path\.commonpath)\b/;
+const INTEGRITY_VALUE_PATTERN = /\b(checksums?|hexdigest|digests?|signatures?|sha256|sha512)\b/;
+const INTEGRITY_CHECK_PATTERN = /!=|==|\b(mismatch\w*|verif\w*|invalid|reject\w*|raise)\b/;
 const CODEQL_SECURITY_NOTIFICATION_PATTERN = /\b(codeql|code scanning)\b[\s\S]{0,80}\b(alerts?|notifications?)\b|\b(alerts?|notifications?)\b[\s\S]{0,80}\b(codeql|code scanning)\b/;
 const BEFORE_AFTER_ALERT_COUNT_PATTERN = /\b(?:before|from)\b[^0-9]{0,24}(\d+)[^0-9]{0,24}\b(?:after|to)\b[^0-9]{0,24}(\d+)/;
 const TRANSITION_ALERT_COUNT_PATTERN = /\b(?:alerts?|notifications?)\b[^0-9]{0,24}(\d+)\s*(?:->|→|to)\s*(\d+)/;
@@ -997,6 +1000,13 @@ function hasVulnerabilityFixPatchEvidence(patch) {
     || VULNERABILITY_CLASS_TEXT_PATTERN.test(patch);
 }
 
+function hasProtectiveSecurityChange(rawPatch) {
+  return patchLinesWithPrefix(rawPatch, "+")
+    .map((line) => stripDiffLinePrefix(line))
+    .some((line) => PROTECTIVE_SECURITY_CONSTRUCT_PATTERN.test(line)
+      || INTEGRITY_VALUE_PATTERN.test(line) && INTEGRITY_CHECK_PATTERN.test(line));
+}
+
 function hasVulnerabilityEvidence(text, hasSecurityPath = false) {
   return hasSecurityPath && hasVulnerabilityKeywordEvidence(text);
 }
@@ -1048,20 +1058,14 @@ function deriveTitleSignals(prSignalText, prBodyText = "") {
     ? CONVENTIONAL_BUG_TYPES.has(conventionalType)
     : BUG_TITLE_TEXT_PATTERN.test(prSignalText) || (!titleEnhancement && hasBugFixIssueReference(prBodyText));
   const enhancement = !bug && titleEnhancement;
-  const conventionalFeature = !bug && CONVENTIONAL_ENHANCEMENT_TYPES.has(conventionalType);
-  const performance = CONVENTIONAL_PERFORMANCE_TYPES.has(conventionalType);
-  const breaking = CONVENTIONAL_BREAKING_MARKER_PATTERN.test(prSignalText)
-    || BREAKING_CHANGE_FOOTER_PATTERN.test(String(prBodyText || "").replace(/<!--[\s\S]*?-->/g, ""));
   const documentation = /\b(doc|docs|documentation|readme)\b/.test(prSignalText);
   const security = hasSecurityIntentText(prSignalText);
   const ui = /\b(ui|ux|frontend)\b/.test(prSignalText);
   return {
-    breaking,
     bug,
-    conventionalFeature,
+    conventionalType,
     enhancement,
     documentation,
-    performance,
     security,
     ui
   };
@@ -1263,7 +1267,9 @@ function deriveSignals(file) {
   const structuralBreakingSignal = hasBreakingChangeStructuralEvidence(normalizedPath, patch)
     && (
       ["removed", "renamed"].includes(file.status)
-      || hasPatchLineMatch(file, "-", /\b(remove|drop|delete|deprecat|disable|rename|migrate)\b/)
+      || (isPublicPackageContractPath(normalizedPath)
+        ? removesPublicName(rawPatch)
+        : hasPatchLineMatch(file, "-", /\b(remove|drop|delete|deprecat|disable|rename|migrate)\b/))
     );
   if (allowsVersionCriticalTextSignals && (hasBreakingChangeEvidence(normalizedPath, patch) || structuralBreakingSignal)) {
     signals.add("breaking-change");
@@ -1704,7 +1710,7 @@ function deriveTechnicalLabels(filesWithContext) {
       if (/wheel|pypi|python -m build/.test(text)) addTechnicalLabel(technicalLabels, "wheel");
       if (/docker|image/.test(text)) addTechnicalLabel(technicalLabels, "image");
     }
-    if (/deploy|staging|prod|production/.test(normalizedPath) || /\bstaging\b|\bproduction\b|\bprod\b|rollback|rollout|smoke/.test(patch)) {
+    if (!documentationSurface && (/deploy|staging|prod|production/.test(normalizedPath) || /\bstaging\b|\bproduction\b|\bprod\b|rollback|rollout|smoke/.test(patch))) {
       addTechnicalLabel(technicalLabels, "deploy job");
       if (/staging/.test(text)) addTechnicalLabel(technicalLabels, "staging deploy");
       if (/production|prod/.test(text)) addTechnicalLabel(technicalLabels, "prod deploy");
@@ -1903,8 +1909,8 @@ function deriveTechnicalLabels(filesWithContext) {
     if (sourceCodeSurface && hasObservabilityEvidence(normalizedPath, patch)) {
       addTechnicalLabel(technicalLabels, "observability");
       if (/telemetry|otel|opentelemetry/.test(text)) addTechnicalLabel(technicalLabels, "telemetry");
-      if (/prometheus|monitoring|metrics?|histogram|counter|gauge/.test(text)) addTechnicalLabel(technicalLabels, "monitoring");
-      if (/tracing?|trace(?: id)?|span(?: id)?|opentelemetry|otel/.test(text)) {
+      if (/\b(prometheus|monitoring|statsd|histogram|metrics?[_ ](?:registry|exporter|client|endpoint))\b|\b(?:counter|gauge)\(/.test(text)) addTechnicalLabel(technicalLabels, "monitoring");
+      if (/\b(tracing|tracer|trace[_ ]id|span[_ ]id|start_span|opentelemetry|otel)\b/.test(text)) {
         addTechnicalLabel(technicalLabels, "request tracing");
       }
     }
@@ -1915,13 +1921,16 @@ function deriveTechnicalLabels(filesWithContext) {
     }
 
     const performanceEligibleSurface = sourceCodeSurface && !matchesWorkflowFilePath(normalizedPath) && !autobotClassificationInfrastructure;
-    if (performanceEligibleSurface && hasPerformancePatchEvidence(patch)) {
+    if (performanceEligibleSurface && hasAddedLineMatch(rawPatch, THREAD_SAFETY_CONSTRUCT_PATTERN)) {
+      addTechnicalLabel(technicalLabels, "thread safety");
+    }
+    if (performanceEligibleSurface && (hasPerformancePatchEvidence(patch) || hasAddedLineMatch(rawPatch, LEAK_FIX_CONSTRUCT_PATTERN))) {
       if (hasHeapUsageEvidence(patch)) {
         addTechnicalLabel(technicalLabels, "heap usage");
         if (/peak memory/.test(patch)) addTechnicalLabel(technicalLabels, "peak memory");
         if (/buffer copy|buffer copies/.test(patch)) addTechnicalLabel(technicalLabels, "buffer copy");
       }
-      if (/\bleak\b|\bretain(?:ed|ing)?\b|\bretention\b/.test(patch)) {
+      if (/\bleak\b|\bretain(?:ed|ing)?\b|\bretention\b/.test(patch) || hasAddedLineMatch(rawPatch, LEAK_FIX_CONSTRUCT_PATTERN)) {
         addTechnicalLabel(technicalLabels, "leak risk");
         if (/\bretain(?:ed|ing)?\b|\bretention\b/.test(patch)) addTechnicalLabel(technicalLabels, "object retention");
         if (/cache leak/.test(patch)) addTechnicalLabel(technicalLabels, "cache leak");
@@ -1949,6 +1958,10 @@ function patchLinesWithPrefix(patch, prefix) {
     .filter((line) => line.startsWith(prefix) && !line.startsWith(`${prefix}${prefix}${prefix}`));
 }
 
+function hasAddedLineMatch(rawPatch, pattern) {
+  return patchLinesWithPrefix(rawPatch, "+").some((line) => pattern.test(stripDiffLinePrefix(line)));
+}
+
 function hasPatchLineMatch(file, prefix, pattern) {
   return patchLinesWithPrefix(file.patch, prefix).some((line) => pattern.test(line.toLowerCase()));
 }
@@ -1959,8 +1972,21 @@ function isDestructiveFileChange(file) {
   const patch = changedPatchBodyText(rawPatch);
   return ["removed", "renamed"].includes(file.status)
     || hasBreakingChangeEvidence(normalizedPath, patch)
-    || hasPatchLineMatch(file, "-", /\b(remove|drop|delete|deprecat|disable|rename|migrate)\b/)
-    || isPublicPackageContractPath(normalizedPath) && Number(file.deletions || 0) > Number(file.additions || 0);
+    || isPublicPackageContractPath(normalizedPath) && removesPublicName(rawPatch);
+}
+
+const PUBLIC_DEFINITION_LINE_PATTERN = /^(?:async\s+def|def|class)\s+([a-z][a-z0-9_]*)\b|^\s*export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+([a-z_$][\w$]*)/;
+
+function publicNamesInLines(lines) {
+  return new Set(lines
+    .map((line) => stripDiffLinePrefix(line).match(PUBLIC_DEFINITION_LINE_PATTERN))
+    .filter(Boolean)
+    .map((match) => match[1] || match[2]));
+}
+
+function removesPublicName(rawPatch) {
+  const added = publicNamesInLines(patchLinesWithPrefix(rawPatch, "+"));
+  return [...publicNamesInLines(patchLinesWithPrefix(rawPatch, "-"))].some((name) => !added.has(name));
 }
 
 function scoreEvidenceSampleFileForSummary(sampleFile) {
@@ -2117,22 +2143,6 @@ function ensureRequiredLabelFamily(labels, requiredLabel, preferredLabels = [], 
 
 function selectDeterministicLabels(orderedSignals, deterministicLabelSet, options = {}) {
   return selectDeterministicLabelsFromMeasurement(orderedSignals, deterministicLabelSet, options);
-}
-
-function buildLabelConfidenceMapFromRationaleLines(lines) {
-  const confidenceByLabel = {};
-  for (const line of lines || []) {
-    const match = String(line || "").match(/^([^:]+):[\s\S]*?Confidence\s+(high|medium|low)\./i);
-    if (!match) {
-      continue;
-    }
-    const label = String(match[1] || "").trim();
-    if (!label) {
-      continue;
-    }
-    confidenceByLabel[label] = String(match[2] || "").toLowerCase();
-  }
-  return confidenceByLabel;
 }
 
 function buildTechnicalChildrenIndex() {
@@ -2808,18 +2818,6 @@ function buildDeterministicEvidence(filesWithContext, context) {
     confidence: "title",
     sampleFiles: behavioralAdditionFiles
   });
-  addEvidenceItem(evidenceMap, "conventional-feature-commit", {
-    occurrenceCount: context.hasBehavioralSurfaceChange && context.titleSignals?.conventionalFeature ? 1 : 0,
-    scope: "subsystem",
-    confidence: "title",
-    sampleFiles: behavioralAdditionFiles
-  });
-  addEvidenceItem(evidenceMap, "conventional-breaking-change", {
-    occurrenceCount: context.hasBehavioralSurfaceChange && context.titleSignals?.breaking ? 1 : 0,
-    scope: "public",
-    confidence: "title",
-    sampleFiles: behavioralAdditionFiles
-  });
 
   return finalizeEvidenceItems(evidenceMap);
 }
@@ -2838,6 +2836,9 @@ function analyzePullRequestSnapshotData(snapshot) {
       patch: file.patch,
       rawPatchAvailable: Boolean(file.rawPatchAvailable)
     };
+    if (file.headContent !== undefined) {
+      fileWithContext.headContent = file.headContent;
+    }
     fileWithContext.score = scoreFile(fileWithContext);
     fileWithContext.categories = classifyFile(fileWithContext);
     fileWithContext.signals = deriveSignals(fileWithContext);
@@ -2883,7 +2884,14 @@ function analyzePullRequestSnapshotData(snapshot) {
   if (structuralPublicBreakingSignal) {
     signalSet.add("breaking-change");
   }
-  const hasDirectSecurityEvidence = filesWithContext.some((file) => {
+  const protectiveSecurityChange = filesWithContext.some((file) => {
+    const normalizedPath = String(file.filename || "").toLowerCase();
+    return isSourceCodePath(normalizedPath)
+      && !isAutobotClassificationInfrastructure(normalizedPath)
+      && !isDependencyLockfilePath(normalizedPath)
+      && hasProtectiveSecurityChange(String(file.patch || "").toLowerCase());
+  });
+  const hasDirectSecurityEvidence = protectiveSecurityChange || filesWithContext.some((file) => {
     const normalizedPath = String(file.filename || "").toLowerCase();
     if (
       isDocumentationPath(normalizedPath)
@@ -3223,8 +3231,6 @@ function analyzePullRequestSnapshotData(snapshot) {
     hardSignals: scoring.semver.hardSignals,
     labelScores: technicalLabelScores
   };
-  let labelRationaleLines = buildLabelRationaleLines(deterministicLabels, rationaleContext);
-  let confidenceByLabel = buildLabelConfidenceMapFromRationaleLines(labelRationaleLines);
   const computeEvidenceStrength = (label) => {
     const normalizedLabel = AutobotLabelRegistry.normalizeLabelName(label);
     const scoreEntry = technicalLabelScores[normalizedLabel];
@@ -3240,7 +3246,7 @@ function analyzePullRequestSnapshotData(snapshot) {
     const hardSignalCorrelation = directEvidence.some((item) => scoring.semver.hardSignals.includes(item.ruleId)) ? 0.3 : 0;
     return scorerStrength * 0.4 + evidenceStrength * 0.3 + supportStrength * 0.2 + maintenanceStrength + hardSignalCorrelation;
   };
-  const canRetainLowConfidenceLabel = (label) => {
+  const canRetainWeaklySupportedLabel = (label) => {
     const normalizedLabel = AutobotLabelRegistry.normalizeLabelName(label);
     if (
       AutobotLabelRegistry.matchesExpectedLabel(normalizedLabel, "test")
@@ -3266,37 +3272,15 @@ function analyzePullRequestSnapshotData(snapshot) {
     }
     return scoring.semver.hardSignals.length > 0 && AutobotLabelRegistry.isReleaseRelevantLabel(normalizedLabel);
   };
-  deterministicLabels = deterministicLabels.filter((label) => {
-    const confidence = confidenceByLabel[label];
-    if (!confidence) {
-      return false;
-    }
-    if (confidence !== LOW_CONFIDENCE_LABEL) {
-      return true;
-    }
-    return canRetainLowConfidenceLabel(label);
-  });
+  const keepsLabel = (label) => !isWeaklySupportedLabel(label, rationaleContext) || canRetainWeaklySupportedLabel(label);
+  deterministicLabels = deterministicLabels.filter(keepsLabel);
   if (deterministicLabels.length === 0) {
-    const nonLowFallbackCandidates = mergeRankedLabels(
+    const supportedFallbackCandidates = mergeRankedLabels(
       scorerEmittedLabels,
       mergeRankedLabels(scorerRetainedLabels, rawDeterministicLabels, prCollectionLimit),
       prCollectionLimit
-    ).filter((label) => {
-      const confidenceMap = buildLabelConfidenceMapFromRationaleLines(
-        buildLabelRationaleLines([label], rationaleContext)
-      );
-      const confidence = confidenceMap[label];
-      if (!confidence) {
-        return false;
-      }
-      if (confidence !== LOW_CONFIDENCE_LABEL) {
-        return true;
-      }
-      return canRetainLowConfidenceLabel(label);
-    });
-    deterministicLabels = applyPrLabelPolicy(nonLowFallbackCandidates, prLabelPolicy);
-    labelRationaleLines = buildLabelRationaleLines(deterministicLabels, rationaleContext);
-    confidenceByLabel = buildLabelConfidenceMapFromRationaleLines(labelRationaleLines);
+    ).filter(keepsLabel);
+    deterministicLabels = applyPrLabelPolicy(supportedFallbackCandidates, prLabelPolicy);
   }
 
   const prePrecisionDeterministicLabels = [...deterministicLabels];
@@ -3362,7 +3346,9 @@ function analyzePullRequestSnapshotData(snapshot) {
     deterministicLabels = ensureRequiredLabelFamily(
       deterministicLabels,
       "security",
-      ["auth", "token", "vulnerability", "hardening", "compliance", "policy"],
+      protectiveSecurityChange
+        ? ["hardening", "vulnerability", "auth", "token", "compliance", "policy"]
+        : ["auth", "token", "vulnerability", "hardening", "compliance", "policy"],
       prLabelPolicy
     );
   }
@@ -3654,33 +3640,41 @@ function analyzePullRequestSnapshotData(snapshot) {
   }
 
   if (
-    titleSignals.breaking
-    && hasBehavioralSurfaceChange
+    hasDirectSecurityEvidence
     && !autobotInfrastructureOnly
-    && !deterministicLabels.includes("breaking-change")
+    && !deterministicLabels.some((label) => AutobotLabelRegistry.matchesExpectedLabel(label, "security"))
   ) {
-    deterministicLabels = sortLabels([...deterministicLabels, "breaking-change"]);
+    deterministicLabels = sortLabels([...deterministicLabels, "security"]);
     rationaleContext.fallbackReasons = {
       ...rationaleContext.fallbackReasons,
-      "breaking-change": "the title or body marks a breaking change that changes source files"
+      security: protectiveSecurityChange
+        ? "the source adds a protective check such as a constant-time comparison, an integrity check or input escaping"
+        : "the diff carries direct security evidence"
     };
   }
 
-  if (
-    (titleSignals.bug || titleSignals.enhancement || titleSignals.performance)
-    && hasBehavioralSurfaceChange
-    && !maintenanceOnlyEligible
-    && !autobotInfrastructureOnly
-    && !AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels)
-  ) {
-    const fallbackLabel = titleSignals.performance ? "performance" : BEHAVIOR_CHANGE_FALLBACK_LABEL;
+  const releaseImpact = resolveReleaseImpact({
+    title: snapshot.pullRequest.title,
+    body: snapshot.pullRequest.body,
+    headRef: snapshot.pullRequest.headRef,
+    commits: snapshot.commits,
+    files: filesWithContext,
+    titleSignals,
+    changesTests: Boolean(categoryCounts.get("test")),
+    shipsBehavior: hasBehavioralSurfaceChange && !maintenanceOnlyEligible && !autobotInfrastructureOnly,
+    structuralReleaseRelevant: AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels),
+    structuralSemver: scoring.semver
+  });
+  const fallbackLabel = releaseImpact.label && !deterministicLabels.includes(releaseImpact.label)
+    ? releaseImpact.label
+    : releaseImpact.kindDecision !== "none" && !AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels)
+      ? BEHAVIOR_CHANGE_FALLBACK_LABEL
+      : "";
+  if (fallbackLabel) {
     deterministicLabels = sortLabels([...deterministicLabels, fallbackLabel]);
-    const changeKind = titleSignals.bug
-      ? "bug fix"
-      : titleSignals.performance ? "performance change" : "feature";
     rationaleContext.fallbackReasons = {
       ...rationaleContext.fallbackReasons,
-      [fallbackLabel]: `the title marks a ${changeKind} that changes source files, and no more specific release label matched them`
+      [fallbackLabel]: `the release impact is ${releaseImpact.kind}: ${releaseImpact.decidingVotes.map((vote) => vote.detail).join("; ")}`
     };
   }
 
@@ -3695,11 +3689,11 @@ function analyzePullRequestSnapshotData(snapshot) {
   const releaseRelevant = !autobotInfrastructureOnly
     && !devOnlyDependencyMaintenance
     && AutobotLabelRegistry.hasReleaseRelevantLabel(deterministicLabels);
-  const semver = devOnlyDependencyMaintenance || (!releaseRelevant && !scoring.semver.hardRule)
-    ? { ...scoring.semver, decision: "none" }
-    : scoring.semver;
+  const semver = devOnlyDependencyMaintenance || (!releaseRelevant && !releaseImpact.semver.hardRule)
+    ? { ...releaseImpact.semver, decision: "none" }
+    : releaseImpact.semver;
 
-  labelRationaleLines = buildLabelRationaleLines(deterministicLabels, rationaleContext);
+  const labelRationaleLines = buildLabelRationaleLines(deterministicLabels, rationaleContext);
 
   const deterministicSummary = buildPrDeterministicSummary({
     behavioralSurfaceAdditions,
@@ -3713,8 +3707,10 @@ function analyzePullRequestSnapshotData(snapshot) {
     maintenanceCategoriesList,
     maintenanceOnlyEligible,
     publicContractMoves,
+    releaseImpactLines: describeReleaseImpact(releaseImpact),
+    weaklySupportedLabels: deterministicLabels.filter((label) => isWeaklySupportedLabel(label, rationaleContext)),
     releaseRelevant,
-    scoring,
+    scoring: { ...scoring, semver },
     structuralPublicBreakingSignal,
     topDirectories,
     topEvidenceItems,

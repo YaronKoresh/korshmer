@@ -140,14 +140,19 @@ function collectChangedTestFilesForLabel(label, filesWithContext) {
     .filter((filename) => isTestPath(filename.toLowerCase()));
 }
 
-function deriveLabelConfidence(scoreEntry, directEvidence, supportFiles) {
-  if (scoreEntry?.primary || scoreEntry?.emitted) {
-    return "high";
-  }
-  if (scoreEntry?.retained || directEvidence.length > 0 || supportFiles.length > 1) {
-    return "medium";
-  }
-  return supportFiles.length > 0 ? "medium" : "low";
+function hasLabelSupport(scoreEntry, directEvidence, supportFiles) {
+  return Boolean(scoreEntry?.primary || scoreEntry?.emitted || scoreEntry?.retained)
+    || directEvidence.length > 0
+    || supportFiles.length > 0;
+}
+
+function isWeaklySupportedLabel(label, context) {
+  const supportFiles = collectSupportFilesForLabel(label, context.filesWithContext);
+  return !hasLabelSupport(
+    context.labelScores[label],
+    collectDirectEvidenceForLabel(label, context.evidenceItems),
+    supportFiles.length > 0 ? supportFiles : collectChangedTestFilesForLabel(label, context.filesWithContext)
+  );
 }
 
 const GENERIC_LABEL_MIN_DESCENDANTS = 20;
@@ -175,22 +180,6 @@ function isGenericTechnicalLabel(label) {
     return false;
   }
   return getTechnicalDescendantCount(label) >= GENERIC_LABEL_MIN_DESCENDANTS;
-}
-
-function buildLabelConfidenceMap(labelRationaleLines) {
-  const confidenceByLabel = {};
-  for (const line of labelRationaleLines || []) {
-    const match = String(line || "").match(/^([^:]+):[\s\S]*?Confidence\s+(high|medium|low)\./i);
-    if (!match) {
-      continue;
-    }
-    const label = String(match[1] || "").trim();
-    if (!label) {
-      continue;
-    }
-    confidenceByLabel[label] = String(match[2] || "").toLowerCase();
-  }
-  return confidenceByLabel;
 }
 
 function buildLabelRationaleLineMap(labelRationaleLines) {
@@ -242,7 +231,6 @@ function buildLabelRationale(label, context) {
   const directEvidence = collectDirectEvidenceForLabel(label, context.evidenceItems);
   const supportFiles = collectSupportFilesForLabel(label, context.filesWithContext);
   const changedTestFiles = supportFiles.length > 0 ? [] : collectChangedTestFilesForLabel(label, context.filesWithContext);
-  const confidence = deriveLabelConfidence(scoreEntry, directEvidence, supportFiles.length > 0 ? supportFiles : changedTestFiles);
   const reasonParts = [];
   const directEvidenceFiles = [...new Set(directEvidence.flatMap((item) => item.sampleFiles || []))].slice(0, 3);
   if (scoreEntry?.primary || scoreEntry?.emitted || scoreEntry?.retained) {
@@ -299,7 +287,8 @@ function buildLabelRationale(label, context) {
       reasonParts.push("insufficient direct evidence for this label in non-infrastructure files");
     }
   }
-  return `${label}: ${metadata.description || "Technical label."} Confidence ${confidence}. ${reasonParts.join("; ")}.`;
+  const description = String(metadata.description || "Technical label.").replace(/\.?\s*$/, ".");
+  return `${label}: ${description} ${reasonParts.join("; ")}.`;
 }
 
 function buildLabelRationaleLines(labels, context) {
@@ -307,7 +296,7 @@ function buildLabelRationaleLines(labels, context) {
 }
 
 function buildPrDeterministicSummary(context) {
-  const confidenceByLabel = buildLabelConfidenceMap(context.labelRationaleLines);
+  const weaklySupportedLabels = new Set(context.weaklySupportedLabels || []);
   const rationaleByLabel = buildLabelRationaleLineMap(context.labelRationaleLines);
   const allDeterministicLabels = Array.isArray(context.deterministicLabels) ? context.deterministicLabels : [];
 
@@ -315,7 +304,7 @@ function buildPrDeterministicSummary(context) {
     if (isGenericTechnicalLabel(label)) {
       return false;
     }
-    return confidenceByLabel[label] !== "low";
+    return !weaklySupportedLabels.has(label);
   });
   if (summaryLabels.length === 0) {
     summaryLabels = allDeterministicLabels.filter((label) => !isGenericTechnicalLabel(label));
@@ -344,6 +333,7 @@ function buildPrDeterministicSummary(context) {
       ].filter(Boolean);
   const decisionBullets = [
     `Semver: ${context.releaseRelevant ? context.scoring.semver.decision : "n/a"}.`,
+    ...(context.releaseRelevant ? context.releaseImpactLines || [] : []),
     `Final emitted technical labels: ${allDeterministicLabels.join(", ") || "(none)"}.`,
     context.scoring.semver.hardSignals.length > 0
       ? `Hard release signals: ${context.scoring.semver.hardSignals.join(", ")}.`
@@ -417,5 +407,6 @@ module.exports = {
   collectDirectEvidenceForLabel,
   collectSupportFilesForLabel,
   describeEvidenceItem,
-  formatBulletLines
+  formatBulletLines,
+  isWeaklySupportedLabel
 };

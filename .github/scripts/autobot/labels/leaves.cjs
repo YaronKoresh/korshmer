@@ -20,6 +20,7 @@ const EXTRA_LEAVES = Object.freeze([
   Object.freeze({ label: "read replica", parent: "query", family: "data", releaseRelevant: true, description: "Read replica usage changes.", legacyMatches: ["database"] }),
   Object.freeze({ label: "retry budget", parent: "process", family: "runtime", releaseRelevant: true, description: "Retry budget changes." }),
   Object.freeze({ label: "worker pool", parent: "process", family: "runtime", releaseRelevant: true, description: "Worker pool behavior changes." }),
+  Object.freeze({ label: "thread safety", parent: "process", family: "runtime", releaseRelevant: true, description: "Locking and shared-state changes between threads or tasks." }),
   Object.freeze({ label: "subprocess io", parent: "process", family: "runtime", releaseRelevant: true, description: "Subprocess IO behavior changes." }),
   Object.freeze({ label: "daemon mode", parent: "process", family: "runtime", releaseRelevant: true, description: "Daemon mode behavior changes." }),
   Object.freeze({ label: "path normalization", parent: "filesystem", family: "runtime", releaseRelevant: true, description: "Path normalization changes." }),

@@ -22,21 +22,21 @@ const COMMITTED_REGRESSION_FIXTURES = Object.freeze([
   {
     fixtureId: "autobot-patch-unavailable-feature",
     kind: "patch-unavailable-feature",
-    materialization: { count: 13, seed: 20260413 },
+    materialization: { count: 29, seed: 20260413 },
     reason: "Preserves additive classification when GitHub omits raw patches.",
     suiteKey: "AUTOBOT"
   },
   {
     fixtureId: "autobot-adversarial-empty-payload",
     kind: "adversarial-empty-payload",
-    materialization: { count: 17, seed: 20260413 },
+    materialization: { count: 29, seed: 20260413 },
     reason: "Guards mandatory maintenance-label fallback when GitHub omits patch payloads.",
     suiteKey: "AUTOBOT"
   },
   {
     fixtureId: "autobot-pipeline-label-race-recovery",
     kind: "label-race-recovery",
-    materialization: { count: 13, seed: 20260413 },
+    materialization: { count: 29, seed: 20260413 },
     reason: "Replays the transient label provisioning race against the live pipeline path.",
     suiteKey: "AUTOBOT_PIPELINE"
   },
