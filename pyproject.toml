@@ -77,7 +77,7 @@ opencl = [
     "pyopencl>=2024.1"
 ]
 build = [
-    "nuitka<=4.3.5",
+    "nuitka==4.3.5",
     "pyinstaller>=6.0",
     "briefcase>=0.3.0",
     "build"
