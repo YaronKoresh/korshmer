@@ -106,6 +106,10 @@ PHRASE_CHOICES = {
 }
 PHRASE_BARS = 4
 FIXED_ROLES = ("hook", "lift", "inv", "skeleton", "aug")
+TAIL_TURNS = ("invert", "step")
+TAIL_TURN_COUNT = 1
+TAIL_TRIES = 24
+TAIL_STEPS = (-2, -1, 1, 2)
 
 
 @dataclass(frozen=True)
@@ -313,6 +317,46 @@ def make_hook(rng, style="Pop", mood="Uplifting"):
         for (onset, length), step in zip(rhythm, steps, strict=True)
     )
     return Hook(notes, spec.gate, spec.register)
+
+
+def _tail_start(notes):
+    start = next(
+        (i for i, note in enumerate(notes) if note[0] >= HEAD_END),
+        len(notes) // 2,
+    )
+    return max(1, min(start, len(notes) - 1))
+
+
+def _turn_tail(rng, notes, start, turn):
+    if turn == "invert":
+        pivot = notes[start][2]
+        for note in notes[start:]:
+            note[2] = max(LOW_STEP, min(HIGH_STEP, 2 * pivot - note[2]))
+    else:
+        move = rng.choice(TAIL_STEPS)
+        for note in notes[start:]:
+            note[2] = max(LOW_STEP, min(HIGH_STEP, note[2] + move))
+
+
+def vary_hook(rng, hook, style="Pop"):
+    spec = genre_feel.feel_for(style).hook
+    original = [list(note) for note in hook.notes]
+    if len(original) < 2:
+        return hook
+    start = _tail_start(original)
+    for _ in range(TAIL_TRIES):
+        notes = [list(note) for note in original]
+        for turn in rng.sample(TAIL_TURNS, TAIL_TURN_COUNT):
+            _turn_tail(rng, notes, start, turn)
+        for note in notes[start:]:
+            if strong(note[0], note[1]):
+                note[2] = min(CHORD_STEPS, key=lambda c: abs(c - note[2]))
+        steps = [note[2] for note in notes]
+        if notes != original and sticks(steps, spec):
+            return Hook(
+                tuple(tuple(note) for note in notes), hook.gate, hook.register
+            )
+    return hook
 
 
 def _skeleton(notes):

@@ -73,7 +73,7 @@ def test_phonk_is_a_complete_style():
                 "A", "Minor", bpm=140.0, minutes=1.0, style="Phonk", seed=seed
             )
         )
-        assert made.style == "Phonk"
+        assert genres.primary(made.style) == "Phonk"
         roles = _role_notes(made)
         assert roles["drums"] and roles["bass"] and roles["melody"]
         drummed_bars = sum(

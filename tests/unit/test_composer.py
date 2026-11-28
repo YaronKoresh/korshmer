@@ -545,7 +545,7 @@ def test_a_full_texture_collapses_into_a_handful_of_tracks():
 
 def test_tracks_keep_every_generated_note_within_the_same_start_window():
     absorbed = 0
-    for seed in range(1, 25):
+    for seed in range(1, 61):
         c = compose(_opts(texture_batches=2, minutes=2, seed=seed))
         kept = {}
         for track in c.tracks:
@@ -583,3 +583,27 @@ def test_the_generated_parts_are_not_touched_by_the_layout():
     assert any(i.name.startswith("Schema ") for i in c.instruments)
     assert not any(t.name.startswith("Schema ") for t in c.tracks)
     assert all(t.notes for t in c.tracks)
+
+
+def test_each_act_tells_its_own_turn_of_the_one_hook(monkeypatch):
+    from korshmer.midi_generation import composer, engine
+
+    told = []
+    real = engine.generate_melody
+
+    def spy(ctx, *args, **kwargs):
+        told.append(kwargs.get("hook"))
+        return real(ctx, *args, **kwargs)
+
+    monkeypatch.setattr(engine, "generate_melody", spy)
+    c = compose(_opts(minutes=5, seed=4, style="Pop"))
+    assert len({section.act for section in c.sections}) >= 3
+    hooks_told = {hook for hook in told if hook is not None}
+    assert c.hook in hooks_told
+    assert len(hooks_told) >= 2
+    rhythm = [note[:2] for note in c.hook.notes]
+    for hook in hooks_told:
+        assert [note[:2] for note in hook.notes] == rhythm
+    assert composer.compose(_opts(minutes=5, seed=4, style="Pop")).hook == (
+        c.hook
+    )

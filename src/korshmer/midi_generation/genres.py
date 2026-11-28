@@ -3,6 +3,7 @@ from functools import cache
 
 DEFAULT_GENRE = "Pop"
 BLEND_JOIN = " + "
+FLAVOR_JOIN = "/"
 
 PITCHED_ROLES = (
     "melody",
@@ -59,13 +60,30 @@ GENRES = {
     "Pop": _p(
         "Pop",
         {
-            "melody": (0, 4, 11, 27, 25, 5, 73, 22),
-            "chords": (0, 4, 25, 27, 5, 24),
-            "bass": (33, 34, 35, 38),
-            "pad": (89, 88, 50, 49, 48, 52),
-            "arp": (46, 12, 24, 8, 108),
-            "pluck": (24, 45, 12, 46, 108),
-            "counter": (40, 73, 41, 71, 68, 56),
+            "melody": (
+                0,
+                4,
+                11,
+                27,
+                25,
+                5,
+                73,
+                22,
+                1,
+                56,
+                65,
+                71,
+                79,
+                82,
+                85,
+                78,
+            ),
+            "chords": (0, 4, 25, 27, 5, 24, 1, 2, 6, 16, 46),
+            "bass": (33, 34, 35, 38, 32, 36, 39),
+            "pad": (89, 88, 50, 49, 48, 52, 53, 91, 92, 94),
+            "arp": (46, 12, 24, 8, 108, 10, 13, 45, 11),
+            "pluck": (24, 45, 12, 46, 108, 25, 105, 107, 10, 114),
+            "counter": (40, 73, 41, 71, 68, 56, 42, 60, 69, 74),
         },
         KIT_STANDARD,
         {
@@ -93,13 +111,13 @@ GENRES = {
     "Rock": _p(
         "Rock",
         {
-            "melody": (29, 30, 27, 28, 18, 25),
-            "chords": (29, 30, 27, 25, 18),
-            "bass": (34, 33, 35),
-            "pad": (18, 16, 17, 48, 49, 61),
-            "arp": (27, 25, 28, 24),
-            "pluck": (28, 29, 25, 27),
-            "counter": (18, 16, 40, 61, 42),
+            "melody": (29, 30, 27, 28, 18, 25, 31, 26, 22, 56, 65, 64),
+            "chords": (29, 30, 27, 25, 18, 16, 17, 19, 24, 3, 2),
+            "bass": (34, 33, 35, 32, 36, 37),
+            "pad": (18, 16, 17, 48, 49, 61, 50, 62, 20),
+            "arp": (27, 25, 28, 24, 26, 31, 3),
+            "pluck": (28, 29, 25, 27, 24, 105, 31),
+            "counter": (18, 16, 40, 61, 42, 57, 60, 66, 22, 109),
         },
         KIT_POWER,
         {
@@ -110,6 +128,7 @@ GENRES = {
             "Violin": 40,
             "Cello": 42,
             "Brass Section": 61,
+            "Applause": 126,
         },
         {
             "Steel Guitar": 25,
@@ -119,19 +138,38 @@ GENRES = {
             "Acoustic Piano": 0,
             "Honky-Tonk Piano": 3,
             "Clavinet": 7,
+            "Guitar Fret Noise": 120,
         },
         (KIT_STANDARD, KIT_ROOM),
     ),
     "Hip-Hop": _p(
         "Hip-Hop",
         {
-            "melody": (4, 5, 11, 8, 14, 9, 73, 75, 0),
-            "chords": (4, 5, 2, 0, 11, 48),
-            "bass": (38, 39),
-            "pad": (89, 94, 91, 99, 92, 52),
-            "arp": (8, 9, 10, 108, 11),
-            "pluck": (9, 10, 112, 108, 45),
-            "counter": (53, 54, 41, 73, 52),
+            "melody": (
+                4,
+                5,
+                11,
+                8,
+                14,
+                9,
+                73,
+                75,
+                0,
+                72,
+                76,
+                79,
+                85,
+                12,
+                10,
+                104,
+                111,
+            ),
+            "chords": (4, 5, 2, 0, 11, 48, 7, 16, 89, 90),
+            "bass": (38, 39, 33, 34, 35, 36),
+            "pad": (89, 94, 91, 99, 92, 52, 88, 95, 53, 50),
+            "arp": (8, 9, 10, 108, 11, 12, 13, 14, 98),
+            "pluck": (9, 10, 112, 108, 45, 46, 107, 24, 106),
+            "counter": (53, 54, 41, 73, 52, 40, 42, 66, 71, 75),
         },
         KIT_808,
         {
@@ -153,19 +191,20 @@ GENRES = {
             "Kalimba": 108,
             "Glockenspiel": 9,
             "Clavinet": 7,
+            "Telephone": 124,
         },
         (KIT_ELECTRONIC, KIT_ROOM),
     ),
     "Lo-Fi": _p(
         "Lo-Fi",
         {
-            "melody": (4, 5, 11, 24, 0, 8, 73, 10),
-            "chords": (4, 2, 0, 24, 5, 11),
-            "bass": (35, 33, 32),
-            "pad": (88, 89, 49, 52, 92),
-            "arp": (46, 10, 24, 8, 108),
-            "pluck": (24, 10, 11, 46, 108),
-            "counter": (11, 71, 53, 73, 65),
+            "melody": (4, 5, 11, 24, 0, 8, 73, 10, 75, 26, 108, 1, 79, 71, 77),
+            "chords": (4, 2, 0, 24, 5, 11, 3, 26, 16, 7),
+            "bass": (35, 33, 32, 34, 43, 36),
+            "pad": (88, 89, 49, 52, 92, 53, 48, 94, 95, 91),
+            "arp": (46, 10, 24, 8, 108, 11, 12, 13, 107),
+            "pluck": (24, 10, 11, 46, 108, 25, 45, 105, 107, 112, 15),
+            "counter": (11, 71, 53, 73, 65, 66, 69, 74, 41, 42),
         },
         KIT_ROOM,
         {
@@ -175,6 +214,8 @@ GENRES = {
             "Voice Oohs": 53,
             "Viola": 41,
             "Cello": 42,
+            "Seashore": 122,
+            "Bird Tweet": 123,
         },
         {
             "Electric Piano": 4,
@@ -191,13 +232,29 @@ GENRES = {
     "Jazz": _p(
         "Jazz",
         {
-            "melody": (65, 66, 56, 59, 11, 26, 71),
-            "chords": (0, 26, 4, 11, 5),
-            "bass": (32, 33, 35),
-            "pad": (49, 89, 52, 48, 60),
-            "arp": (11, 26, 0, 46),
-            "pluck": (26, 28, 11, 45),
-            "counter": (71, 73, 66, 59, 56, 65),
+            "melody": (
+                65,
+                66,
+                56,
+                59,
+                11,
+                26,
+                71,
+                64,
+                67,
+                68,
+                57,
+                60,
+                73,
+                0,
+                22,
+            ),
+            "chords": (0, 26, 4, 11, 5, 1, 2, 16, 17, 7),
+            "bass": (32, 33, 35, 43, 34),
+            "pad": (49, 89, 52, 48, 60, 61, 53, 44, 50, 62),
+            "arp": (11, 26, 0, 46, 12, 8, 13, 1),
+            "pluck": (26, 28, 11, 45, 24, 46, 12, 105),
+            "counter": (71, 73, 66, 59, 56, 65, 57, 58, 64, 69, 70, 110),
         },
         KIT_JAZZ,
         {
@@ -224,13 +281,13 @@ GENRES = {
     "EDM": _p(
         "EDM",
         {
-            "melody": (81, 80, 87, 62, 90, 84),
-            "chords": (62, 81, 90, 86, 50, 88),
-            "bass": (38, 39),
-            "pad": (89, 95, 91, 94, 50, 88),
-            "arp": (98, 100, 9, 112, 84),
-            "pluck": (80, 83, 98, 45),
-            "counter": (81, 54, 84, 85),
+            "melody": (81, 80, 87, 62, 90, 84, 82, 83, 85, 86, 63, 98),
+            "chords": (62, 81, 90, 86, 50, 88, 63, 95, 51, 55),
+            "bass": (38, 39, 34, 36, 81, 33),
+            "pad": (89, 95, 91, 94, 50, 88, 92, 93, 96, 97, 99, 101),
+            "arp": (98, 100, 9, 112, 84, 80, 81, 83, 13, 103),
+            "pluck": (80, 83, 98, 45, 84, 13, 112, 108),
+            "counter": (81, 54, 84, 85, 82, 86, 91, 102),
         },
         KIT_DANCE,
         {
@@ -242,6 +299,8 @@ GENRES = {
             "Saw Lead": 81,
             "Polysynth": 90,
             "Choir Aahs": 52,
+            "Reverse Cymbal": 119,
+            "Helicopter": 125,
         },
         {
             "Square Lead": 80,
@@ -259,12 +318,12 @@ GENRES = {
         "Phonk",
         {
             "melody": (113,),
-            "chords": (19, 52, 48, 0, 49, 20),
+            "chords": (19, 52, 48, 0, 49, 20, 16, 17, 21, 23, 44, 42),
             "bass": (87,),
-            "pad": (91, 53, 94, 92, 95, 52),
-            "arp": (115, 113, 117, 47),
-            "pluck": (115, 113, 117, 45),
-            "counter": (53, 54, 52, 85, 91),
+            "pad": (91, 53, 94, 92, 95, 52, 96, 97, 102, 103, 89),
+            "arp": (115, 113, 117, 47, 118, 116),
+            "pluck": (115, 113, 117, 45, 116, 118, 28, 106, 107),
+            "counter": (53, 54, 52, 85, 91, 102),
         },
         KIT_808,
         {
@@ -275,6 +334,7 @@ GENRES = {
             "Synth Voice": 54,
             "Church Organ": 19,
             "Slow Strings": 49,
+            "Breath Noise": 121,
         },
         {
             "Agogo": 113,
@@ -284,10 +344,40 @@ GENRES = {
             "Timpani": 47,
             "Pizzicato Strings": 45,
             "Muted Guitar": 28,
+            "Gunshot": 127,
         },
         (KIT_ELECTRONIC, KIT_DANCE),
     ),
 }
+
+
+GENRES["Phonk/Memphis"] = _p(
+    "Phonk/Memphis",
+    {
+        **GENRES["Phonk"].programs,
+        "melody": (0, 1, 19, 14, 20, 21),
+        "chords": (48, 49, 52, 19, 42, 44, 20),
+        "arp": (113, 115, 117),
+        "pluck": (113, 117, 45),
+    },
+    KIT_808,
+    GENRES["Phonk"].texture_long,
+    GENRES["Phonk"].texture_short,
+    kits=GENRES["Phonk"].kits,
+)
+GENRES["Phonk/House"] = _p(
+    "Phonk/House",
+    {
+        **GENRES["Phonk"].programs,
+        "chords": (90, 89, 50, 19),
+        "pad": (89, 91, 95, 50),
+    },
+    KIT_808,
+    GENRES["Phonk"].texture_long,
+    GENRES["Phonk"].texture_short,
+    kits=(KIT_DANCE, KIT_ELECTRONIC),
+)
+FLAVORS = {"Phonk": ("Phonk", "Phonk", "Phonk/Memphis", "Phonk/House")}
 
 
 def parts(style):
@@ -295,7 +385,15 @@ def parts(style):
 
 
 def primary(style):
-    return parts(style)[0]
+    return parts(style)[0].split(FLAVOR_JOIN)[0]
+
+
+def flavored(style, rng):
+    lead, *others = parts(style)
+    choices = FLAVORS.get(lead)
+    if not choices:
+        return style
+    return blend_name((rng.choice(choices), *others))
 
 
 def blend_name(styles):

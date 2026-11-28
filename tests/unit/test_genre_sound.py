@@ -87,9 +87,9 @@ def test_each_profile_is_complete_and_valid(style):
 
 @pytest.mark.parametrize("style", SONG_STYLES)
 def test_role_instruments_come_from_the_genre_pool(style):
-    profile = profile_for(style)
     for seed in range(4):
         c = _song(style, seed, texture_batches=0)
+        profile = profile_for(c.style)
         for inst in c.instruments:
             if inst.is_drum:
                 assert inst.program in (profile.kit, *profile.kits)

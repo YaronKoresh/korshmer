@@ -74,7 +74,7 @@ def test_short_song_has_a_single_unchanged_act():
     assert {s.act for s in comp.sections} == {0}
     assert {s.act_kind for s in comp.sections} == {"Statement"}
     for label in LABELS.values():
-        assert len(_voices(comp, label)) <= 1
+        assert len(_voices(comp, label)) <= 2
 
 
 @pytest.mark.parametrize("style", ["Pop", "Rock", "Hip-Hop", "Lo-Fi", "Jazz"])

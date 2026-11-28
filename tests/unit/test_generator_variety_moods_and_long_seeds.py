@@ -450,7 +450,10 @@ def test_each_mood_has_the_character_its_name_promises():
     assert energetic["chord loudness"] > max(
         others("Energetic", "chord loudness")
     )
-    assert dreamy["lead leaps"] >= 0.05 + max(others("Dreamy", "lead leaps"))
+    assert dreamy["lead note length"] >= 1.1 * max(
+        others("Dreamy", "lead note length")
+    )
+    assert dreamy["lead leaps"] <= 0.05 + max(others("Dreamy", "lead leaps"))
     assert dreamy["lead loudness"] < min(others("Dreamy", "lead loudness"))
     assert dreamy["lead pitch"] >= 5 + melancholic["lead pitch"]
     assert melancholic["lead pitch"] <= min(others("Melancholic", "lead pitch"))
