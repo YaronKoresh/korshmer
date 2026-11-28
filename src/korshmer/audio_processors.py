@@ -1,3 +1,4 @@
+import contextlib
 import copy
 import logging
 import os
@@ -248,7 +249,7 @@ def process_stereo_widen(path, width=1.5):
 
 
 MAX_SIMULTANEOUS_NOTES = 128
-REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.25)
+REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.12)
 CHORUS_SETTINGS = (3, 0.3, 0.3, 8.0, 0)
 RENDER_TARGET_RMS_DB = -16.0
 CC_PAN = 10
@@ -257,6 +258,10 @@ CC_PAN_RIGHT = 127
 DRUM_CHANNEL = 9
 CC_REVERB_SEND = 91
 CC_CHORUS_SEND = 93
+CC_MODULATION = 1
+CC_VOLUME = 7
+CC_EXPRESSION = 11
+ENSEMBLE_BEND_RANGE = 2
 VOICE_PROGRAMS = frozenset({52, 53, 54, 85})
 
 
@@ -366,6 +371,8 @@ def level_render(audio):
 PITCH_BEND_CENTER = 8192
 PITCH_BEND_EVENT = "pitchbend"
 PAN_EVENT = "pan"
+EXPRESSION_EVENT = "expression"
+MODULATION_EVENT = "modulation"
 
 
 def _bends_own_their_channel(instrument, batch):
@@ -445,11 +452,60 @@ def _sound_name(instrument):
     return instrument.name or f"program {instrument.program}"
 
 
-def _render_with_guitar_amps(instruments, render_batch, sr):
-    from korshmer.audio_processing import guitar_amp
+FLUSH_BLOCK = 0.1
+FLUSH_BLOCKS = 60
+FLUSH_SILENCE = 1e-6
+
+
+class _SharedSynth:
+    def __init__(self, fluid_dir, sample_rate, sf3_path):
+        self.fluid_dir = fluid_dir
+        self.sample_rate = sample_rate
+        self.sf3_path = sf3_path
+        self.fs = None
+        self.sfid = -1
+
+    @contextlib.contextmanager
+    def pass_synth(self):
+        if self.fs is not None and not hasattr(self.fs, "reset"):
+            self.close()
+        if self.fs is None:
+            synth = FluidSynth(
+                lib_dir=self.fluid_dir, samplerate=self.sample_rate
+            )
+            self.fs = synth.__enter__()
+            self.sfid = self.fs.sf_load(self.sf3_path)
+        else:
+            self.fs.reset()
+            self._flush()
+        yield self.fs
+
+    def _flush(self):
+        block = max(1, int(self.sample_rate * FLUSH_BLOCK))
+        for _ in range(FLUSH_BLOCKS):
+            left, right = self.fs.get_samples(block)
+            loudest = max(
+                float(np.max(np.abs(left), initial=0.0)),
+                float(np.max(np.abs(right), initial=0.0)),
+            )
+            if loudest <= FLUSH_SILENCE:
+                return
+
+    def close(self):
+        if self.fs is not None:
+            fs, self.fs = self.fs, None
+            fs.__exit__(None, None, None)
+
+
+def _sits_centre(instrument):
+    return all(int(c.value) == CC_PAN_CENTRE for c in pan_moves(instrument))
+
+
+def _render_with_guitar_amps(instruments, render_batch, sr, bpm=120.0):
+    from korshmer.audio_processing import guitar_amp, render_polish
 
     own_pass = {}
-    rest = []
+    rest = {}
     drum_side = None
     for inst in instruments:
         settings = None if inst.is_drum else guitar_amp.effect_for(inst)
@@ -457,26 +513,39 @@ def _render_with_guitar_amps(instruments, render_batch, sr):
         if inst.is_drum and inst.notes and drum_side is None:
             drum_side = side
         if not inst.notes:
-            rest.append(inst)
-        elif inst.is_drum and side != drum_side:
+            continue
+        if inst.is_drum and side != drum_side:
             own_pass.setdefault((None, side), []).append(inst)
         elif settings is not None:
             own_pass.setdefault((settings, side), []).append(inst)
         else:
-            rest.append(inst)
-    if not own_pass:
-        return render_batch(instruments)
-    parts = [render_batch(rest, level=False)] if rest else []
+            key = (render_polish.bus_of(inst), _sits_centre(inst))
+            rest.setdefault(key, []).append(inst)
+    parts = [
+        (bus, centred, render_batch(group, level=False))
+        for (bus, centred), group in rest.items()
+    ]
     for (settings, side), group in own_pass.items():
-        parts.append(_placed_part(group, side, settings, render_batch, sr))
-    parts = [p for p in parts if p is not None and len(p)]
+        parts.append(
+            (
+                render_polish.bus_of(group[0]),
+                side == 0.0,
+                _placed_part(group, side, settings, render_batch, sr),
+            )
+        )
+    kicks = render_polish.kick_times(instruments)
+    parts = [
+        render_polish.polish_bus(bus, part, sr, bpm, kicks, centred)
+        for bus, centred, part in parts
+        if part is not None and len(part)
+    ]
     if not parts:
         return None
     length = max(len(p) for p in parts)
     mix = np.zeros((length, 2), np.float32)
     for part in parts:
         mix[: len(part)] += part
-    return level_render(mix)
+    return level_render(render_polish.polish_mix(mix, sr))
 
 
 def render_midi_to_wav(
@@ -499,14 +568,17 @@ def render_midi_to_wav(
 
     sr = 44100
 
+    from korshmer.audio_processing import render_polish
+
     available_kits = read_soundfont_kits(sf3_path)
+    shared = _SharedSynth(fluid_dir, sr, sf3_path)
 
     def render_batch(instruments_batch, level=True):
         if not instruments_batch:
             return None
         try:
-            with FluidSynth(lib_dir=fluid_dir, samplerate=sr) as fs:
-                sfid = fs.sf_load(sf3_path)
+            with shared.pass_synth() as fs:
+                sfid = shared.sfid
                 if sfid == -1:
                     print(f"Error: Could not load SoundFont: {sf3_path}")
                     return None
@@ -520,6 +592,44 @@ def render_midi_to_wav(
                 events = MidiEventQueue()
                 bends = []
                 pans = []
+                swells = []
+                vibratos = []
+                beat = 60.0 / max(float(bpm), 1.0)
+                spare = len(melodic_channels) - sum(
+                    1 for inst in instruments_batch if not inst.is_drum
+                )
+                twin_channels = melodic_channels[
+                    len(melodic_channels) - spare :
+                ]
+
+                def push_notes(channel, played):
+                    nonlocal note_id
+                    for start, end, pitch, velocity in played:
+                        events.push(
+                            MidiEvent(
+                                start,
+                                "noteon",
+                                channel,
+                                pitch,
+                                velocity,
+                                note_id,
+                            )
+                        )
+                        events.push(
+                            MidiEvent(
+                                end, "noteoff", channel, pitch, 0, note_id
+                            )
+                        )
+                        note_id += 1
+
+                def express(channel, program, played):
+                    swell, vibrato = render_polish.expression_curves(
+                        program, played
+                    )
+                    swells.extend((at, channel, value) for at, value in swell)
+                    vibratos.extend(
+                        (at, channel, value) for at, value in vibrato
+                    )
 
                 for inst in instruments_batch:
                     is_drum = inst.is_drum
@@ -559,28 +669,46 @@ def render_midi_to_wav(
                             (bend.time, channel, bend.pitch + PITCH_BEND_CENTER)
                             for bend in inst.pitch_bends
                         )
-                    for note in inst.notes:
-                        events.push(
-                            MidiEvent(
-                                note.start,
-                                "noteon",
-                                channel,
-                                note.pitch,
-                                note.velocity,
-                                note_id,
+                    seed = f"{program}:{channel}:{len(inst.notes)}"
+                    played = render_polish.humanized_notes(
+                        inst, seed, keep_time=bool(inst.pitch_bends), beat=beat
+                    )
+                    push_notes(channel, played)
+                    if not is_drum:
+                        express(channel, program, played)
+                    if render_polish.wants_ensemble(inst) and twin_channels:
+                        twin = twin_channels.pop(0)
+                        detune = render_polish.ensemble_bend(
+                            render_polish.ENSEMBLE_CENTS
+                        )
+                        fs.program_select(twin, sfid, bank, program)
+                        fs.cc(twin, CC_REVERB_SEND, reverb)
+                        fs.cc(twin, CC_CHORUS_SEND, chorus)
+                        for part, sign in ((channel, -1), (twin, 1)):
+                            fs.cc(
+                                part, CC_VOLUME, render_polish.ENSEMBLE_VOLUME
+                            )
+                            fs.pitch_wheel_sens(part, ENSEMBLE_BEND_RANGE)
+                            fs.pitch_bend(
+                                part, PITCH_BEND_CENTER + sign * detune
+                            )
+                        if moves:
+                            fs.cc(twin, CC_PAN, int(moves[0].value))
+                            pans.extend(
+                                (move.time, twin, int(move.value))
+                                for move in moves[1:]
+                            )
+                        else:
+                            spread = render_polish.ENSEMBLE_SPREAD
+                            fs.cc(channel, CC_PAN, CC_PAN_CENTRE - spread)
+                            fs.cc(twin, CC_PAN, CC_PAN_CENTRE + spread)
+                        echo = render_polish.ensemble_twin(
+                            render_polish.humanized_notes(
+                                inst, f"{seed}:twin", beat=beat
                             )
                         )
-                        events.push(
-                            MidiEvent(
-                                note.end,
-                                "noteoff",
-                                channel,
-                                note.pitch,
-                                0,
-                                note_id,
-                            )
-                        )
-                        note_id += 1
+                        push_notes(twin, echo)
+                        express(twin, program, echo)
 
                 if not len(events):
                     return None
@@ -588,6 +716,12 @@ def render_midi_to_wav(
                     _with_pitch_bends(events.sorted_events(), bends),
                     pans,
                     PAN_EVENT,
+                )
+                ordered_events = _with_channel_events(
+                    ordered_events, swells, EXPRESSION_EVENT
+                )
+                ordered_events = _with_channel_events(
+                    ordered_events, vibratos, MODULATION_EVENT
                 )
 
                 audio_left = []
@@ -619,6 +753,10 @@ def render_midi_to_wav(
                         fs.pitch_bend(chan, note)
                     elif etype == PAN_EVENT:
                         fs.cc(chan, CC_PAN, note)
+                    elif etype == EXPRESSION_EVENT:
+                        fs.cc(chan, CC_EXPRESSION, note)
+                    elif etype == MODULATION_EVENT:
+                        fs.cc(chan, CC_MODULATION, note)
                     elif etype == "noteon":
                         if active_notes >= MAX_SIMULTANEOUS_NOTES:
                             dropped_ids.add(nid)
@@ -659,7 +797,12 @@ def render_midi_to_wav(
     if len(instruments) == 0:
         return None
 
-    final_audio = _render_with_guitar_amps(instruments, render_batch, sr)
+    try:
+        final_audio = _render_with_guitar_amps(
+            instruments, render_batch, sr, bpm=bpm
+        )
+    finally:
+        shared.close()
 
     if final_audio is not None:
         save_normalized_audio(save_path, final_audio, sr)
