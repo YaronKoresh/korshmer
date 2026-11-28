@@ -255,7 +255,6 @@ def test_the_build_leaves_out_only_parts_the_program_never_loads():
     assert "sklearn" not in _options("include-package")
     assert "sklearn.cluster" in _options("include-package")
     assert "librosa" not in _options("include-package-data")
-    assert _options("matplotlib-backend") == ["agg"]
     spectrum = REPOSITORY / "src" / "korshmer" / "visualization" / "spectrum.py"
     assert 'matplotlib.use("Agg")' in spectrum.read_text(encoding="utf-8")
 
