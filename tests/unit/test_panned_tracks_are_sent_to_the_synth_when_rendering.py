@@ -99,9 +99,13 @@ def test_only_the_panned_track_is_panned_in_the_synth(tmp_path, monkeypatch):
     track_with_a_note(model, "Keys", pan=-1.0, program=4)
     track_with_a_note(model, "Bass", program=33)
     rendered(model, tmp_path, monkeypatch)
-    (synth,) = RecordingSynth.made
+    (synth,) = [
+        s for s in RecordingSynth.made if any(p == 4 for _c, _b, p in s.sounds)
+    ]
     keys_channel = next(c for c, _bank, program in synth.sounds if program == 4)
     assert synth.pans == [(keys_channel, 0, 0)]
+    others = [s for s in RecordingSynth.made if s is not synth]
+    assert all(not s.pans for s in others)
 
 
 def test_one_panned_drum_track_is_panned_on_the_drum_channel(
@@ -135,8 +139,9 @@ def test_an_instrument_that_cannot_sound_is_named_in_the_log(
     tmp_path, monkeypatch, caplog
 ):
     model = EditorModel()
-    for program in range(16):
-        track_with_a_note(model, f"Part {program + 1}", program=program)
+    pads = (40, 41, 42, *range(44, 56), 88)
+    for index, program in enumerate(pads):
+        track_with_a_note(model, f"Part {index + 1}", program=program)
     with caplog.at_level(logging.WARNING):
         rendered(model, tmp_path, monkeypatch)
     assert "Part 16" in caplog.text

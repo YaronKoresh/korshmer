@@ -402,6 +402,9 @@ class FluidSynth:
             self.synth, channel, sfid, bank, preset
         )
 
+    def reset(self):
+        self._lib.fluid_synth_system_reset(self.synth)
+
     def set_reverb(self, roomsize=0.5, damping=0.5, width=0.5, level=0.9):
         self._lib.fluid_synth_set_reverb(
             self.synth, roomsize, damping, width, level

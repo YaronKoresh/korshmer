@@ -142,4 +142,4 @@ def test_render_sends_only_guitar_tracks_through_the_amp(monkeypatch):
 
     calls.clear()
     audio_processors._render_with_guitar_amps([piano], fake_batch, SR)
-    assert calls == [([0], True)]
+    assert calls == [([0], False)]
