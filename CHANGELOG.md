@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Closing a window while the spectrogram of a file is still being drawn no longer stops the program with `QThread: Destroyed while thread is still running`: the drawing runs to its end on its own, and the program waits for it when it quits.
+- `korshmer.exe` no longer stops at start with `ModuleNotFoundError: No module named 'korshmer.audio_processing.effects'`: the build takes in every module of the program, also the ones it loads by name only when they are first needed, such as the effects, equalizers, dynamics and audio saving behind `korshmer.audio_processing`.
 - `korshmer.exe` built with `scripts\compile.bat` starts again: the build tells Nuitka to leave out the step in which PyTorch renames its functions, which stopped the program at start with `RuntimeError: __code__ is not writable in Nuitka`, and it always installs Nuitka 4.3.5, so an older Nuitka no longer leaves Python 3.14 builds printing `'import warnings' failed` at start.
 
 ## [1.1.1] - 2026-11-27

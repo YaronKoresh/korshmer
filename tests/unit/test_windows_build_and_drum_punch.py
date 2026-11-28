@@ -301,3 +301,17 @@ def test_the_build_installs_the_nuitka_version_it_needs():
     pinned = re.search(r'"nuitka==(\d+)\.(\d+)\.(\d+)"', pyproject)
     assert pinned is not None
     assert tuple(int(part) for part in pinned.groups()) >= (4, 3, 5)
+
+
+def test_the_build_bundles_every_module_of_the_program():
+    assert "korshmer" in _options("include-package")
+    lazy = []
+    for package in ("korshmer.audio_processing", "korshmer.audio"):
+        module = importlib.import_module(package)
+        lazy += [
+            f"korshmer.audio_processing.{name}"
+            for name in set(getattr(module, "_IMPORT_MAP", {}).values())
+        ]
+    assert lazy
+    for name in lazy:
+        assert importlib.util.find_spec(name) is not None, name

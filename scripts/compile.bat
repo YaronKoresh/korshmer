@@ -47,6 +47,7 @@ python -m nuitka ^
 --include-package-data=demucs ^
 --include-package=basic_pitch ^
 --include-package=demucs ^
+--include-package=korshmer ^
 --include-package=librosa ^
 --include-package=onnxruntime ^
 --include-package=sklearn.cluster ^
