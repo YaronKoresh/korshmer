@@ -170,7 +170,10 @@ python -m nuitka ^
 --windows-console-mode=disable ^
 %EXTRA_DATA% ^
 src\korshmer
-if errorlevel 1 goto failed
+
+if %ERRORLEVEL% neq 0 (
+    goto failed
+)
 
 if not exist "build\korshmer.dist\korshmer.exe" (
     echo [ERROR] The compiler finished but build\korshmer.dist\korshmer.exe was not created.
