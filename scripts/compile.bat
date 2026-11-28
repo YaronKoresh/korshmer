@@ -30,6 +30,7 @@ if exist "assets\icon.ico" set "EXTRA_DATA=%EXTRA_DATA% --windows-icon-from-ico=
 if not exist "fluidsynth\" echo [WARNING] The fluidsynth folder is missing, so the built program will have no instrument sounds.
 
 echo Compiling KORSHMER %APP_VERSION%. This can take a long time...
+set MPLBACKEND=agg
 python -m nuitka ^
 --mode=standalone ^
 --python-flag=-m ^
@@ -52,7 +53,6 @@ python -m nuitka ^
 --include-package=soundfile ^
 --jobs=%NUMBER_OF_PROCESSORS% ^
 --lto=yes ^
---matplotlib-backend=agg ^
 --module-parameter=numba-disable-jit=yes ^
 --module-parameter=torch-disable-jit=yes ^
 --nofollow-import-to=*.conftest ^
