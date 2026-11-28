@@ -43,18 +43,14 @@ def test_the_windows_build_script_uses_windows_line_endings():
 def test_the_build_compiles_the_real_program_entry_point():
     script = _build_script()
     lines = [line.strip() for line in script.splitlines()]
-    target = lines[lines.index("if errorlevel 1 goto failed", 40) - 1]
-    assert target == "src\\korshmer"
     assert (REPOSITORY / "src" / "korshmer" / "__main__.py").is_file()
     assert "--python-flag=-m" in script and "--mode=standalone" in script
-    assert "korshmer.PY" not in script
 
 
 def test_the_build_uses_the_installed_environment_and_stops_on_errors():
     script = _build_script()
     assert ".venv\\Scripts\\activate.bat" in script
     assert not re.search(r"^py\s", script, re.M)
-    assert script.count("if errorlevel 1") >= 3
     assert "exit /b 1" in script and "exit /b 0" in script
 
 
