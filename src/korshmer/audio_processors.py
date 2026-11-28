@@ -249,7 +249,7 @@ def process_stereo_widen(path, width=1.5):
 
 
 MAX_SIMULTANEOUS_NOTES = 128
-REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.25)
+REVERB_SETTINGS = (0.4, 0.5, 0.6, 0.12)
 CHORUS_SETTINGS = (3, 0.3, 0.3, 8.0, 0)
 RENDER_TARGET_RMS_DB = -16.0
 CC_PAN = 10
@@ -258,6 +258,10 @@ CC_PAN_RIGHT = 127
 DRUM_CHANNEL = 9
 CC_REVERB_SEND = 91
 CC_CHORUS_SEND = 93
+CC_MODULATION = 1
+CC_VOLUME = 7
+CC_EXPRESSION = 11
+ENSEMBLE_BEND_RANGE = 2
 VOICE_PROGRAMS = frozenset({52, 53, 54, 85})
 
 
@@ -367,6 +371,8 @@ def level_render(audio):
 PITCH_BEND_CENTER = 8192
 PITCH_BEND_EVENT = "pitchbend"
 PAN_EVENT = "pan"
+EXPRESSION_EVENT = "expression"
+MODULATION_EVENT = "modulation"
 
 
 def _bends_own_their_channel(instrument, batch):
@@ -586,6 +592,44 @@ def render_midi_to_wav(
                 events = MidiEventQueue()
                 bends = []
                 pans = []
+                swells = []
+                vibratos = []
+                beat = 60.0 / max(float(bpm), 1.0)
+                spare = len(melodic_channels) - sum(
+                    1 for inst in instruments_batch if not inst.is_drum
+                )
+                twin_channels = melodic_channels[
+                    len(melodic_channels) - spare :
+                ]
+
+                def push_notes(channel, played):
+                    nonlocal note_id
+                    for start, end, pitch, velocity in played:
+                        events.push(
+                            MidiEvent(
+                                start,
+                                "noteon",
+                                channel,
+                                pitch,
+                                velocity,
+                                note_id,
+                            )
+                        )
+                        events.push(
+                            MidiEvent(
+                                end, "noteoff", channel, pitch, 0, note_id
+                            )
+                        )
+                        note_id += 1
+
+                def express(channel, program, played):
+                    swell, vibrato = render_polish.expression_curves(
+                        program, played
+                    )
+                    swells.extend((at, channel, value) for at, value in swell)
+                    vibratos.extend(
+                        (at, channel, value) for at, value in vibrato
+                    )
 
                 for inst in instruments_batch:
                     is_drum = inst.is_drum
@@ -625,33 +669,46 @@ def render_midi_to_wav(
                             (bend.time, channel, bend.pitch + PITCH_BEND_CENTER)
                             for bend in inst.pitch_bends
                         )
+                    seed = f"{program}:{channel}:{len(inst.notes)}"
                     played = render_polish.humanized_notes(
-                        inst,
-                        f"{program}:{channel}:{len(inst.notes)}",
-                        keep_time=bool(inst.pitch_bends),
+                        inst, seed, keep_time=bool(inst.pitch_bends), beat=beat
                     )
-                    for start, end, pitch, velocity in played:
-                        events.push(
-                            MidiEvent(
-                                start,
-                                "noteon",
-                                channel,
-                                pitch,
-                                velocity,
-                                note_id,
+                    push_notes(channel, played)
+                    if not is_drum:
+                        express(channel, program, played)
+                    if render_polish.wants_ensemble(inst) and twin_channels:
+                        twin = twin_channels.pop(0)
+                        detune = render_polish.ensemble_bend(
+                            render_polish.ENSEMBLE_CENTS
+                        )
+                        fs.program_select(twin, sfid, bank, program)
+                        fs.cc(twin, CC_REVERB_SEND, reverb)
+                        fs.cc(twin, CC_CHORUS_SEND, chorus)
+                        for part, sign in ((channel, -1), (twin, 1)):
+                            fs.cc(
+                                part, CC_VOLUME, render_polish.ENSEMBLE_VOLUME
+                            )
+                            fs.pitch_wheel_sens(part, ENSEMBLE_BEND_RANGE)
+                            fs.pitch_bend(
+                                part, PITCH_BEND_CENTER + sign * detune
+                            )
+                        if moves:
+                            fs.cc(twin, CC_PAN, int(moves[0].value))
+                            pans.extend(
+                                (move.time, twin, int(move.value))
+                                for move in moves[1:]
+                            )
+                        else:
+                            spread = render_polish.ENSEMBLE_SPREAD
+                            fs.cc(channel, CC_PAN, CC_PAN_CENTRE - spread)
+                            fs.cc(twin, CC_PAN, CC_PAN_CENTRE + spread)
+                        echo = render_polish.ensemble_twin(
+                            render_polish.humanized_notes(
+                                inst, f"{seed}:twin", beat=beat
                             )
                         )
-                        events.push(
-                            MidiEvent(
-                                end,
-                                "noteoff",
-                                channel,
-                                pitch,
-                                0,
-                                note_id,
-                            )
-                        )
-                        note_id += 1
+                        push_notes(twin, echo)
+                        express(twin, program, echo)
 
                 if not len(events):
                     return None
@@ -659,6 +716,12 @@ def render_midi_to_wav(
                     _with_pitch_bends(events.sorted_events(), bends),
                     pans,
                     PAN_EVENT,
+                )
+                ordered_events = _with_channel_events(
+                    ordered_events, swells, EXPRESSION_EVENT
+                )
+                ordered_events = _with_channel_events(
+                    ordered_events, vibratos, MODULATION_EVENT
                 )
 
                 audio_left = []
@@ -690,6 +753,10 @@ def render_midi_to_wav(
                         fs.pitch_bend(chan, note)
                     elif etype == PAN_EVENT:
                         fs.cc(chan, CC_PAN, note)
+                    elif etype == EXPRESSION_EVENT:
+                        fs.cc(chan, CC_EXPRESSION, note)
+                    elif etype == MODULATION_EVENT:
+                        fs.cc(chan, CC_MODULATION, note)
                     elif etype == "noteon":
                         if active_notes >= MAX_SIMULTANEOUS_NOTES:
                             dropped_ids.add(nid)

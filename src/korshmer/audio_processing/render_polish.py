@@ -11,11 +11,34 @@ PAD_PROGRAMS = frozenset({*range(16, 24), *range(40, 56), *range(88, 104)})
 BAND_PROGRAMS = frozenset({*range(0, 8), *range(24, 32)})
 KICKS = frozenset({35, 36})
 
-TIMING_SPREAD = 0.006
-TIMING_LIMIT = 0.014
-VELOCITY_SPREAD = 6
-DRUM_VELOCITY_SPREAD = 4
+TIMING_SPREAD = 0.009
+TIMING_LIMIT = 0.022
+LATE = {LEAD: 0.006, PADS: 0.004, BAND: 0.002}
+VELOCITY_SPREAD = 7
+DRUM_VELOCITY_SPREAD = 5
 SHORTEST_NOTE = 0.02
+ACCENTS = ((0.0, 9), (0.5, 3), (0.25, -6))
+BEAT_ACCENT = 4
+
+SWELL_PROGRAMS = frozenset(range(40, 96))
+VIBRATO_PROGRAMS = frozenset(
+    {40, 41, 42, 43, 52, 53, 54, *range(56, 80), 80, 81, 82, 83, 85, 86}
+)
+SWELL_FROM = 78
+SWELL_TIME = 0.22
+SWELL_STEPS = 6
+VIBRATO_DELAY = 0.28
+VIBRATO_RISE = 0.45
+VIBRATO_DEPTH = 54
+VIBRATO_STEPS = 5
+VIBRATO_SHORTEST = 0.5
+CHORD_GAP = 0.03
+ENSEMBLE_PROGRAMS = frozenset({*range(40, 72), *range(88, 96), 80, 81, 85})
+ENSEMBLE_CENTS = 6.0
+ENSEMBLE_LAG = 0.012
+ENSEMBLE_SPREAD = 22
+ENSEMBLE_VOLUME = 92
+BEND_SPAN_CENTS = 200.0
 
 ROOM_TAPS = (
     (0.007, 0.32, 0),
@@ -26,9 +49,18 @@ ROOM_TAPS = (
     (0.041, 0.09, 1),
 )
 ROOM_TONE_HZ = 6000.0
-ROOM_MIX = {DRUMS: 0.16, BASS: 0.0, PADS: 0.2, BAND: 0.2, LEAD: 0.14}
+ROOM_MIX = {DRUMS: 0.2, BASS: 0.0, PADS: 0.22, BAND: 0.24, LEAD: 0.18}
 DOUBLE_DELAYS = (0.011, 0.017)
-DOUBLE_MIX = {PADS: 0.3, BAND: 0.28}
+DOUBLE_MIX = {PADS: 0.3, BAND: 0.42}
+HALL = {
+    DRUMS: (1.0, 0.12),
+    PADS: (2.6, 0.3),
+    BAND: (1.2, 0.12),
+    LEAD: (1.8, 0.18),
+}
+HALL_PREDELAY = 0.022
+HALL_DAMP_HZ = 3500.0
+HALL_LOW_HZ = 180.0
 ECHO_BEATS = 0.75
 ECHO_FEEDBACK = 0.35
 ECHO_TONE_HZ = (300.0, 5000.0)
@@ -36,14 +68,15 @@ ECHO_MIX = 0.1
 HIGHPASS_HZ = {BASS: 30.0, PADS: 120.0, BAND: 80.0, LEAD: 90.0}
 MONO_BELOW_HZ = 120.0
 PRESENCE = (3000.0, 2.0, 0.9)
-BASS_DRIVE = (1.8, 0.3)
-PUNCH = (-24.0, 4.0, 0.004, 0.35)
-DUCK_DB = {BASS: 3.0, PADS: 2.0}
+BASS_DRIVE = (3.0, 0.5)
+DRUM_DRIVE = (2.2, 0.35)
+PUNCH = (-30.0, 6.0, 0.004, 0.7)
+DUCK_DB = {BASS: 4.0, PADS: 3.0}
 DUCK_RELEASE = 0.18
-GLUE = (-16.0, 1.8, 0.08)
-TAPE_DRIVE = (1.3, 0.4)
-TAPE_TONE_HZ = 16000.0
-TAPE_WOW = (0.00008, 0.6)
+GLUE = (-18.0, 2.2, 0.06)
+TAPE_DRIVE = (1.8, 0.5)
+TAPE_TONE_HZ = 14000.0
+TAPE_WOW = (0.00012, 0.6)
 GAIN_SMOOTH = 0.03
 
 
@@ -64,24 +97,88 @@ def bus_of(instrument):
     return LEAD
 
 
-def humanized_notes(instrument, seed, keep_time=False):
+def accent(start, beat):
+    if beat <= 0:
+        return 0
+    place = (start / beat) % 1.0
+    for at, amount in ACCENTS:
+        if min(abs(place - at), 1.0 - abs(place - at)) < 0.06:
+            downbeat = (start / beat) % 4.0 < 0.06 and at == 0.0
+            return amount + (BEAT_ACCENT if downbeat else 0)
+    return ACCENTS[-1][1]
+
+
+def humanized_notes(instrument, seed, keep_time=False, beat=0.0):
     rng = random.Random(f"humanize:{seed}")
     spread = DRUM_VELOCITY_SPREAD if instrument.is_drum else VELOCITY_SPREAD
     keep_time = keep_time or instrument.is_drum
+    late = 0.0 if keep_time else LATE.get(bus_of(instrument), 0.0)
     played = []
     for note in instrument.notes:
         start, end = note.start, note.end
         if not keep_time:
-            shift = max(
+            shift = late + max(
                 -TIMING_LIMIT, min(TIMING_LIMIT, rng.gauss(0.0, TIMING_SPREAD))
             )
             start = max(0.0, start + shift)
             end = max(start + SHORTEST_NOTE, end + shift)
-        velocity = max(
-            1, min(127, note.velocity + rng.randint(-spread, spread))
+        velocity = (
+            note.velocity
+            + accent(note.start, beat)
+            + rng.randint(-spread, spread)
         )
-        played.append((start, end, note.pitch, velocity))
+        played.append((start, end, note.pitch, max(1, min(127, velocity))))
     return played
+
+
+def _onsets(played):
+    starts = []
+    for start, end, _pitch, _velocity in sorted(played):
+        if starts and start - starts[-1][0] < CHORD_GAP:
+            starts[-1][1] = max(starts[-1][1], end)
+            continue
+        starts.append([start, end])
+    return starts
+
+
+def expression_curves(program, played):
+    swell, vibrato = [], []
+    onsets = _onsets(played)
+    if program in SWELL_PROGRAMS:
+        for start, _end in onsets:
+            for step in range(SWELL_STEPS + 1):
+                value = SWELL_FROM + (127 - SWELL_FROM) * step / SWELL_STEPS
+                at = start + SWELL_TIME * step / SWELL_STEPS
+                swell.append((at, int(value)))
+    if program in VIBRATO_PROGRAMS:
+        for start, end in onsets:
+            vibrato.append((start, 0))
+            if end - start < VIBRATO_SHORTEST:
+                continue
+            rise = min(VIBRATO_RISE, end - start - VIBRATO_DELAY)
+            for step in range(1, VIBRATO_STEPS + 1):
+                at = start + VIBRATO_DELAY + rise * step / VIBRATO_STEPS
+                vibrato.append((at, int(VIBRATO_DEPTH * step / VIBRATO_STEPS)))
+    return swell, vibrato
+
+
+def ensemble_bend(cents):
+    return int(round(cents / BEND_SPAN_CENTS * 8192))
+
+
+def wants_ensemble(instrument):
+    return (
+        not instrument.is_drum
+        and instrument.program in ENSEMBLE_PROGRAMS
+        and not instrument.pitch_bends
+    )
+
+
+def ensemble_twin(played):
+    return [
+        (start + ENSEMBLE_LAG, end + ENSEMBLE_LAG, pitch, max(1, velocity - 6))
+        for start, end, pitch, velocity in played
+    ]
 
 
 def _stereo(audio):
@@ -154,6 +251,42 @@ def room(audio, sr, mix):
         source = audio[:, 1 - side]
         wet[:, side] += gain * _delayed(source, int(seconds * sr))
     return audio + mix * lowpass(wet, sr, ROOM_TONE_HZ)
+
+
+def hall_response(sr, seconds, seed=7):
+    rng = np.random.default_rng(seed)
+    size = max(1, int(sr * seconds))
+    times = np.arange(size) / sr
+    noise = rng.standard_normal((size, 2)).astype(np.float32)
+    low = lowpass(noise, sr, HALL_DAMP_HZ)
+    high = noise - low
+    decay = np.exp(-6.9 * times / seconds)[:, None]
+    bright = np.exp(-6.9 * times / (seconds * 0.45))[:, None]
+    response = highpass(
+        (low * decay + 0.6 * high * bright).astype(np.float32), sr, HALL_LOW_HZ
+    )
+    gap = np.zeros((int(sr * HALL_PREDELAY), 2), np.float32)
+    response = np.concatenate([gap, response])
+    return (response / np.sqrt(np.sum(response**2) / 2.0)).astype(np.float32)
+
+
+def hall(audio, sr, bus, centred=True):
+    seconds, mix = HALL.get(bus, (0.0, 0.0))
+    if mix <= 0 or not len(audio):
+        return audio
+    response = hall_response(sr, seconds, seed=len(bus))
+    if centred:
+        source = audio.mean(axis=1)
+        wet = np.stack(
+            [
+                signal.oaconvolve(source, response[:, side])[: len(audio)]
+                for side in (0, 1)
+            ],
+            axis=1,
+        )
+    else:
+        wet = signal.oaconvolve(audio, response, axes=0)[: len(audio)]
+    return (audio + mix * wet).astype(np.float32)
 
 
 def double_track(audio, sr, mix):
@@ -236,6 +369,7 @@ def polish_bus(bus, audio, sr, bpm=120.0, kicks=(), centred=True):
         audio = highpass(audio, sr, HIGHPASS_HZ[bus])
     if bus == DRUMS:
         audio = punch(audio, sr)
+        audio = saturate(audio, *DRUM_DRIVE)
     elif bus == BASS:
         audio = saturate(audio, *BASS_DRIVE)
         if centred:
@@ -248,6 +382,7 @@ def polish_bus(bus, audio, sr, bpm=120.0, kicks=(), centred=True):
         audio = room(audio, sr, ROOM_MIX.get(bus, 0.0))
         if bus == LEAD:
             audio = echo(audio, sr, bpm, ECHO_MIX)
+    audio = hall(audio, sr, bus, centred)
     return duck(audio, sr, kicks, DUCK_DB.get(bus, 0.0)).astype(np.float32)
 
 
